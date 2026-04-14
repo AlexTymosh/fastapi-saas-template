@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastapi-saas-template"
+version = "0.1.0"
+description = "FastAPI SaaS backend template (modular monolith, GDPR-aware)"
+requires-python = ">=3.11"
+readme = "README.draft.md"
+
+dependencies = [
+    "fastapi>=0.135,<1.0",
+    "uvicorn>=0.44,<1.0",
+    "pydantic-settings>=2.13,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0,<10.0",
+    "black>=26.3,<27.0",
+    "isort>=8.0,<9.0",
+    "ruff>=0.15,<1.0",
+    "pre-commit>=4.5,<5.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "backend"}
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+

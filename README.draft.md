@@ -68,6 +68,63 @@ SMS provider: TWILIO
 Email service: SendGrid
 Backups: Cloudflare R2
 
+## Development Setup
+
+1.  Clone repository
+
+``` bash
+git clone <your-repo-url>
+cd fastapi-saas-template
+```
+
+2.  Create virtual environment
+
+``` bash
+python -m venv .venv
+```
+
+Activate (Windows PowerShell):
+
+``` bash
+.venv\Scripts\Activate.ps1
+```
+
+3.  Upgrade pip (recommended)
+
+``` bash
+python -m pip install --upgrade pip
+```
+
+4.  Install dependencies
+
+``` bash
+pip install -r requirements-dev.txt
+```
+
+5.  Install project (editable mode)
+
+``` bash
+pip install -e .
+```
+
+6.  Setup pre-commit hooks
+
+``` bash
+pre-commit install
+```
+
+Pre-commit hooks will automatically run linting and formatting checks
+before each commit.
+
+------------------------------------------------------------------------
+
+### Update dependencies
+
+``` bash
+pip-compile pyproject.toml -o requirements.txt
+pip-compile pyproject.toml --extra dev -o requirements-dev.txt
+```  
+**If you change dependencies in pyproject.toml, regenerate the lock files**
 
 ## Quick Start
 The template is designed to be run via Docker Compose.
