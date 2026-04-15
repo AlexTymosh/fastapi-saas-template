@@ -143,7 +143,7 @@ Global exception handling MUST be implemented.
 
 #### Handlers
 
-- Domain-specific exceptions SHOULD have dedicated handlers  
+- Domain-specific exceptions MUST be handled via `AppError` subclasses and a shared global handler
 - A global fallback handler MUST exist:
 
 ```python
@@ -151,18 +151,30 @@ Global exception handling MUST be implemented.
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal Server Error"}
+        content={
+            "type": "https://api.example.com/problems/internal-error",
+            "title": "Internal Server Error",
+            "status": 500,
+            "detail": "An unexpected error occurred.",
+            "instance": request.url.path,
+            "error_code": "internal_error",
+        },
+        media_type="application/problem+json",
     )
 ```
-#### Requirements
-- All error responses MUST be JSON
-- HTTP status codes MUST match error type
-- Internal details MUST NOT be exposed
 
-#### Anti-Patterns (MUST NOT)
-- Handle errors in endpoints
+##### Requirements
+- All API error responses MUST use application/problem+json
+- Error responses MUST follow the ProblemDetails schema
+- HTTP status codes MUST match the error type
+- Validation errors SHOULD include field-level details in errors
+- Internal details MUST NOT be exposed
+##### Anti-Patterns (MUST NOT)
+- Format error responses inside endpoints
 - Return raw exception messages
 - Duplicate error handling logic
+- Raise HTTPException from business/service layers
+
 
 ### Service
 class ItemService:
