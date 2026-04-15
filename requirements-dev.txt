@@ -9,19 +9,18 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
     # via pydantic
 anyio==4.13.0
-    # via starlette
-black==26.3.1
-    # via fastapi-saas-template (pyproject.toml)
+    # via
+    #   starlette
+    #   watchfiles
 cfgv==3.5.0
     # via pre-commit
 click==8.3.2
-    # via
-    #   black
-    #   uvicorn
+    # via uvicorn
 colorama==0.4.6
     # via
     #   click
     #   pytest
+    #   uvicorn
 distlib==0.4.0
     # via virtualenv
 fastapi==0.135.3
@@ -32,27 +31,20 @@ filelock==3.25.2
     #   virtualenv
 h11==0.16.0
     # via uvicorn
+httptools==0.7.1
+    # via uvicorn
 identify==2.6.18
     # via pre-commit
 idna==3.11
     # via anyio
 iniconfig==2.3.0
     # via pytest
-isort==8.0.1
-    # via fastapi-saas-template (pyproject.toml)
-mypy-extensions==1.1.0
-    # via black
 nodeenv==1.10.0
     # via pre-commit
 packaging==26.0
-    # via
-    #   black
-    #   pytest
-pathspec==1.0.4
-    # via black
+    # via pytest
 platformdirs==4.9.6
     # via
-    #   black
     #   python-discovery
     #   virtualenv
 pluggy==1.6.0
@@ -62,6 +54,7 @@ pre-commit==4.5.1
 pydantic==2.13.0
     # via
     #   fastapi
+    #   fastapi-saas-template (pyproject.toml)
     #   pydantic-settings
 pydantic-core==2.46.0
     # via pydantic
@@ -74,12 +67,16 @@ pytest==9.0.3
 python-discovery==1.2.2
     # via virtualenv
 python-dotenv==1.2.2
-    # via pydantic-settings
-pytokens==0.4.1
-    # via black
+    # via
+    #   pydantic-settings
+    #   uvicorn
 pyyaml==6.0.3
-    # via pre-commit
+    # via
+    #   pre-commit
+    #   uvicorn
 ruff==0.15.10
+    # via fastapi-saas-template (pyproject.toml)
+scalar-fastapi==1.8.2
     # via fastapi-saas-template (pyproject.toml)
 starlette==1.0.0
     # via fastapi
@@ -94,7 +91,11 @@ typing-inspection==0.4.2
     #   fastapi
     #   pydantic
     #   pydantic-settings
-uvicorn==0.44.0
+uvicorn[standard]==0.44.0
     # via fastapi-saas-template (pyproject.toml)
 virtualenv==21.2.3
     # via pre-commit
+watchfiles==1.1.1
+    # via uvicorn
+websockets==16.0
+    # via uvicorn
