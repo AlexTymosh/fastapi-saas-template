@@ -7,7 +7,7 @@ name = "fastapi-saas-template"
 version = "0.1.0"
 description = "FastAPI SaaS backend template (modular monolith, GDPR-aware)"
 requires-python = ">=3.11"
-readme = "README.draft.md"
+readme = "../README.draft.md"
 
 dependencies = [
     "fastapi>=0.135,<1.0",
@@ -22,13 +22,14 @@ dev = [
     "pytest>=9.0,<10.0",
     "ruff>=0.15,<1.0",
     "pre-commit>=4.5,<5.0",
+    "httpx>=0.28,<1.0",
 ]
 
 [tool.setuptools]
 package-dir = {"" = "backend"}
 
 [tool.setuptools.packages.find]
-where = ["backend"]
+where = ["."]
 
 [tool.ruff]
 line-length = 88

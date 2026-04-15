@@ -1,6 +1,6 @@
 import asyncio
 
-from backend.app.schemas.health import HealthReadyResponse, ServiceStatus
+from app.schemas.health import HealthReadyResponse, ServiceStatus
 
 
 async def _ping_postgresql() -> None:

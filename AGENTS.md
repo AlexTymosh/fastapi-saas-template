@@ -94,7 +94,7 @@ Errors (RFC-style):
 Example:
 
 ```
-# backend/app/api/health.py
+# app/api/health.py
 
 from fastapi import APIRouter
 router = APIRouter(tags=["health"])
@@ -109,10 +109,10 @@ DO NOT register routers in main.py
 
 Example:
 ```
-# backend/app/api/master_router.py
+# app/api/master_router.py
 
 from fastapi import APIRouter
-from backend.app.api.health import router as health_router
+from app.api.health import router as health_router
 
 router = APIRouter()
 

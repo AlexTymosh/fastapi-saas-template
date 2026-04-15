@@ -10,8 +10,13 @@ annotated-types==0.7.0
     # via pydantic
 anyio==4.13.0
     # via
+    #   httpx
     #   starlette
     #   watchfiles
+certifi==2026.2.25
+    # via
+    #   httpcore
+    #   httpx
 cfgv==3.5.0
     # via pre-commit
 click==8.3.2
@@ -30,13 +35,21 @@ filelock==3.25.2
     #   python-discovery
     #   virtualenv
 h11==0.16.0
-    # via uvicorn
+    # via
+    #   httpcore
+    #   uvicorn
+httpcore==1.0.9
+    # via httpx
 httptools==0.7.1
     # via uvicorn
+httpx==0.28.1
+    # via fastapi-saas-template (pyproject.toml)
 identify==2.6.18
     # via pre-commit
 idna==3.11
-    # via anyio
+    # via
+    #   anyio
+    #   httpx
 iniconfig==2.3.0
     # via pytest
 nodeenv==1.10.0
