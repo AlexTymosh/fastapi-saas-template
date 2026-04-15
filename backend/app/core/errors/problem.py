@@ -20,7 +20,7 @@ class ProblemDetails(BaseModel):
     instance: str | None = None
 
     error_code: str | None = None
-    trace_id: str | None = None
+    request_id: str | None = None
     errors: list[InvalidParam] | None = None
 
     def to_dict(self) -> dict[str, Any]:

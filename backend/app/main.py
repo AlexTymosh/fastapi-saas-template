@@ -10,6 +10,7 @@ from starlette.responses import RedirectResponse
 
 from app.api.master_router import router as master_router
 from app.core.errors import register_exception_handlers
+from app.core.middleware.request_context import RequestContextMiddleware
 
 
 def create_app() -> FastAPI:
@@ -17,6 +18,8 @@ def create_app() -> FastAPI:
         title="SaaS Template",
         version="0.1.0",
     )
+
+    app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(master_router)
 
