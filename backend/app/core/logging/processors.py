@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import MutableMapping
+from collections.abc import Mapping
 from typing import Any
 
 from structlog.typing import EventDict
@@ -9,6 +9,19 @@ from structlog.typing import EventDict
 from app.core.context import get_request_id
 
 _EMAIL_RE = re.compile(r"(?P<name>[^@\s]+)@(?P<domain>[^@\s]+\.[^@\s]+)")
+
+_REDACTED = "[REDACTED]"
+_SENSITIVE_KEYS = {
+    "password",
+    "token",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "cookie",
+    "secret",
+    "api_key",
+    "client_secret",
+}
 
 
 def add_request_id(
@@ -67,61 +80,44 @@ def redact_sensitive_fields(
     method_name: str,
     event_dict: EventDict,
 ) -> EventDict:
-    redacted_keys = {
-        "password",
-        "token",
-        "access_token",
-        "refresh_token",
-        "authorization",
-        "cookie",
-        "secret",
-        "api_key",
-        "client_secret",
-    }
-
-    for key in list(event_dict.keys()):
-        lowered = key.lower()
-        if lowered in redacted_keys:
-            event_dict[key] = "[REDACTED]"
-            continue
-
-        value = event_dict[key]
-
-        if isinstance(value, str):
-            if "bearer " in value.lower():
-                event_dict[key] = "[REDACTED]"
-            elif "@" in value:
-                event_dict[key] = _mask_email(value)
-
-        elif isinstance(value, MutableMapping):
-            event_dict[key] = _redact_mapping(value)
-
-    return event_dict
+    return _sanitize_mapping(event_dict)
 
 
-def _redact_mapping(data: MutableMapping[str, Any]) -> dict[str, Any]:
+def _sanitize_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
 
     for key, value in data.items():
         lowered = key.lower()
-        if lowered in {
-            "password",
-            "token",
-            "access_token",
-            "refresh_token",
-            "authorization",
-            "cookie",
-            "secret",
-            "api_key",
-            "client_secret",
-        }:
-            result[key] = "[REDACTED]"
-        elif isinstance(value, str) and "@" in value:
-            result[key] = _mask_email(value)
-        else:
-            result[key] = value
+
+        if lowered in _SENSITIVE_KEYS:
+            result[key] = _REDACTED
+            continue
+
+        result[key] = _sanitize_value(value)
 
     return result
+
+
+def _sanitize_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _sanitize_mapping(value)
+
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_sanitize_value(item) for item in value)
+
+    if isinstance(value, str):
+        if "bearer " in value.lower():
+            return _REDACTED
+
+        if "@" in value:
+            return _mask_email(value)
+
+        return value
+
+    return value
 
 
 def _mask_email(value: str) -> str:
