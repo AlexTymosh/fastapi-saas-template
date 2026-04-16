@@ -1,6 +1,9 @@
 import asyncio
 
+from app.core.logging import LogCategory, get_logger
 from app.schemas.health import HealthReadyResponse, ServiceStatus
+
+log = get_logger(__name__)
 
 
 async def _ping_postgresql() -> None:
@@ -16,6 +19,11 @@ async def check_postgresql(timeout: float = 1.0) -> bool:
         await asyncio.wait_for(_ping_postgresql(), timeout=timeout)
         return True
     except Exception:
+        log.warning(
+            "postgresql_healthcheck_failed",
+            category=LogCategory.APPLICATION,
+            timeout=timeout,
+        )
         return False
 
 
@@ -24,6 +32,11 @@ async def check_redis(timeout: float = 0.5) -> bool:
         await asyncio.wait_for(_ping_redis(), timeout=timeout)
         return True
     except Exception:
+        log.warning(
+            "redis_healthcheck_failed",
+            category=LogCategory.APPLICATION,
+            timeout=timeout,
+        )
         return False
 
 
@@ -44,8 +57,16 @@ async def get_readiness_status() -> HealthReadyResponse:
     }
 
     all_ok = all(checks.values())
-
-    return HealthReadyResponse(
+    result = HealthReadyResponse(
         status=ServiceStatus.OK if all_ok else ServiceStatus.UNAVAILABLE,
         services=services,
     )
+
+    log.info(
+        "readiness_checked",
+        category=LogCategory.APPLICATION,
+        status=result.status,
+        services=result.services,
+    )
+
+    return result
