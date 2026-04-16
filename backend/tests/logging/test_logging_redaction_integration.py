@@ -2,9 +2,11 @@ import io
 import json
 from unittest.mock import patch
 
-from app.core.config.settings import settings
+from app.core.config.settings import get_settings
 from app.core.context import request_id_ctx
 from app.core.logging.factory import configure_logging, get_logger
+
+settings = get_settings()
 
 
 def _parse_json_lines(output: str) -> list[dict]:
@@ -26,13 +28,13 @@ def _parse_json_lines(output: str) -> list[dict]:
 def test_logging_output_redacts_sensitive_fields(monkeypatch) -> None:
     stream = io.StringIO()
 
-    monkeypatch.setattr(settings, "LOG_JSON", True)
-    monkeypatch.setattr(settings, "LOG_LEVEL", "INFO")
+    monkeypatch.setattr(settings.logging, "as_json", True)
+    monkeypatch.setattr(settings.logging, "level", "INFO")
 
     with patch("sys.stdout", stream):
         configure_logging(
-            log_level=settings.LOG_LEVEL,
-            log_json=settings.LOG_JSON,
+            log_level=settings.logging.level,
+            log_json=settings.logging.as_json,
             service_name="test-service",
             environment="test",
             version="0.1.0",

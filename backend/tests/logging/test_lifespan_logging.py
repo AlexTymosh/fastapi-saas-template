@@ -4,8 +4,10 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.core.config.settings import settings
+from app.core.config.settings import get_settings
 from app.main import create_app
+
+settings = get_settings()
 
 
 def _parse_json_lines(output: str) -> list[dict]:
@@ -27,8 +29,8 @@ def _parse_json_lines(output: str) -> list[dict]:
 def test_lifespan_logs_startup_and_shutdown(monkeypatch) -> None:
     stream = io.StringIO()
 
-    monkeypatch.setattr(settings, "LOG_JSON", True)
-    monkeypatch.setattr(settings, "LOG_LEVEL", "INFO")
+    monkeypatch.setattr(settings.logging, "as_json", True)
+    monkeypatch.setattr(settings.logging, "level", "INFO")
 
     with patch("sys.stdout", stream):
         app = create_app()

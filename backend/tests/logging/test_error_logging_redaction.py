@@ -5,8 +5,10 @@ from unittest.mock import patch
 from fastapi import APIRouter, Request
 from fastapi.testclient import TestClient
 
-from app.core.config.settings import settings
+from app.core.config.settings import get_settings
 from app.main import create_app
+
+settings = get_settings()
 
 
 def build_test_client(*, raise_server_exceptions: bool = False) -> TestClient:
@@ -46,8 +48,8 @@ def test_failed_request_logs_error_without_leaking_sensitive_values(
 ) -> None:
     stream = io.StringIO()
 
-    monkeypatch.setattr(settings, "LOG_JSON", True)
-    monkeypatch.setattr(settings, "LOG_LEVEL", "INFO")
+    monkeypatch.setattr(settings.logging, "as_json", True)
+    monkeypatch.setattr(settings.logging, "level", "INFO")
 
     with patch("sys.stdout", stream):
         client = build_test_client()
