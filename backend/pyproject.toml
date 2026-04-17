@@ -6,8 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "fastapi-saas-template"
 version = "0.1.0"
 description = "FastAPI SaaS backend template (modular monolith, GDPR-aware)"
-requires-python = ">=3.11"
-readme = "../README.draft.md"
+requires-python = ">=3.14"
+readme = "README.md"
 
 dependencies = [
     "fastapi>=0.135,<1.0",
@@ -16,6 +16,7 @@ dependencies = [
     "pydantic-settings>=2.13,<3.0",
     "scalar-fastapi>=1.8,<2.0",
     "structlog>=25.5,<26.0",
+    "hvac>=2.4,<3.0",
 ]
 
 [project.optional-dependencies]
@@ -26,11 +27,9 @@ dev = [
     "httpx>=0.28,<1.0",
 ]
 
-[tool.setuptools]
-package-dir = {"" = "backend"}
-
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["app*"]
 
 [tool.ruff]
 line-length = 88

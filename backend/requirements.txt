@@ -45,6 +45,8 @@ scalar-fastapi==1.8.2
     # via fastapi-saas-template (pyproject.toml)
 starlette==1.0.0
     # via fastapi
+structlog==25.5.0
+    # via fastapi-saas-template (pyproject.toml)
 typing-extensions==4.15.0
     # via
     #   fastapi
