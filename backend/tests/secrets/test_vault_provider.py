@@ -113,3 +113,51 @@ def test_vault_provider_raises_for_missing_approle_credentials(
 
     with pytest.raises(RuntimeError, match="requires role_id and secret_id"):
         provider.get("database/url")
+
+
+@patch("app.core.secrets.vault_provider.hvac.Client")
+def test_vault_provider_approle_login_success(mock_client_cls) -> None:
+    mock_client = Mock()
+    mock_client.is_authenticated.return_value = True
+    mock_client.auth.approle.login.return_value = None
+    mock_client.secrets.kv.v2.read_secret_version.return_value = {
+        "data": {
+            "data": {
+                "database_url": "postgresql://vault-db",
+            }
+        }
+    }
+    mock_client_cls.return_value = mock_client
+
+    provider = VaultSecretsProvider(
+        VaultSettings(
+            enabled=True,
+            addr="http://vault:8200",
+            auth_method="approle",
+            role_id="role",
+            secret_id="secret",
+        )
+    )
+
+    assert provider.get("database/url") == "postgresql://vault-db"
+
+
+@patch("app.core.secrets.vault_provider.hvac.Client")
+def test_vault_provider_raises_on_invalid_payload(mock_client_cls) -> None:
+    mock_client = Mock()
+    mock_client.is_authenticated.return_value = True
+    mock_client.secrets.kv.v2.read_secret_version.return_value = {
+        "data": {"data": None}
+    }
+    mock_client_cls.return_value = mock_client
+
+    provider = VaultSecretsProvider(
+        VaultSettings(
+            enabled=True,
+            addr="http://vault:8200",
+            token="dev-only-root-token",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="invalid KV v2"):
+        provider.get("database/url")

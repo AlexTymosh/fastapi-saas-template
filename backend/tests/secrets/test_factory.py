@@ -1,7 +1,8 @@
+from unittest.mock import patch
+
 from app.core.config.settings import Settings
 from app.core.secrets.env_provider import EnvSecretsProvider
 from app.core.secrets.factory import build_secrets_provider
-from app.core.secrets.vault_provider import VaultSecretsProvider
 
 
 def test_builds_env_provider_when_vault_disabled() -> None:
@@ -16,13 +17,20 @@ def test_builds_env_provider_when_vault_disabled() -> None:
     assert isinstance(provider, EnvSecretsProvider)
 
 
-def test_builds_vault_provider_when_vault_enabled() -> None:
+@patch("app.core.secrets.factory.VaultSecretsProvider")
+def test_builds_vault_provider_when_vault_enabled(
+    mock_vault_provider,
+) -> None:
     settings = Settings.model_validate(
         {
-            "vault": {"enabled": True},
+            "vault": {
+                "enabled": True,
+                "addr": "http://vault:8200",
+                "token": "dev-only-root-token",
+            },
         }
     )
 
-    provider = build_secrets_provider(settings)
+    build_secrets_provider(settings)
 
-    assert isinstance(provider, VaultSecretsProvider)
+    mock_vault_provider.assert_called_once_with(settings.vault)

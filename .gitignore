@@ -146,6 +146,7 @@ venv.bak/
 
 # Local stuff
 /local/
+desktop.ini
 
 # Spyder project settings
 .spyderproject

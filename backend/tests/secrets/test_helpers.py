@@ -46,3 +46,26 @@ def test_get_keycloak_client_secret_falls_back_to_settings() -> None:
     provider = DummyProvider({"security/keycloak_client_secret": None})
 
     assert get_keycloak_client_secret(settings, provider) == "settings-secret"
+
+
+def test_get_redis_url_falls_back_to_settings() -> None:
+    settings = Settings.model_validate({"redis": {"url": "redis://settings"}})
+    provider = DummyProvider({"redis/url": None})
+
+    assert get_redis_url(settings, provider) == "redis://settings"
+
+
+def test_get_keycloak_client_secret_prefers_provider() -> None:
+    settings = Settings.model_validate(
+        {"security": {"keycloak_client_secret": "settings-secret"}}
+    )
+    provider = DummyProvider({"security/keycloak_client_secret": "vault-secret"})
+
+    assert get_keycloak_client_secret(settings, provider) == "vault-secret"
+
+
+def test_get_database_url_returns_none_if_both_missing() -> None:
+    settings = Settings.model_validate({"database": {"url": None}})
+    provider = DummyProvider({"database/url": None})
+
+    assert get_database_url(settings, provider) is None
