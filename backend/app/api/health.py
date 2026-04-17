@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Response, status
 
-from app.core.errors.openapi import COMMON_ERROR_RESPONSES
-from app.core.errors.problem import ProblemDetails
+from app.core.errors.openapi import COMMON_ERROR_RESPONSES, problem_response
 from app.schemas.health import HealthLiveResponse, HealthReadyResponse
 from app.services.health import get_readiness_status
 
@@ -23,7 +22,7 @@ async def health_live() -> HealthLiveResponse:
     response_model=HealthReadyResponse,
     responses={
         **COMMON_ERROR_RESPONSES,
-        503: {"model": ProblemDetails, "description": "Service Unavailable"},
+        503: problem_response("Service Unavailable"),
     },
     name="health_ready",
 )
