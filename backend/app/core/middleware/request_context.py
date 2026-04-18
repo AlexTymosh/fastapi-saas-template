@@ -9,8 +9,16 @@ from app.core.context import request_id_ctx
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-:/]{0,127}$")
 
 
-def _extract_request_id(headers: Headers) -> str | None:
-    value = headers.get("x-request-id")
+def _extract_request_id(
+    headers: Headers,
+    *,
+    header_name: str,
+    trust_incoming_request_id: bool,
+) -> str | None:
+    if not trust_incoming_request_id:
+        return None
+
+    value = headers.get(header_name)
     if not value:
         return None
 
@@ -25,8 +33,16 @@ def _extract_request_id(headers: Headers) -> str | None:
 
 
 class RequestContextMiddleware:
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        header_name: str = "X-Request-ID",
+        trust_incoming_request_id: bool = True,
+    ) -> None:
         self.app = app
+        self.header_name = header_name
+        self.trust_incoming_request_id = trust_incoming_request_id
 
     async def __call__(
         self,
@@ -39,7 +55,11 @@ class RequestContextMiddleware:
             return
 
         headers = Headers(scope=scope)
-        request_id = _extract_request_id(headers) or str(uuid4())
+        request_id = _extract_request_id(
+            headers,
+            header_name=self.header_name,
+            trust_incoming_request_id=self.trust_incoming_request_id,
+        ) or str(uuid4())
 
         scope["request_id"] = request_id
         token = request_id_ctx.set(request_id)
@@ -47,7 +67,7 @@ class RequestContextMiddleware:
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
                 response_headers = MutableHeaders(scope=message)
-                response_headers["X-Request-ID"] = request_id
+                response_headers[self.header_name] = request_id
 
             await send(message)
 

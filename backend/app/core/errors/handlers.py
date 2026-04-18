@@ -26,12 +26,16 @@ def _get_request_id(request: Request) -> str | None:
     return str(scope_value) if scope_value else None
 
 
-def _problem_response(problem: ProblemDetails) -> JSONResponse:
+def _problem_response(
+    problem: ProblemDetails,
+    *,
+    request_id_header_name: str,
+) -> JSONResponse:
     request_id = get_request_id() or problem.request_id
 
     headers: dict[str, str] = {}
     if request_id:
-        headers["X-Request-ID"] = request_id
+        headers[request_id_header_name] = request_id
 
     return JSONResponse(
         status_code=problem.status,
@@ -66,7 +70,11 @@ def _validation_errors_to_invalid_params(
     return result
 
 
-def register_exception_handlers(app: FastAPI) -> None:
+def register_exception_handlers(
+    app: FastAPI,
+    *,
+    request_id_header_name: str = "X-Request-ID",
+) -> None:
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         problem = ProblemDetails(
@@ -79,7 +87,10 @@ def register_exception_handlers(app: FastAPI) -> None:
             request_id=_get_request_id(request),
             **exc.extra,
         )
-        return _problem_response(problem)
+        return _problem_response(
+            problem,
+            request_id_header_name=request_id_header_name,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
@@ -98,7 +109,10 @@ def register_exception_handlers(app: FastAPI) -> None:
             request_id=_get_request_id(request),
             errors=invalid_params,
         )
-        return _problem_response(problem)
+        return _problem_response(
+            problem,
+            request_id_header_name=request_id_header_name,
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(
@@ -115,7 +129,10 @@ def register_exception_handlers(app: FastAPI) -> None:
                 error_code=str(ErrorCode.NOT_FOUND),
                 request_id=_get_request_id(request),
             )
-            return _problem_response(problem)
+            return _problem_response(
+                problem,
+                request_id_header_name=request_id_header_name,
+            )
 
         detail = exc.detail if isinstance(exc.detail, str) else "HTTP error"
 
@@ -127,7 +144,10 @@ def register_exception_handlers(app: FastAPI) -> None:
             instance=_build_instance(request),
             request_id=_get_request_id(request),
         )
-        return _problem_response(problem)
+        return _problem_response(
+            problem,
+            request_id_header_name=request_id_header_name,
+        )
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(
@@ -143,4 +163,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             error_code=str(ErrorCode.INTERNAL_ERROR),
             request_id=_get_request_id(request),
         )
-        return _problem_response(problem)
+        return _problem_response(
+            problem,
+            request_id_header_name=request_id_header_name,
+        )

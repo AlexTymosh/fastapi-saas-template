@@ -18,6 +18,8 @@ class ApiSettings(BaseModel):
     v1_prefix: str = "/api/v1"
     docs_enabled: bool = True
     openapi_url: str = "/openapi.json"
+    docs_url: str | None = None
+    redoc_url: str | None = None
     scalar_path: str = "/scalar"
 
 

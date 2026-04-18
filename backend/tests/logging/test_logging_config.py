@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 from unittest.mock import patch
 
 from app.core.context import request_id_ctx
@@ -80,3 +81,28 @@ def test_configure_logging_outputs_console_event() -> None:
     assert "something_happened" in output
     assert "security" in output
     assert "test.logger" in output
+
+
+def test_configure_logging_does_not_duplicate_root_handlers() -> None:
+    configure_logging(
+        log_level="INFO",
+        log_json=True,
+        service_name="test-service",
+        environment="test",
+        version="0.1.0",
+    )
+    configure_logging(
+        log_level="INFO",
+        log_json=True,
+        service_name="test-service",
+        environment="test",
+        version="0.1.0",
+    )
+
+    root_logger = logging.getLogger()
+    app_handlers = [
+        handler
+        for handler in root_logger.handlers
+        if handler.get_name() == "app_root_structlog_handler"
+    ]
+    assert len(app_handlers) == 1

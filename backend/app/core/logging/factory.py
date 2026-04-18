@@ -65,10 +65,14 @@ def configure_logging(
     )
 
     handler = logging.StreamHandler(sys.stdout)
+    handler.set_name("app_root_structlog_handler")
     handler.setFormatter(formatter)
 
     root_logger = logging.getLogger()
-    root_logger.handlers.clear()
+    for existing_handler in list(root_logger.handlers):
+        if existing_handler.get_name() == "app_root_structlog_handler":
+            root_logger.removeHandler(existing_handler)
+            existing_handler.close()
     root_logger.addHandler(handler)
     root_logger.setLevel(log_level.upper())
 
