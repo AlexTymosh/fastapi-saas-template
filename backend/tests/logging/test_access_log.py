@@ -5,10 +5,7 @@ from unittest.mock import patch
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
-from app.core.config.settings import get_settings
 from app.main import create_app
-
-settings = get_settings()
 
 
 def build_test_client(*, raise_server_exceptions: bool = True) -> TestClient:
@@ -45,8 +42,8 @@ def _parse_json_lines(output: str) -> list[dict]:
 
 def test_access_log_middleware_logs_success_request(monkeypatch) -> None:
     stream = io.StringIO()
-    monkeypatch.setattr(settings.logging, "as_json", True)
-    monkeypatch.setattr(settings.logging, "level", "INFO")
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
 
     with patch("sys.stdout", stream):
         client = build_test_client()
@@ -72,8 +69,8 @@ def test_access_log_middleware_logs_success_request(monkeypatch) -> None:
 
 def test_access_log_middleware_logs_failed_request(monkeypatch) -> None:
     stream = io.StringIO()
-    monkeypatch.setattr(settings.logging, "as_json", True)
-    monkeypatch.setattr(settings.logging, "level", "INFO")
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
 
     with patch("sys.stdout", stream):
         client = build_test_client(raise_server_exceptions=False)

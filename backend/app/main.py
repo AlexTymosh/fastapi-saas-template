@@ -23,6 +23,8 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # App factory should always pick up latest env overrides in tests and runtime.
+    get_settings.cache_clear()
     settings = get_settings()
 
     configure_logging(

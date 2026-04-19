@@ -1,21 +1,12 @@
-import importlib
-
 from fastapi.testclient import TestClient
+from app.core.config.settings import get_settings
+from app.main import create_app
 
 
 def _build_app(monkeypatch, *, docs_enabled: str):
     monkeypatch.setenv("API__DOCS_ENABLED", docs_enabled)
-
-    import app.api.master_router as master_router_module
-    import app.core.config.settings as settings_module
-    import app.main as main_module
-
-    settings_module.get_settings.cache_clear()
-    importlib.reload(settings_module)
-    importlib.reload(master_router_module)
-    importlib.reload(main_module)
-
-    return main_module.create_app()
+    get_settings.cache_clear()
+    return create_app()
 
 
 def test_openapi_json_exists_when_docs_enabled(monkeypatch) -> None:
@@ -79,9 +70,6 @@ def test_openapi_health_ready_documents_503_problem_response(monkeypatch) -> Non
 
     content = responses["503"]["content"]
     assert "application/problem+json" in content
-
-    schema_ref = content["application/problem+json"]["schema"]["$ref"]
-    assert schema_ref.endswith("/ProblemDetails")
 
     schema_ref = content["application/problem+json"]["schema"]["$ref"]
     assert schema_ref.endswith("/ProblemDetails")
