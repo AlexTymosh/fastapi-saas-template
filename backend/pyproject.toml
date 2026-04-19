@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "fastapi-saas-template"
 version = "0.1.0"
 description = "FastAPI SaaS backend template (modular monolith, GDPR-aware)"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 readme = "README.md"
 
 dependencies = [
@@ -17,6 +17,9 @@ dependencies = [
     "scalar-fastapi>=1.8,<2.0",
     "structlog>=25.5,<26.0",
     "hvac>=2.4,<3.0",
+    "sqlalchemy[asyncio]>=2.0,<3.0",
+    "alembic>=1.16,<2.0",
+    "psycopg[binary]>=3.2,<4.0",
 ]
 
 [project.optional-dependencies]
@@ -44,3 +47,8 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.alembic]
+script_location = "%(here)s/migrations"
+prepend_sys_path = ["."]
+sqlalchemy.url = "postgresql+psycopg://postgres:postgres@localhost:5432/fastapi_saas_template"
