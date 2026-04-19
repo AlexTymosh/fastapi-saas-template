@@ -37,23 +37,22 @@ class VaultSettings(BaseModel):
     enabled: bool = False
     addr: str = "http://vault:8200"
     namespace: str | None = None
-
-    # dev only for now
     token: str | None = None
-
     mount: str = "secret"
     path: str = "fastapi-saas-template"
-
     auth_method: Literal["token", "approle"] = "token"
     role_id: str | None = None
     secret_id: str | None = None
-
     fail_fast: bool = False
 
 
 class DatabaseSettings(BaseModel):
     url: str | None = None
     echo: bool = False
+    pool_size: int = 10
+    max_overflow: int = 20
+    pool_timeout: int = 30
+    pool_recycle: int = 1800
 
 
 class RedisSettings(BaseModel):

@@ -25,9 +25,9 @@ def _parse_json_lines(output: str) -> list[dict]:
 
 
 def test_lifespan_logs_startup_and_shutdown(monkeypatch) -> None:
-    settings = get_settings()
-    monkeypatch.setattr(settings.logging, "as_json", True)
-    monkeypatch.setattr(settings.logging, "level", "INFO")
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
+    get_settings.cache_clear()
 
     stream = io.StringIO()
 

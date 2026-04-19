@@ -6,6 +6,7 @@ from starlette.responses import RedirectResponse
 
 from app.api.master_router import build_master_router
 from app.core.config.settings import get_settings
+from app.core.db import dispose_engine
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware.access_log import AccessLogMiddleware
@@ -19,13 +20,12 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await dispose_engine()
         log.info("app_stopped")
 
 
 def create_app() -> FastAPI:
-    # App factory should always pick up latest env overrides in tests and runtime.
     get_settings.cache_clear()
-
     settings = get_settings()
 
     configure_logging(
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
         trust_incoming_request_id=settings.request_context.trust_incoming_request_id,
     )
     app.add_middleware(AccessLogMiddleware)
+
     register_exception_handlers(
         app,
         request_id_header_name=settings.request_context.header_name,

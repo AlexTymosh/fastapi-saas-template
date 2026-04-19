@@ -22,6 +22,8 @@ def configure_logging(
     environment: str,
     version: str,
 ) -> None:
+    structlog.reset_defaults()
+
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
 
     shared_processors = [

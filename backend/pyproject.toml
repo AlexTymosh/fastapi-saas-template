@@ -17,6 +17,9 @@ dependencies = [
     "scalar-fastapi>=1.8,<2.0",
     "structlog>=25.5,<26.0",
     "hvac>=2.4,<3.0",
+    "sqlalchemy[asyncio]>=2.0,<2.2",
+    "alembic>=1.18,<2.0",
+    "psycopg[binary]>=3.1,<4.0",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +36,7 @@ include = ["app*"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -44,3 +47,9 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.alembic]
+script_location = "%(here)s/migrations"
+prepend_sys_path = ["%(here)s"]
+file_template = "%%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d_%%(rev)s_%%(slug)s"
+timezone = "UTC"

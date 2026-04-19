@@ -11,26 +11,21 @@ services:
       APP__ENVIRONMENT: local
       LOGGING__AS_JSON: "true"
 
-      VAULT__ENABLED: "true"
-      VAULT__ADDR: http://vault:8200
-      VAULT__TOKEN: dev-only-root-token
-      VAULT__MOUNT: secret
-      VAULT__PATH: fastapi-saas-template
-      VAULT__AUTH_METHOD: token
+      DATABASE__URL: postgresql+psycopg://app:app@postgres:5432/app
+      TEST_DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/app
+
+      REDIS__URL: redis://redis:6379/0
+
+      VAULT__ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      vault:
-        condition: service_healthy
-      vault-init:
-        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./.env:/app/.env:ro
     command: >
       uvicorn app.main:app
       --host 0.0.0.0

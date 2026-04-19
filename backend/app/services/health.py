@@ -1,5 +1,7 @@
 import asyncio
 
+from app.core.config.settings import get_settings
+from app.core.db import ping_database
 from app.core.logging import LogCategory, get_logger
 from app.schemas.health import HealthReadyResponse, ServiceStatus
 
@@ -7,11 +9,11 @@ log = get_logger(__name__)
 
 
 async def _ping_postgresql() -> None:
-    raise NotImplementedError("PostgreSQL check not implemented")
+    await ping_database()
 
 
 async def _ping_redis() -> None:
-    raise NotImplementedError("Redis check not implemented")
+    raise NotImplementedError("Redis check not implemented yet")
 
 
 async def check_postgresql(timeout: float = 1.0) -> bool:
@@ -41,22 +43,21 @@ async def check_redis(timeout: float = 0.5) -> bool:
 
 
 async def get_readiness_status() -> HealthReadyResponse:
-    pg_ok, redis_ok = await asyncio.gather(
-        check_postgresql(),
-        check_redis(),
-    )
+    settings = get_settings()
+    checks: dict[str, bool] = {}
 
-    checks: dict[str, bool] = {
-        "postgresql": pg_ok,
-        "redis": redis_ok,
-    }
+    if settings.database.url:
+        checks["postgresql"] = await check_postgresql()
+
+    if settings.redis.url:
+        checks["redis"] = await check_redis()
 
     services = {
         name: ServiceStatus.OK if ok else ServiceStatus.UNAVAILABLE
         for name, ok in checks.items()
     }
 
-    all_ok = all(checks.values())
+    all_ok = all(checks.values()) if checks else True
     result = HealthReadyResponse(
         status=ServiceStatus.OK if all_ok else ServiceStatus.UNAVAILABLE,
         services=services,

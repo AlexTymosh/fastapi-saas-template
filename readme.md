@@ -39,12 +39,31 @@ cp .env.example .env
 ### 4. Run project
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
 ---
 
-### 5. Check application
+### 5. Apply database migrations (first run)
+
+After the containers are up, apply Alembic migrations inside the `app` container:
+
+```bash
+docker compose exec app python -m alembic upgrade head
+```
+
+> [!NOTE]
+> This step is required on the first run and after resetting volumes with `docker compose down -v`.
+
+Optional check:
+
+```bash
+docker compose exec app python -m alembic check
+```
+
+---
+
+### 6. Check application
 
 Health endpoint:
 
@@ -58,16 +77,22 @@ Expected response:
 {"status":"ok"}
 ```
 
+Readiness endpoint:
+
+```bash
+curl http://localhost:8000/api/v1/health/ready
+```
+
 ---
 
-### 6. Services
+### 7. Services
 
-| Service   | URL / Host                  |
-|----------|----------------------------|
-| API      | http://localhost:8000      |
-| Postgres | postgres:5432 (internal)   |
-| Redis    | redis:6379 (internal)      |
-| Vault    | http://localhost:8200      |
+| Service   | URL / Host                |
+|-----------|---------------------------|
+| API       | http://localhost:8000     |
+| Postgres  | postgres:5432 (internal)  |
+| Redis     | redis:6379 (internal)     |
+| Vault     | http://localhost:8200     |
 
 Vault dev token:
 
@@ -77,7 +102,7 @@ dev-only-root-token
 
 ---
 
-### 7. Vault (development)
+### 8. Vault (development)
 
 Secrets are automatically initialized via `vault-init` container.
 
@@ -89,7 +114,7 @@ secret/fastapi-saas-template
 
 ---
 
-### 8. Stop project
+### 9. Stop project
 
 ```bash
 docker compose down
@@ -100,6 +125,15 @@ Remove volumes (reset DB):
 ```bash
 docker compose down -v
 ```
+
+> [!IMPORTANT]
+> After `docker compose down -v`, the database is recreated from scratch.  
+> Run migrations again:
+>
+> ```bash
+> docker compose up --build -d
+> docker compose exec app python -m alembic upgrade head
+> ```
 
 ---
 
