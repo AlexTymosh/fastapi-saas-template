@@ -5,10 +5,7 @@ from unittest.mock import patch
 from fastapi import APIRouter, Request
 from fastapi.testclient import TestClient
 
-from app.core.config.settings import get_settings
 from app.main import create_app
-
-settings = get_settings()
 
 
 def build_test_client(*, raise_server_exceptions: bool = False) -> TestClient:
@@ -48,8 +45,8 @@ def test_failed_request_logs_error_without_leaking_sensitive_values(
 ) -> None:
     stream = io.StringIO()
 
-    monkeypatch.setattr(settings.logging, "as_json", True)
-    monkeypatch.setattr(settings.logging, "level", "INFO")
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
 
     with patch("sys.stdout", stream):
         client = build_test_client()
@@ -82,9 +79,9 @@ def test_failed_request_logs_error_without_leaking_sensitive_values(
     assert record["request_id"] == "req-500-redaction"
     assert "duration_ms" in record
 
-    # В итоговом log output не должно быть исходных секретов.
+    # The final log output shouldn't contain the original secrets.
     assert "secret123" not in output
     assert "abc123" not in output
 
-    # Email тоже не должен утечь как есть.
+    # The email shouldn't leak
     assert "alex@example.com" not in output
