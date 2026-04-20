@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedIdentity, get_current_identity
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
-from app.memberships.services.memberships import MembershipService
 from app.organisations.schemas.organisations import (
     CreateOrganisationRequest,
     MembershipListResponse,
@@ -77,14 +76,9 @@ async def list_organisation_memberships(
     db_session: DbSessionDep,
 ) -> MembershipListResponse:
     access_service = OrganisationAccessService(db_session)
-    membership_service = MembershipService(db_session)
-
-    await access_service.ensure_can_list_memberships(
+    memberships = await access_service.list_memberships_for_member_organisation(
         identity=identity,
         organisation_id=organisation_id,
-    )
-    memberships = await membership_service.list_memberships_for_organisation(
-        organisation_id,
     )
 
     return MembershipListResponse(

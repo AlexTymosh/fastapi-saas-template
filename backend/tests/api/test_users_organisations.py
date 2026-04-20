@@ -241,6 +241,38 @@ def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> None:
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Private Org", "slug": "private-org-provision"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
+            sub="kc-user-access-1",
+            email="access1@example.com",
+            first_name="Access",
+            last_name="Denied",
+        )
+        response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 403
+
+    async def _fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-access-1")
+            )
+            return result.scalar_one()
+
+    user = run_async(_fetch_user())
+    assert user.email == "access1@example.com"
+    run_async(engine.dispose())
+
+
 def test_get_organisation_returns_200_for_member(tmp_path) -> None:
     app, engine, _ = _create_client_and_session_factory(tmp_path)
 
@@ -287,6 +319,38 @@ def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
         assert response.status_code == 403
         assert response.headers["content-type"].startswith("application/problem+json")
 
+    run_async(engine.dispose())
+
+
+def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> None:
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Private Org", "slug": "private-org-provision-memberships"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
+            sub="kc-user-access-2",
+            email="access2@example.com",
+            first_name="Access",
+            last_name="Denied",
+        )
+        response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
+        assert response.status_code == 403
+
+    async def _fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-access-2")
+            )
+            return result.scalar_one()
+
+    user = run_async(_fetch_user())
+    assert user.email == "access2@example.com"
     run_async(engine.dispose())
 
 
