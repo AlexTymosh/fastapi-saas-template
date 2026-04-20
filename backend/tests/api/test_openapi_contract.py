@@ -74,3 +74,17 @@ def test_openapi_health_ready_documents_503_problem_response(monkeypatch) -> Non
 
     schema_ref = content["application/problem+json"]["schema"]["$ref"]
     assert schema_ref.endswith("/ProblemDetails")
+
+
+def test_openapi_contains_user_and_organisation_endpoints(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    assert "/api/v1/users/me" in spec["paths"]
+    assert "/api/v1/organisations" in spec["paths"]
+    assert "/api/v1/organisations/{organisation_id}" in spec["paths"]
+    assert "/api/v1/organisations/{organisation_id}/memberships" in spec["paths"]
