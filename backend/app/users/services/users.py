@@ -11,6 +11,7 @@ from app.users.repositories.users import UserRepository
 
 class UserService:
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self.user_repository = UserRepository(session)
 
     async def get_or_create_current_user(self, identity: AuthenticatedIdentity) -> User:
@@ -58,6 +59,14 @@ class UserService:
 
         return user
 
+    async def provision_current_user(self, identity: AuthenticatedIdentity) -> User:
+        """Persist JIT user projection changes with explicit transaction boundaries."""
+        if self.session.in_transaction():
+            return await self.get_or_create_current_user(identity)
+
+        async with self.session.begin():
+            return await self.get_or_create_current_user(identity)
+
     async def mark_onboarding_completed(self, user: User) -> User:
         if user.onboarding_completed:
             return user
@@ -68,4 +77,4 @@ class UserService:
         )
 
     async def get_me(self, identity: AuthenticatedIdentity) -> User:
-        return await self.get_or_create_current_user(identity)
+        return await self.provision_current_user(identity)

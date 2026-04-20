@@ -22,7 +22,29 @@ def _run_alembic(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess
 
 
 @pytest.mark.integration
-def test_alembic_upgrade_head_and_check() -> None:
+def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path}/migrations.db"
+
+    env = os.environ.copy()
+    env["DATABASE__URL"] = database_url
+
+    upgrade = _run_alembic("upgrade", "head", env=env)
+    assert upgrade.returncode == 0, upgrade.stdout + "\n" + upgrade.stderr
+
+    check = _run_alembic("check", env=env)
+    assert check.returncode == 0, check.stdout + "\n" + check.stderr
+
+    downgrade = _run_alembic("downgrade", "base", env=env)
+    assert downgrade.returncode == 0, downgrade.stdout + "\n" + downgrade.stderr
+
+    upgrade_again = _run_alembic("upgrade", "head", env=env)
+    assert upgrade_again.returncode == 0, (
+        upgrade_again.stdout + "\n" + upgrade_again.stderr
+    )
+
+
+@pytest.mark.integration
+def test_alembic_upgrade_head_and_check_with_external_database() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("TEST_DATABASE_URL is not set")

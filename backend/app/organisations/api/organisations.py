@@ -16,9 +16,8 @@ from app.organisations.schemas.organisations import (
     MembershipResponse,
     OrganisationResponse,
 )
+from app.organisations.services.access import OrganisationAccessService
 from app.organisations.services.onboarding import OnboardingService
-from app.organisations.services.organisations import OrganisationService
-from app.users.services.users import UserService
 
 router = APIRouter(prefix="/organisations", tags=["organisations"])
 
@@ -58,14 +57,9 @@ async def get_organisation(
     identity: CurrentIdentityDep,
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
-    user_service = UserService(db_session)
-    membership_service = MembershipService(db_session)
-    organisation_service = OrganisationService(db_session)
-
-    user = await user_service.get_or_create_current_user(identity)
-    organisation = await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_organisation_access(
-        user_id=user.id,
+    access_service = OrganisationAccessService(db_session)
+    organisation = await access_service.get_organisation_for_member(
+        identity=identity,
         organisation_id=organisation_id,
     )
     return OrganisationResponse.model_validate(organisation)
@@ -82,14 +76,11 @@ async def list_organisation_memberships(
     identity: CurrentIdentityDep,
     db_session: DbSessionDep,
 ) -> MembershipListResponse:
-    user_service = UserService(db_session)
-    organisation_service = OrganisationService(db_session)
+    access_service = OrganisationAccessService(db_session)
     membership_service = MembershipService(db_session)
 
-    user = await user_service.get_or_create_current_user(identity)
-    await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_organisation_access(
-        user_id=user.id,
+    await access_service.ensure_can_list_memberships(
+        identity=identity,
         organisation_id=organisation_id,
     )
     memberships = await membership_service.list_memberships_for_organisation(

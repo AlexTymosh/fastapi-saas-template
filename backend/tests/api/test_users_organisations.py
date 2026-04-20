@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -67,30 +68,40 @@ def _create_client_and_session_factory(tmp_path):
     return app, engine, session_factory
 
 
-def test_users_me_creates_projection_and_does_not_duplicate(tmp_path) -> None:
+def test_users_me_persists_projection_across_request_boundaries(tmp_path) -> None:
     app, engine, session_factory = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
         assert first.status_code == 200
         first_payload = first.json()
-        assert first_payload["external_auth_id"] == "kc-user-1"
 
-        second = client.get("/api/v1/users/me")
-        assert second.status_code == 200
-        assert second.json()["id"] == first_payload["id"]
-
-    async def _count_users() -> int:
+    async def _fetch_user() -> User:
         async with session_factory() as session:
             result = await session.execute(select(User))
-            return len(result.scalars().all())
+            return result.scalar_one()
 
-    assert run_async(_count_users()) == 1
+    persisted_after_first = run_async(_fetch_user())
+    first_updated_at = persisted_after_first.updated_at
+
+    with TestClient(app) as client:
+        second = client.get("/api/v1/users/me")
+        assert second.status_code == 200
+        second_payload = second.json()
+
+    persisted_after_second = run_async(_fetch_user())
+
+    assert first_payload["external_auth_id"] == "kc-user-1"
+    assert second_payload["id"] == first_payload["id"]
+    assert persisted_after_first.id == persisted_after_second.id
+    assert persisted_after_second.external_auth_id == "kc-user-1"
+    assert persisted_after_second.updated_at == first_updated_at
+
     run_async(engine.dispose())
 
 
 def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
@@ -99,7 +110,15 @@ def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
 
+    async def _updated_at() -> datetime:
+        async with session_factory() as session:
+            result = await session.execute(select(User.updated_at))
+            return result.scalar_one()
+
+    persisted_updated_at = run_async(_updated_at())
+
     assert first.json()["updated_at"] == second.json()["updated_at"]
+    assert persisted_updated_at.isoformat() == first.json()["updated_at"]
     run_async(engine.dispose())
 
 
