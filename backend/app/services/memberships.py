@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.repositories.memberships import MembershipRepository
 
@@ -19,11 +21,14 @@ class MembershipService:
         organisation_id: UUID,
         role: MembershipRole,
     ) -> Membership:
-        return await self.membership_repository.create_membership(
-            user_id=user_id,
-            organisation_id=organisation_id,
-            role=role,
-        )
+        try:
+            return await self.membership_repository.create_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+        except IntegrityError as exc:
+            raise ConflictError(detail="Membership already exists") from exc
 
     async def list_memberships_for_organisation(
         self,
@@ -37,3 +42,16 @@ class MembershipService:
         return await self.membership_repository.list_memberships_for_user(
             user_id=user_id,
         )
+
+    async def ensure_user_has_membership(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+    ) -> None:
+        has_membership = await self.membership_repository.has_membership(
+            user_id=user_id,
+            organisation_id=organisation_id,
+        )
+        if not has_membership:
+            raise ForbiddenError(detail="You do not have access to this organisation")

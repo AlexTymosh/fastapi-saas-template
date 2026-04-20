@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors.exceptions import ConflictError, NotFoundError
@@ -18,7 +19,10 @@ class OrganisationService:
         if existing is not None:
             raise ConflictError(detail="Organisation slug already exists")
 
-        return await self.organisation_repository.create(name=name, slug=slug)
+        try:
+            return await self.organisation_repository.create(name=name, slug=slug)
+        except IntegrityError as exc:
+            raise ConflictError(detail="Organisation slug already exists") from exc
 
     async def get_organisation(self, organisation_id: UUID) -> Organisation:
         organisation = await self.organisation_repository.get_by_id(organisation_id)
