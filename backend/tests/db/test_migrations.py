@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -21,11 +22,61 @@ def _run_alembic(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess
     )
 
 
+def _is_safe_test_database_url(database_url: str) -> bool:
+    """
+    Guardrail for optional external migration validation.
+
+    Accept only clearly test-scoped URLs by default:
+    - local hostnames (localhost / 127.0.0.1)
+    - db name/path contains one of: test, ci, tmp
+    """
+    parsed = urlparse(database_url)
+    if parsed.scheme.startswith("sqlite"):
+        return True
+
+    host = (parsed.hostname or "").lower()
+    db_name_or_path = (parsed.path or "").lower()
+    markers = ("test", "ci", "tmp")
+    has_test_marker = any(marker in db_name_or_path for marker in markers)
+    is_local_host = host in {"localhost", "127.0.0.1"}
+    return is_local_host and has_test_marker
+
+
 @pytest.mark.integration
-def test_alembic_upgrade_head_and_check() -> None:
+def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path}/migrations.db"
+
+    env = os.environ.copy()
+    env["DATABASE__URL"] = database_url
+
+    upgrade = _run_alembic("upgrade", "head", env=env)
+    assert upgrade.returncode == 0, upgrade.stdout + "\n" + upgrade.stderr
+
+    check = _run_alembic("check", env=env)
+    assert check.returncode == 0, check.stdout + "\n" + check.stderr
+
+    downgrade = _run_alembic("downgrade", "base", env=env)
+    assert downgrade.returncode == 0, downgrade.stdout + "\n" + downgrade.stderr
+
+    upgrade_again = _run_alembic("upgrade", "head", env=env)
+    assert upgrade_again.returncode == 0, (
+        upgrade_again.stdout + "\n" + upgrade_again.stderr
+    )
+
+
+@pytest.mark.integration
+def test_alembic_upgrade_head_and_check_with_external_database() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("TEST_DATABASE_URL is not set")
+    if os.getenv("ENABLE_EXTERNAL_MIGRATION_DB_TEST") != "1":
+        pytest.skip(
+            "Set ENABLE_EXTERNAL_MIGRATION_DB_TEST=1 to run external DB migration test"
+        )
+    if not _is_safe_test_database_url(database_url):
+        pytest.skip(
+            "TEST_DATABASE_URL must point to a clearly test-scoped local database"
+        )
 
     env = os.environ.copy()
     env["DATABASE__URL"] = database_url

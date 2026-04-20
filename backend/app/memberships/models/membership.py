@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,11 +12,12 @@ from app.core.db.mixins import TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from app.organisations.models.organisation import Organisation
-    from app.users import User
+    from app.users.models.user import User
 
 
 class MembershipRole(StrEnum):
     OWNER = "owner"
+    ADMIN = "admin"
     MEMBER = "member"
 
 
@@ -29,12 +31,12 @@ class Membership(UUIDMixin, TimestampMixin, Base):
         ),
     )
 
-    user_id: Mapped[object] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    organisation_id: Mapped[object] = mapped_column(
+    organisation_id: Mapped[UUID] = mapped_column(
         ForeignKey("organisations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
