@@ -3,12 +3,14 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.auth import AuthenticatedIdentity, get_current_identity
 from app.core.db import Base, get_db_session
 from app.main import create_app
-from app.memberships.models.membership import MembershipRole
+from app.memberships.models.membership import Membership, MembershipRole
+from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
 
@@ -22,13 +24,20 @@ def _identity() -> AuthenticatedIdentity:
     )
 
 
-def _identity_for(sub: str, email: str) -> AuthenticatedIdentity:
+def _identity_for(
+    sub: str,
+    email: str,
+    *,
+    email_verified: bool = True,
+    first_name: str = "Test",
+    last_name: str = "User",
+) -> AuthenticatedIdentity:
     return AuthenticatedIdentity(
         sub=sub,
         email=email,
-        email_verified=True,
-        first_name="Test",
-        last_name="User",
+        email_verified=email_verified,
+        first_name=first_name,
+        last_name=last_name,
     )
 
 
@@ -58,7 +67,7 @@ def _create_client_and_session_factory(tmp_path):
     return app, engine, session_factory
 
 
-def test_user_upsert_by_sub_and_no_duplicates(tmp_path) -> None:
+def test_users_me_creates_projection_and_does_not_duplicate(tmp_path) -> None:
     app, engine, session_factory = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
@@ -72,15 +81,47 @@ def test_user_upsert_by_sub_and_no_duplicates(tmp_path) -> None:
         assert second.json()["id"] == first_payload["id"]
 
     async def _count_users() -> int:
-        from sqlalchemy import select
-
-        from app.users.models.user import User
-
         async with session_factory() as session:
             result = await session.execute(select(User))
             return len(result.scalars().all())
 
     assert run_async(_count_users()) == 1
+    run_async(engine.dispose())
+
+
+def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
+    app, engine, _ = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        first = client.get("/api/v1/users/me")
+        assert first.status_code == 200
+
+        second = client.get("/api/v1/users/me")
+        assert second.status_code == 200
+
+    assert first.json()["updated_at"] == second.json()["updated_at"]
+    run_async(engine.dispose())
+
+
+def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
+    app, engine, _ = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        first = client.get("/api/v1/users/me")
+        assert first.status_code == 200
+
+        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
+            sub="kc-user-1",
+            email="owner-updated@example.com",
+            first_name="OwnerUpdated",
+        )
+
+        second = client.get("/api/v1/users/me")
+        assert second.status_code == 200
+
+    assert second.json()["email"] == "owner-updated@example.com"
+    assert second.json()["first_name"] == "OwnerUpdated"
+    assert second.json()["updated_at"] != first.json()["updated_at"]
     run_async(engine.dispose())
 
 
@@ -90,9 +131,10 @@ def test_create_organisation_sets_owner_and_onboarding_completed(tmp_path) -> No
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/organisations",
-            json={"name": "Acme Ltd", "slug": "acme"},
+            json={"name": "Acme Ltd", "slug": "  AcMe-ORG  "},
         )
         assert response.status_code == 201
+        assert response.json()["slug"] == "acme-org"
         organisation_id = response.json()["id"]
 
         me = client.get("/api/v1/users/me")
@@ -107,8 +149,9 @@ def test_create_organisation_sets_owner_and_onboarding_completed(tmp_path) -> No
     run_async(engine.dispose())
 
 
-def test_admin_role_exists_in_enum() -> None:
+def test_admin_and_owner_roles_exist_in_enum() -> None:
     assert MembershipRole.ADMIN.value == "admin"
+    assert MembershipRole.OWNER.value == "owner"
 
 
 def test_organisation_slug_conflict_returns_problem_details(tmp_path) -> None:
@@ -123,11 +166,25 @@ def test_organisation_slug_conflict_returns_problem_details(tmp_path) -> None:
 
         second = client.post(
             "/api/v1/organisations",
-            json={"name": "Second", "slug": "taken"},
+            json={"name": "Second", "slug": "  TAKEN "},
         )
         assert second.status_code == 409
         assert second.headers["content-type"].startswith("application/problem+json")
         assert second.json()["error_code"] == "conflict"
+
+    run_async(engine.dispose())
+
+
+def test_create_organisation_invalid_slug_returns_validation_problem(tmp_path) -> None:
+    app, engine, _ = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Bad slug", "slug": "Not Valid!"},
+        )
+        assert response.status_code == 422
+        assert response.headers["content-type"].startswith("application/problem+json")
 
     run_async(engine.dispose())
 
@@ -143,7 +200,7 @@ def test_get_organisation_not_found_returns_problem_details(tmp_path) -> None:
     run_async(engine.dispose())
 
 
-def test_get_organisation_requires_membership(tmp_path) -> None:
+def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
     app, engine, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
@@ -165,7 +222,34 @@ def test_get_organisation_requires_membership(tmp_path) -> None:
     run_async(engine.dispose())
 
 
-def test_list_memberships_requires_membership(tmp_path) -> None:
+def test_get_organisation_returns_200_for_member(tmp_path) -> None:
+    app, engine, _ = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Member Org", "slug": "member-org"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 200
+
+    run_async(engine.dispose())
+
+
+def test_list_memberships_not_found_returns_404(tmp_path) -> None:
+    app, engine, _ = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/organisations/{uuid4()}/memberships")
+        assert response.status_code == 404
+
+    run_async(engine.dispose())
+
+
+def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
     app, engine, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
@@ -184,4 +268,28 @@ def test_list_memberships_requires_membership(tmp_path) -> None:
         assert response.status_code == 403
         assert response.headers["content-type"].startswith("application/problem+json")
 
+    run_async(engine.dispose())
+
+
+def test_list_memberships_returns_200_for_member(tmp_path) -> None:
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Visible Org", "slug": "visible-org"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+
+    async def _membership_role() -> str:
+        async with session_factory() as session:
+            result = await session.execute(select(Membership))
+            return result.scalar_one().role.value
+
+    assert run_async(_membership_role()) == MembershipRole.OWNER.value
     run_async(engine.dispose())

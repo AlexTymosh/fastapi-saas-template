@@ -9,16 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedIdentity, get_current_identity
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
-from app.schemas.organisations import (
+from app.memberships.services.memberships import MembershipService
+from app.organisations.schemas.organisations import (
     CreateOrganisationRequest,
     MembershipListResponse,
     MembershipResponse,
     OrganisationResponse,
 )
-from app.services.memberships import MembershipService
-from app.services.onboarding import OnboardingService
-from app.services.organisations import OrganisationService
-from app.services.users import UserService
+from app.organisations.services.onboarding import OnboardingService
+from app.organisations.services.organisations import OrganisationService
+from app.users.services.users import UserService
 
 router = APIRouter(prefix="/organisations", tags=["organisations"])
 
@@ -64,7 +64,7 @@ async def get_organisation(
 
     user = await user_service.get_or_create_current_user(identity)
     organisation = await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_membership(
+    await membership_service.ensure_user_has_organisation_access(
         user_id=user.id,
         organisation_id=organisation_id,
     )
@@ -88,7 +88,7 @@ async def list_organisation_memberships(
 
     user = await user_service.get_or_create_current_user(identity)
     await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_membership(
+    await membership_service.ensure_user_has_organisation_access(
         user_id=user.id,
         organisation_id=organisation_id,
     )

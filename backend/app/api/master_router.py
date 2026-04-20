@@ -1,8 +1,8 @@
 from fastapi import APIRouter
 
 from app.api.health import router as health_router
-from app.api.organisations import router as organisations_router
-from app.api.users import router as users_router
+from app.organisations.api.organisations import router as organisations_router
+from app.users.api.users import router as users_router
 
 
 def build_master_router(*, v1_prefix: str) -> APIRouter:

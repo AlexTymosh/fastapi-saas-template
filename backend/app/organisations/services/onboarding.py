@@ -4,11 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedIdentity
 from app.memberships.models.membership import Membership, MembershipRole
+from app.memberships.services.memberships import MembershipService
 from app.organisations.models.organisation import Organisation
-from app.services.memberships import MembershipService
-from app.services.organisations import OrganisationService
-from app.services.users import UserService
+from app.organisations.services.organisations import OrganisationService
 from app.users.models.user import User
+from app.users.services.users import UserService
 
 
 class OnboardingService:
@@ -36,10 +36,6 @@ class OnboardingService:
                 organisation_id=organisation.id,
                 role=MembershipRole.OWNER,
             )
-            if not user.onboarding_completed:
-                await self.user_service.user_repository.update_onboarding_completed(
-                    user=user,
-                    onboarding_completed=True,
-                )
+            user = await self.user_service.mark_onboarding_completed(user)
 
         return user, organisation, membership

@@ -15,7 +15,6 @@ down_revision: str | None = "0001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-
 old_membership_role = sa.Enum(
     "owner",
     "member",
@@ -32,7 +31,8 @@ new_membership_role = sa.Enum(
 
 
 def upgrade() -> None:
-    op.alter_column("users", "keycloak_id", new_column_name="external_auth_id")
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column("keycloak_id", new_column_name="external_auth_id")
 
     connection = op.get_bind()
     null_external_ids = connection.execute(
@@ -40,16 +40,21 @@ def upgrade() -> None:
     ).scalar_one()
     if null_external_ids:
         raise RuntimeError(
-            "Migration 0002 aborted: users.external_auth_id has NULL values. "
-            "Please backfill external IDs before applying this migration."
+            "Migration 0002 cannot proceed: users.external_auth_id contains NULL "
+            "values. Backfill all user external identity values before retrying."
         )
 
-    op.alter_column(
-        "users",
-        "external_auth_id",
-        existing_type=sa.String(length=255),
-        nullable=False,
-    )
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.drop_constraint(op.f("uq_users_keycloak_id"), type_="unique")
+        batch_op.alter_column(
+            "external_auth_id",
+            existing_type=sa.String(length=255),
+            nullable=False,
+        )
+        batch_op.create_unique_constraint(
+            op.f("uq_users_external_auth_id"),
+            ["external_auth_id"],
+        )
 
     op.add_column(
         "users",
@@ -87,6 +92,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Ensure existing rows are representable before removing the admin enum value.
+    op.execute(
+        sa.text(
+            "UPDATE memberships SET role = 'member' WHERE role = 'admin'",
+        )
+    )
+
     with op.batch_alter_table("memberships") as batch_op:
         batch_op.alter_column(
             "role",
@@ -99,10 +111,12 @@ def downgrade() -> None:
     op.drop_column("users", "first_name")
     op.drop_column("users", "email_verified")
 
-    op.alter_column(
-        "users",
-        "external_auth_id",
-        existing_type=sa.String(length=255),
-        nullable=True,
-    )
-    op.alter_column("users", "external_auth_id", new_column_name="keycloak_id")
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.drop_constraint(op.f("uq_users_external_auth_id"), type_="unique")
+        batch_op.alter_column(
+            "external_auth_id",
+            existing_type=sa.String(length=255),
+            nullable=True,
+        )
+        batch_op.alter_column("external_auth_id", new_column_name="keycloak_id")
+        batch_op.create_unique_constraint(op.f("uq_users_keycloak_id"), ["keycloak_id"])

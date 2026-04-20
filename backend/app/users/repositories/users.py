@@ -43,16 +43,11 @@ class UserRepository:
         email_verified: bool,
         first_name: str | None,
         last_name: str | None,
-        onboarding_completed: bool | None = None,
     ) -> User:
         user.email = email
         user.email_verified = email_verified
         user.first_name = first_name
         user.last_name = last_name
-
-        if onboarding_completed is not None:
-            user.onboarding_completed = onboarding_completed
-
         await self.session.flush()
         return user
 
