@@ -53,10 +53,12 @@ class DatabaseSettings(BaseModel):
     max_overflow: int = 20
     pool_timeout: int = 30
     pool_recycle: int = 1800
+    healthcheck_timeout: float = 1.0
 
 
 class RedisSettings(BaseModel):
     url: str | None = None
+    healthcheck_timeout: float = 0.5
 
 
 class SecuritySettings(BaseModel):

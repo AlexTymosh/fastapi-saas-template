@@ -83,7 +83,46 @@ Readiness endpoint:
 curl http://localhost:8000/api/v1/health/ready
 ```
 
+
+
 ---
+
+
+## 🔬 Run integration tests (optional)
+
+Before an important commit, you can run the integration test suite against real PostgreSQL and Redis services.
+
+### 1. Start the services
+
+```bash
+docker compose up -d
+```
+
+### 2. Set test environment variables in PowerShell
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:5432/app"
+$env:TEST_REDIS_URL="redis://localhost:6379/0"
+```
+
+### 3. Run integration tests
+
+```bash
+pytest -q -m integration -rs
+```
+
+If you later run tests in the same terminal without integration variables, remove them first:
+
+```powershell
+Remove-Item Env:TEST_DATABASE_URL -ErrorAction SilentlyContinue
+Remove-Item Env:TEST_REDIS_URL -ErrorAction SilentlyContinue
+```
+
+---
+
+
+
+
 
 ### 7. Services
 

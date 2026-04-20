@@ -1,11 +1,47 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config.settings import Settings, get_settings
+from app.core.db import dispose_engine
 from app.main import create_app
+from tests.helpers.asyncio_runner import run_async
+
+
+@pytest.fixture(autouse=True)
+def reset_runtime_state(monkeypatch, tmp_path):
+    monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env.test"))
+
+    get_settings.cache_clear()
+    yield
+    run_async(dispose_engine())
+    get_settings.cache_clear()
 
 
 @pytest.fixture
-def client() -> TestClient:
-    app = create_app()
-    with TestClient(app) as test_client:
+def client_factory(monkeypatch):
+    def _build(
+        *,
+        database_url: str | None = None,
+        redis_url: str | None = None,
+    ) -> TestClient:
+        if database_url is None:
+            monkeypatch.delenv("DATABASE__URL", raising=False)
+        else:
+            monkeypatch.setenv("DATABASE__URL", database_url)
+
+        if redis_url is None:
+            monkeypatch.delenv("REDIS__URL", raising=False)
+        else:
+            monkeypatch.setenv("REDIS__URL", redis_url)
+
+        get_settings.cache_clear()
+        app = create_app()
+        return TestClient(app)
+
+    return _build
+
+
+@pytest.fixture
+def client(client_factory) -> TestClient:
+    with client_factory(database_url=None, redis_url=None) as test_client:
         yield test_client

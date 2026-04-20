@@ -3,9 +3,14 @@ import asyncio
 from app.core.config.settings import get_settings
 from app.core.db import ping_database
 from app.core.logging import LogCategory, get_logger
+from app.core.redis import ping_redis
 from app.schemas.health import HealthReadyResponse, ServiceStatus
 
 log = get_logger(__name__)
+
+
+def _is_configured(value: str | None) -> bool:
+    return bool(value and value.strip())
 
 
 async def _ping_postgresql() -> None:
@@ -13,44 +18,58 @@ async def _ping_postgresql() -> None:
 
 
 async def _ping_redis() -> None:
-    raise NotImplementedError("Redis check not implemented yet")
+    await ping_redis()
 
 
-async def check_postgresql(timeout: float = 1.0) -> bool:
+async def check_postgresql(timeout: float | None = None) -> bool:
+    effective_timeout = (
+        timeout if timeout is not None else get_settings().database.healthcheck_timeout
+    )
+
     try:
-        await asyncio.wait_for(_ping_postgresql(), timeout=timeout)
+        await asyncio.wait_for(_ping_postgresql(), timeout=effective_timeout)
         return True
-    except Exception:
+    except Exception as exc:
         log.warning(
             "postgresql_healthcheck_failed",
             category=LogCategory.APPLICATION,
-            timeout=timeout,
+            timeout=effective_timeout,
+            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return False
 
 
-async def check_redis(timeout: float = 0.5) -> bool:
+async def check_redis(timeout: float | None = None) -> bool:
+    effective_timeout = (
+        timeout if timeout is not None else get_settings().redis.healthcheck_timeout
+    )
+
     try:
-        await asyncio.wait_for(_ping_redis(), timeout=timeout)
+        await asyncio.wait_for(_ping_redis(), timeout=effective_timeout)
         return True
-    except Exception:
+    except Exception as exc:
         log.warning(
             "redis_healthcheck_failed",
             category=LogCategory.APPLICATION,
-            timeout=timeout,
+            timeout=effective_timeout,
+            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return False
 
 
 async def get_readiness_status() -> HealthReadyResponse:
     settings = get_settings()
-    checks: dict[str, bool] = {}
+    tasks: dict[str, asyncio.Task[bool]] = {}
 
-    if settings.database.url:
-        checks["postgresql"] = await check_postgresql()
+    if _is_configured(settings.database.url):
+        tasks["postgresql"] = asyncio.create_task(check_postgresql())
 
-    if settings.redis.url:
-        checks["redis"] = await check_redis()
+    if _is_configured(settings.redis.url):
+        tasks["redis"] = asyncio.create_task(check_redis())
+
+    checks = {name: await task for name, task in tasks.items()}
 
     services = {
         name: ServiceStatus.OK if ok else ServiceStatus.UNAVAILABLE

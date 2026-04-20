@@ -11,6 +11,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware.access_log import AccessLogMiddleware
 from app.core.middleware.request_context import RequestContextMiddleware
+from app.core.redis import close_redis
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await close_redis()
         await dispose_engine()
         log.info("app_stopped")
 

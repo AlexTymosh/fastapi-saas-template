@@ -7,6 +7,7 @@ from app.core.db import dispose_engine, ping_database
 from tests.helpers.asyncio_runner import run_async
 
 
+@pytest.mark.integration
 def test_ping_database_round_trip(monkeypatch) -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if not database_url:

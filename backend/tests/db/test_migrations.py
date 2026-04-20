@@ -21,6 +21,7 @@ def _run_alembic(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess
     )
 
 
+@pytest.mark.integration
 def test_alembic_upgrade_head_and_check() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if not database_url:

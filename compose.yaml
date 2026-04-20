@@ -14,7 +14,8 @@ services:
       DATABASE__URL: postgresql+psycopg://app:app@postgres:5432/app
       TEST_DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/app
 
-      REDIS__URL: redis://redis:6379/0
+#      REDIS__URL: redis://redis:6379/0
+      TEST_REDIS_URL: redis://redis:6379/0
 
       VAULT__ENABLED: "false"
     depends_on:
