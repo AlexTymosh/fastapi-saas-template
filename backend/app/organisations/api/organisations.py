@@ -9,16 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedIdentity, get_current_identity
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
-from app.memberships.services.memberships import MembershipService
 from app.organisations.schemas.organisations import (
     CreateOrganisationRequest,
     MembershipListResponse,
     MembershipResponse,
     OrganisationResponse,
 )
+from app.organisations.services.access import OrganisationAccessService
 from app.organisations.services.onboarding import OnboardingService
-from app.organisations.services.organisations import OrganisationService
-from app.users.services.users import UserService
 
 router = APIRouter(prefix="/organisations", tags=["organisations"])
 
@@ -58,14 +56,9 @@ async def get_organisation(
     identity: CurrentIdentityDep,
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
-    user_service = UserService(db_session)
-    membership_service = MembershipService(db_session)
-    organisation_service = OrganisationService(db_session)
-
-    user = await user_service.get_or_create_current_user(identity)
-    organisation = await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_organisation_access(
-        user_id=user.id,
+    organisation_access_service = OrganisationAccessService(db_session)
+    organisation = await organisation_access_service.get_member_organisation(
+        identity=identity,
         organisation_id=organisation_id,
     )
     return OrganisationResponse.model_validate(organisation)
@@ -82,18 +75,12 @@ async def list_organisation_memberships(
     identity: CurrentIdentityDep,
     db_session: DbSessionDep,
 ) -> MembershipListResponse:
-    user_service = UserService(db_session)
-    organisation_service = OrganisationService(db_session)
-    membership_service = MembershipService(db_session)
-
-    user = await user_service.get_or_create_current_user(identity)
-    await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_organisation_access(
-        user_id=user.id,
-        organisation_id=organisation_id,
-    )
-    memberships = await membership_service.list_memberships_for_organisation(
-        organisation_id,
+    organisation_access_service = OrganisationAccessService(db_session)
+    memberships = await (
+        organisation_access_service.list_memberships_for_member_organisation(
+            identity=identity,
+            organisation_id=organisation_id,
+        )
     )
 
     return MembershipListResponse(

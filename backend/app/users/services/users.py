@@ -11,6 +11,7 @@ from app.users.repositories.users import UserRepository
 
 class UserService:
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self.user_repository = UserRepository(session)
 
     async def get_or_create_current_user(self, identity: AuthenticatedIdentity) -> User:
@@ -68,4 +69,8 @@ class UserService:
         )
 
     async def get_me(self, identity: AuthenticatedIdentity) -> User:
-        return await self.get_or_create_current_user(identity)
+        if self.session.in_transaction():
+            return await self.get_or_create_current_user(identity)
+
+        async with self.session.begin():
+            return await self.get_or_create_current_user(identity)

@@ -90,7 +90,7 @@ def test_users_me_creates_projection_and_does_not_duplicate(tmp_path) -> None:
 
 
 def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
@@ -100,6 +100,44 @@ def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
         assert second.status_code == 200
 
     assert first.json()["updated_at"] == second.json()["updated_at"]
+
+    async def _load_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(select(User))
+            return result.scalar_one()
+
+    persisted_user = run_async(_load_user())
+    assert str(persisted_user.id) == first.json()["id"]
+    assert persisted_user.updated_at.isoformat() == first.json()["updated_at"]
+    run_async(engine.dispose())
+
+
+def test_users_me_persists_projection_across_sessions_and_reuses_existing(
+    tmp_path,
+) -> None:
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as first_client:
+        first_response = first_client.get("/api/v1/users/me")
+        assert first_response.status_code == 200
+        first_payload = first_response.json()
+
+    async def _load_created_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(select(User))
+            return result.scalar_one()
+
+    created_user = run_async(_load_created_user())
+    assert str(created_user.id) == first_payload["id"]
+    assert created_user.external_auth_id == "kc-user-1"
+
+    with TestClient(app) as second_client:
+        second_response = second_client.get("/api/v1/users/me")
+        assert second_response.status_code == 200
+        second_payload = second_response.json()
+
+    assert second_payload["id"] == first_payload["id"]
+    assert second_payload["updated_at"] == first_payload["updated_at"]
     run_async(engine.dispose())
 
 
