@@ -34,10 +34,16 @@ new_membership_role = sa.Enum(
 def upgrade() -> None:
     op.alter_column("users", "keycloak_id", new_column_name="external_auth_id")
 
-    op.execute(
-        "UPDATE users "
-        "SET external_auth_id = COALESCE(external_auth_id, CAST(id AS TEXT))"
-    )
+    connection = op.get_bind()
+    null_external_auth_ids = connection.execute(
+        sa.text("SELECT COUNT(*) FROM users WHERE external_auth_id IS NULL")
+    ).scalar_one()
+
+    if null_external_auth_ids:
+        raise RuntimeError(
+            "Migration 0002 aborted: users.external_auth_id contains NULL values. "
+            "Backfill external_auth_id before applying this migration."
+        )
 
     op.alter_column(
         "users",

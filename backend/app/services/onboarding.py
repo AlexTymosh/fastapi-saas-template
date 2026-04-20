@@ -37,7 +37,9 @@ class OnboardingService:
                 role=MembershipRole.OWNER,
             )
             if not user.onboarding_completed:
-                user.onboarding_completed = True
-                await self.session.flush()
+                await self.user_service.user_repository.update_onboarding_completed(
+                    user,
+                    onboarding_completed=True,
+                )
 
         return user, organisation, membership

@@ -8,6 +8,8 @@ annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
+aiosqlite==0.21.0
+    # via fastapi-saas-template (pyproject.toml)
 anyio==4.13.0
     # via
     #   starlette
@@ -20,6 +22,10 @@ colorama==0.4.6
     #   uvicorn
 fastapi==0.135.3
     # via fastapi-saas-template (pyproject.toml)
+email-validator==2.3.0
+    # via fastapi-saas-template (pyproject.toml)
+dnspython==2.8.0
+    # via email-validator
 h11==0.16.0
     # via uvicorn
 httptools==0.7.1

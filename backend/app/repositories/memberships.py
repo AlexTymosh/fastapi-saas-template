@@ -28,6 +28,19 @@ class MembershipRepository:
         await self.session.flush()
         return membership
 
+    async def get_membership_for_user(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+    ) -> Membership | None:
+        stmt = select(Membership).where(
+            Membership.user_id == user_id,
+            Membership.organisation_id == organisation_id,
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def list_memberships_for_organisation(
         self,
         *,

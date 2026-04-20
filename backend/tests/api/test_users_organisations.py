@@ -22,6 +22,16 @@ def _identity() -> AuthenticatedIdentity:
     )
 
 
+def _other_identity() -> AuthenticatedIdentity:
+    return AuthenticatedIdentity(
+        sub="kc-user-2",
+        email="member2@example.com",
+        email_verified=True,
+        first_name="Other",
+        last_name="User",
+    )
+
+
 def _create_client_and_session_factory(tmp_path):
     database_url = f"sqlite+aiosqlite:///{tmp_path}/app.db"
     engine = create_async_engine(database_url)
@@ -128,6 +138,26 @@ def test_get_organisation_not_found_returns_problem_details(tmp_path) -> None:
     with TestClient(app) as client:
         response = client.get(f"/api/v1/organisations/{uuid4()}")
         assert response.status_code == 404
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    run_async(engine.dispose())
+
+
+def test_get_organisation_requires_membership(tmp_path) -> None:
+    app, engine, _ = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Acme Ltd", "slug": "acme-authz"},
+        )
+        assert created.status_code == 201
+        organisation_id = created.json()["id"]
+
+        app.dependency_overrides[get_current_identity] = _other_identity
+
+        response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 403
         assert response.headers["content-type"].startswith("application/problem+json")
 
     run_async(engine.dispose())

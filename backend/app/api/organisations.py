@@ -18,6 +18,7 @@ from app.schemas.organisations import (
 from app.services.memberships import MembershipService
 from app.services.onboarding import OnboardingService
 from app.services.organisations import OrganisationService
+from app.services.users import UserService
 
 router = APIRouter(prefix="/organisations", tags=["organisations"])
 
@@ -54,10 +55,18 @@ async def create_organisation(
 )
 async def get_organisation(
     organisation_id: UUID,
-    _: CurrentIdentityDep,
+    identity: CurrentIdentityDep,
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
+    user_service = UserService(db_session)
     organisation_service = OrganisationService(db_session)
+    membership_service = MembershipService(db_session)
+
+    user = await user_service.get_or_create_current_user(identity)
+    await membership_service.ensure_user_has_membership(
+        user_id=user.id,
+        organisation_id=organisation_id,
+    )
     organisation = await organisation_service.get_organisation(organisation_id)
     return OrganisationResponse.model_validate(organisation)
 
@@ -70,12 +79,18 @@ async def get_organisation(
 )
 async def list_organisation_memberships(
     organisation_id: UUID,
-    _: CurrentIdentityDep,
+    identity: CurrentIdentityDep,
     db_session: DbSessionDep,
 ) -> MembershipListResponse:
+    user_service = UserService(db_session)
     organisation_service = OrganisationService(db_session)
     membership_service = MembershipService(db_session)
 
+    user = await user_service.get_or_create_current_user(identity)
+    await membership_service.ensure_user_has_membership(
+        user_id=user.id,
+        organisation_id=organisation_id,
+    )
     await organisation_service.get_organisation(organisation_id)
     memberships = await membership_service.list_memberships_for_organisation(
         organisation_id,
