@@ -1,16 +1,31 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.memberships.models.membership import MembershipRole
+
+_SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 
 class CreateOrganisationRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=255)
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("Slug must not be empty")
+        if not _SLUG_PATTERN.fullmatch(normalized):
+            raise ValueError(
+                "Slug may only contain lowercase letters, numbers, and hyphens"
+            )
+        return normalized
 
 
 class OrganisationResponse(BaseModel):

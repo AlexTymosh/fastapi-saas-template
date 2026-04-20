@@ -8,8 +8,6 @@ annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
-aiosqlite==0.21.0
-    # via fastapi-saas-template (pyproject.toml)
 anyio==4.13.0
     # via
     #   starlette

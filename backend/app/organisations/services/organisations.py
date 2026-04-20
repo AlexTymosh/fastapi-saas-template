@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors.exceptions import ConflictError, NotFoundError
 from app.organisations.models.organisation import Organisation
-from app.repositories.organisations import OrganisationRepository
+from app.organisations.repositories.organisations import OrganisationRepository
 
 
 class OrganisationService:

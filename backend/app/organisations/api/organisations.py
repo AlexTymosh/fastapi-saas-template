@@ -9,25 +9,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedIdentity, get_current_identity
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
-from app.schemas.organisations import (
+from app.memberships.services.memberships import MembershipService
+from app.organisations.schemas.organisations import (
     CreateOrganisationRequest,
     MembershipListResponse,
     MembershipResponse,
     OrganisationResponse,
 )
-from app.services.memberships import MembershipService
-from app.services.onboarding import OnboardingService
-from app.services.organisations import OrganisationService
-from app.services.users import UserService
+from app.organisations.services.access import OrganisationAccessService
+from app.organisations.services.onboarding import OnboardingService
+from app.users.services.users import UserService
 
-router = APIRouter(prefix="/organisations", tags=["organisations"])
+router = APIRouter(tags=["organisations"])
 
 CurrentIdentityDep = Annotated[AuthenticatedIdentity, Depends(get_current_identity)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 @router.post(
-    "",
+    "/organisations",
     response_model=OrganisationResponse,
     status_code=status.HTTP_201_CREATED,
     responses=WRITE_ERROR_RESPONSES,
@@ -48,7 +48,7 @@ async def create_organisation(
 
 
 @router.get(
-    "/{organisation_id}",
+    "/organisations/{organisation_id}",
     response_model=OrganisationResponse,
     responses=COMMON_ERROR_RESPONSES,
     name="get_organisation",
@@ -59,20 +59,18 @@ async def get_organisation(
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
     user_service = UserService(db_session)
-    membership_service = MembershipService(db_session)
-    organisation_service = OrganisationService(db_session)
+    access_service = OrganisationAccessService(db_session)
 
     user = await user_service.get_or_create_current_user(identity)
-    organisation = await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_membership(
-        user_id=user.id,
+    organisation = await access_service.get_member_organisation(
         organisation_id=organisation_id,
+        user_id=user.id,
     )
     return OrganisationResponse.model_validate(organisation)
 
 
 @router.get(
-    "/{organisation_id}/memberships",
+    "/organisations/{organisation_id}/memberships",
     response_model=MembershipListResponse,
     responses=COMMON_ERROR_RESPONSES,
     name="list_organisation_memberships",
@@ -83,14 +81,13 @@ async def list_organisation_memberships(
     db_session: DbSessionDep,
 ) -> MembershipListResponse:
     user_service = UserService(db_session)
-    organisation_service = OrganisationService(db_session)
+    access_service = OrganisationAccessService(db_session)
     membership_service = MembershipService(db_session)
 
     user = await user_service.get_or_create_current_user(identity)
-    await organisation_service.get_organisation(organisation_id)
-    await membership_service.ensure_user_has_membership(
-        user_id=user.id,
+    await access_service.ensure_member_access(
         organisation_id=organisation_id,
+        user_id=user.id,
     )
     memberships = await membership_service.list_memberships_for_organisation(
         organisation_id,

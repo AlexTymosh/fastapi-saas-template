@@ -8,18 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedIdentity, get_current_identity
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES
-from app.schemas.users import MembershipSummary, UserMeResponse
-from app.services.memberships import MembershipService
-from app.services.users import UserService
+from app.memberships.services.memberships import MembershipService
+from app.users.schemas.users import MembershipSummary, UserMeResponse
+from app.users.services.users import UserService
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(tags=["users"])
 
 CurrentIdentityDep = Annotated[AuthenticatedIdentity, Depends(get_current_identity)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 @router.get(
-    "/me",
+    "/users/me",
     response_model=UserMeResponse,
     responses=COMMON_ERROR_RESPONSES,
     name="get_me",

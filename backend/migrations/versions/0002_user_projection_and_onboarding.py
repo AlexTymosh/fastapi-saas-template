@@ -15,7 +15,6 @@ down_revision: str | None = "0001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-
 old_membership_role = sa.Enum(
     "owner",
     "member",
@@ -40,9 +39,12 @@ def upgrade() -> None:
     ).scalar_one()
     if null_external_ids:
         raise RuntimeError(
-            "Migration 0002 aborted: users.external_auth_id has NULL values. "
-            "Please backfill external IDs before applying this migration."
+            "Migration 0002 aborted: users.external_auth_id contains NULL values. "
+            "Backfill external identity values before applying this migration."
         )
+
+    op.drop_constraint("uq_users_keycloak_id", "users", type_="unique")
+    op.create_unique_constraint("uq_users_external_auth_id", "users", ["external_auth_id"])
 
     op.alter_column(
         "users",
@@ -87,6 +89,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    connection.execute(
+        sa.text("UPDATE memberships SET role = 'member' WHERE role = 'admin'")
+    )
+
     with op.batch_alter_table("memberships") as batch_op:
         batch_op.alter_column(
             "role",
@@ -105,4 +112,8 @@ def downgrade() -> None:
         existing_type=sa.String(length=255),
         nullable=True,
     )
+
+    op.drop_constraint("uq_users_external_auth_id", "users", type_="unique")
+    op.create_unique_constraint("uq_users_keycloak_id", "users", ["external_auth_id"])
+
     op.alter_column("users", "external_auth_id", new_column_name="keycloak_id")

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.memberships.models.membership import Membership, MembershipRole
-from app.repositories.memberships import MembershipRepository
+from app.memberships.repositories.memberships import MembershipRepository
 
 
 class MembershipService:
@@ -54,4 +54,4 @@ class MembershipService:
             organisation_id=organisation_id,
         )
         if not has_membership:
-            raise ForbiddenError(detail="You do not have access to this organisation")
+            raise ForbiddenError(detail="You are not a member of this organisation")
