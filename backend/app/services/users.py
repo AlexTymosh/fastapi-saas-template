@@ -15,6 +15,7 @@ class UserService:
 
     async def get_or_create_current_user(self, identity: AuthenticatedIdentity) -> User:
         user = await self.user_repository.get_by_external_auth_id(identity.sub)
+
         if user is None:
             return await self.user_repository.create(
                 external_auth_id=identity.sub,
@@ -32,8 +33,9 @@ class UserService:
                 user.last_name != identity.last_name,
             ]
         )
+
         if needs_update:
-            await self.user_repository.update_profile_fields(
+            user = await self.user_repository.update_profile_fields(
                 user,
                 email=identity.email,
                 email_verified=identity.email_verified,

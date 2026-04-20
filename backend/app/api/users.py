@@ -31,8 +31,9 @@ async def get_me(
     user_service = UserService(db_session)
     membership_service = MembershipService(db_session)
 
-    user, _ = await user_service.get_me(identity)
-    memberships = await membership_service.list_memberships_for_user(user.id)
+    async with db_session.begin():
+        user, _ = await user_service.get_me(identity)
+        memberships = await membership_service.list_memberships_for_user(user.id)
 
     return UserMeResponse(
         id=user.id,

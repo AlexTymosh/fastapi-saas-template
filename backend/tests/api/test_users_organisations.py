@@ -51,16 +51,6 @@ def _create_client_and_session_factory(tmp_path):
 def test_user_upsert_by_sub_and_no_duplicates(tmp_path) -> None:
     app, engine, session_factory = _create_client_and_session_factory(tmp_path)
 
-    with TestClient(app) as client:
-        first = client.get("/api/v1/users/me")
-        assert first.status_code == 200
-        first_payload = first.json()
-        assert first_payload["external_auth_id"] == "kc-user-1"
-
-        second = client.get("/api/v1/users/me")
-        assert second.status_code == 200
-        assert second.json()["id"] == first_payload["id"]
-
     async def _count_users() -> int:
         from sqlalchemy import select
 
@@ -70,7 +60,24 @@ def test_user_upsert_by_sub_and_no_duplicates(tmp_path) -> None:
             result = await session.execute(select(User))
             return len(result.scalars().all())
 
-    assert run_async(_count_users()) == 1
+    with TestClient(app) as client:
+        first = client.get("/api/v1/users/me")
+        assert first.status_code == 200
+        first_payload = first.json()
+        assert first_payload["external_auth_id"] == "kc-user-1"
+
+        # ключевая проверка: запись вообще сохранилась после первого запроса?
+        assert run_async(_count_users()) == 1
+
+        second = client.get("/api/v1/users/me")
+        assert second.status_code == 200
+        second_payload = second.json()
+
+        assert second_payload["external_auth_id"] == "kc-user-1"
+        assert second_payload["id"] == first_payload["id"]
+
+        assert run_async(_count_users()) == 1
+
     run_async(engine.dispose())
 
 

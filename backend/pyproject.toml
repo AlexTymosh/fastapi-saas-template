@@ -12,7 +12,7 @@ readme = "README.md"
 dependencies = [
     "fastapi>=0.135,<1.0",
     "uvicorn[standard]>=0.44,<1.0",
-    "pydantic>=2.13,<3.0",
+    "pydantic[email]>=2.13,<3.0",
     "pydantic-settings>=2.13,<3.0",
     "scalar-fastapi>=1.8,<2.0",
     "structlog>=25.5,<26.0",
@@ -29,6 +29,7 @@ dev = [
     "ruff>=0.15,<1.0",
     "pre-commit>=4.5,<5.0",
     "httpx>=0.28,<1.0",
+    "aiosqlite>=0.20,<1.0",
 ]
 
 [tool.setuptools.packages.find]
