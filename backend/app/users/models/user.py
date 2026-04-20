@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String
+from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base
@@ -15,15 +15,29 @@ if TYPE_CHECKING:
 class User(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
-    keycloak_id: Mapped[str | None] = mapped_column(
+    external_auth_id: Mapped[str] = mapped_column(
         String(255),
-        nullable=True,
+        nullable=False,
         unique=True,
     )
     email: Mapped[str | None] = mapped_column(
         String(320),
         nullable=True,
         unique=True,
+    )
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    onboarding_completed: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
     )
 
     memberships: Mapped[list[Membership]] = relationship(

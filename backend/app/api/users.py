@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import AuthenticatedIdentity, get_current_identity
+from app.core.db import get_db_session
+from app.core.errors.openapi import COMMON_ERROR_RESPONSES
+from app.schemas.users import MembershipSummary, UserMeResponse
+from app.services.memberships import MembershipService
+from app.services.users import UserService
+
+router = APIRouter(prefix="/users", tags=["users"])
+
+CurrentIdentityDep = Annotated[AuthenticatedIdentity, Depends(get_current_identity)]
+DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+@router.get(
+    "/me",
+    response_model=UserMeResponse,
+    responses=COMMON_ERROR_RESPONSES,
+    name="get_me",
+)
+async def get_me(
+    identity: CurrentIdentityDep,
+    db_session: DbSessionDep,
+) -> UserMeResponse:
+    user_service = UserService(db_session)
+    membership_service = MembershipService(db_session)
+
+    user, _ = await user_service.get_me(identity)
+    memberships = await membership_service.list_memberships_for_user(user.id)
+
+    return UserMeResponse(
+        id=user.id,
+        external_auth_id=user.external_auth_id,
+        email=user.email,
+        email_verified=user.email_verified,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        onboarding_completed=user.onboarding_completed,
+        memberships=[
+            MembershipSummary(
+                organisation_id=membership.organisation_id,
+                role=membership.role,
+            )
+            for membership in memberships
+        ],
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
