@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+import sqlalchemy as sa
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,6 +52,17 @@ def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
 
     upgrade = _run_alembic("upgrade", "head", env=env)
     assert upgrade.returncode == 0, upgrade.stdout + "\n" + upgrade.stderr
+
+    engine = sa.create_engine(f"sqlite:///{tmp_path}/migrations.db")
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        unique_constraints = {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("users")
+        }
+
+    assert "uq_users_external_auth_id" in unique_constraints
+    assert "uq_users_email" not in unique_constraints
 
     check = _run_alembic("check", env=env)
     assert check.returncode == 0, check.stdout + "\n" + check.stderr
