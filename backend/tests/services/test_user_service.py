@@ -67,7 +67,7 @@ class _AsyncContextManager:
 
 
 def test_get_or_create_current_user_recovers_from_unique_conflict_race() -> None:
-    session = AsyncMock()
+    session = Mock()
     session.begin_nested = Mock(return_value=_AsyncContextManager())
     service = UserService(session=session)
 

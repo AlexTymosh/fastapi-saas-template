@@ -4,7 +4,7 @@ from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import UnauthorizedError
 
 
-class TestAuthProvider:
+class FakeAuthProvider:
     def __init__(self, identity: AuthenticatedPrincipal | None = None) -> None:
         self._identity = identity
 

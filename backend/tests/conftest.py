@@ -10,7 +10,7 @@ from app.core.db import dispose_engine
 from app.main import create_app
 from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
-from tests.helpers.auth import TestAuthProvider
+from tests.helpers.auth import FakeAuthProvider
 
 
 @pytest.fixture(autouse=True)
@@ -48,18 +48,18 @@ def client_factory(monkeypatch):
 
 
 @pytest.fixture
-def test_auth_provider() -> TestAuthProvider:
-    return TestAuthProvider()
+def test_auth_provider() -> FakeAuthProvider:
+    return FakeAuthProvider()
 
 
 @pytest.fixture
-def authenticated_client_factory(monkeypatch, test_auth_provider: TestAuthProvider):
+def authenticated_client_factory(monkeypatch):
     def _build(
         *,
         identity: AuthenticatedPrincipal,
         database_url: str | None = None,
         redis_url: str | None = None,
-    ) -> tuple[TestClient, TestAuthProvider]:
+    ) -> tuple[TestClient, FakeAuthProvider]:
         if database_url is None:
             monkeypatch.delenv("DATABASE__URL", raising=False)
         else:
@@ -71,12 +71,12 @@ def authenticated_client_factory(monkeypatch, test_auth_provider: TestAuthProvid
             monkeypatch.setenv("REDIS__URL", redis_url)
 
         get_settings.cache_clear()
-        test_auth_provider.set_identity(identity)
+        auth_provider = FakeAuthProvider(identity=identity)
         app = create_app()
         app.dependency_overrides[get_authenticated_principal] = (
-            test_auth_provider.get_authenticated_principal
+            auth_provider.get_authenticated_principal
         )
-        return TestClient(app), test_auth_provider
+        return TestClient(app), auth_provider
 
     return _build
 
