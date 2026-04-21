@@ -12,8 +12,8 @@ from app.core.db import Base, get_db_session
 from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
-from tests.helpers.auth import TestAuthProvider
 from tests.helpers.asyncio_runner import run_async
+from tests.helpers.auth import TestAuthProvider
 
 
 def _identity() -> AuthenticatedPrincipal:
@@ -174,6 +174,8 @@ def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
 
     assert first.json()["updated_at"] == second.json()["updated_at"]
     assert persisted_updated_at.isoformat() == first.json()["updated_at"]
+    assert first.json()["membership"] is None
+    assert second.json()["membership"] is None
     run_async(engine.dispose())
 
 
@@ -267,6 +269,8 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
         assert me.status_code == 200
         payload = me.json()
         assert payload["onboarding_completed"] is True
+        assert payload["membership"]["organisation_id"] == organisation_id
+        assert payload["membership"]["role"] == MembershipRole.OWNER.value
 
         memberships = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert memberships.status_code == 200
@@ -528,6 +532,25 @@ def test_create_organisation_rejects_second_creation_for_same_user(
     assert second.status_code == 409
     assert second.headers["content-type"].startswith("application/problem+json")
     assert second.json()["error_code"] == "conflict"
+
+
+def test_users_me_membership_is_null_when_user_has_no_organisation(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    test_client, _ = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-no-org-user",
+            email="no-org@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with test_client as client:
+        response = client.get("/api/v1/users/me")
+
+    assert response.status_code == 200
+    assert response.json()["membership"] is None
 
 
 def _provision_user_via_api(

@@ -34,7 +34,7 @@ async def get_me(
     membership_service = MembershipService(db_session)
 
     user = await user_service.get_me(identity)
-    memberships = await membership_service.list_memberships_for_user(user.id)
+    membership = await membership_service.get_membership_for_user(user.id)
 
     return UserMeResponse(
         id=user.id,
@@ -44,13 +44,14 @@ async def get_me(
         first_name=user.first_name,
         last_name=user.last_name,
         onboarding_completed=user.onboarding_completed,
-        memberships=[
+        membership=(
             MembershipSummary(
                 organisation_id=membership.organisation_id,
                 role=membership.role,
             )
-            for membership in memberships
-        ],
+            if membership is not None
+            else None
+        ),
         created_at=user.created_at,
         updated_at=user.updated_at,
     )

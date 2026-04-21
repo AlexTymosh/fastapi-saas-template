@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from app.core.auth import AuthenticatedPrincipal, JwtClaimsPayload
 
 
@@ -38,3 +41,13 @@ def test_jwt_claim_mapping_supports_first_and_last_name_fallback_keys() -> None:
     assert principal.external_auth_id == "kc-user-claims-2"
     assert principal.first_name == "First"
     assert principal.last_name == "Last"
+
+
+def test_jwt_claim_mapping_rejects_invalid_email_claim() -> None:
+    with pytest.raises(ValidationError):
+        AuthenticatedPrincipal.from_unverified_jwt_claims(
+            {
+                "sub": "kc-user-claims-invalid-email",
+                "email": "not-an-email",
+            }
+        )

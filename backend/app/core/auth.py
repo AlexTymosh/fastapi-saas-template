@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import Depends, Request
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field
 
 from app.core.errors.exceptions import UnauthorizedError
 
@@ -23,7 +23,7 @@ class AuthenticatedPrincipal(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     external_auth_id: str = Field(min_length=1)
-    email: str | None = None
+    email: EmailStr | None = None
     email_verified: bool = False
     first_name: str | None = None
     last_name: str | None = None
@@ -31,7 +31,7 @@ class AuthenticatedPrincipal(BaseModel):
     @classmethod
     def from_unverified_jwt_claims(
         cls, claims: dict[str, object]
-    ) -> "AuthenticatedPrincipal":
+    ) -> AuthenticatedPrincipal:
         """
         Placeholder claims mapping for future JWT/JWKS validation integration.
 
@@ -50,7 +50,7 @@ class JwtClaimsPayload(BaseModel):
         min_length=1,
         validation_alias="sub",
     )
-    email: str | None = None
+    email: EmailStr | None = None
     email_verified: bool = False
     first_name: str | None = Field(
         default=None,
