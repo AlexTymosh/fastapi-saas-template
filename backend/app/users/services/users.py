@@ -62,10 +62,10 @@ class UserService:
     async def provision_current_user(self, identity: AuthenticatedIdentity) -> User:
         """Persist JIT user projection changes with explicit transaction boundaries."""
         if self.session.in_transaction():
-            return await self.get_or_create_current_user(identity)
+            return await self.get_or_create_current_user(identity=identity)
 
         async with self.session.begin():
-            return await self.get_or_create_current_user(identity)
+            return await self.get_or_create_current_user(identity=identity)
 
     async def mark_onboarding_completed(self, user: User) -> User:
         if user.onboarding_completed:

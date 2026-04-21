@@ -144,6 +144,46 @@ def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) -> None:
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        first = client.get("/api/v1/users/me")
+        assert first.status_code == 200
+        first_payload = first.json()
+
+    async def _fetch_user_by_external_id(external_auth_id: str) -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == external_auth_id)
+            )
+            return result.scalar_one()
+
+    persisted_after_first = run_async(_fetch_user_by_external_id("kc-user-1"))
+
+    with TestClient(app) as client:
+        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
+            sub="kc-user-1",
+            email="owner@example.com",
+            email_verified=False,
+            first_name="Owner",
+            last_name="User",
+        )
+        second = client.get("/api/v1/users/me")
+        assert second.status_code == 200
+        second_payload = second.json()
+
+    persisted_after_second = run_async(_fetch_user_by_external_id("kc-user-1"))
+
+    assert first_payload["id"] == second_payload["id"]
+    assert persisted_after_first.id == persisted_after_second.id
+    assert persisted_after_first.email_verified is True
+    assert second_payload["email_verified"] is False
+    assert persisted_after_second.email_verified is False
+    assert persisted_after_second.updated_at > persisted_after_first.updated_at
+    run_async(engine.dispose())
+
+
 def test_create_organisation_sets_owner_and_onboarding_completed(tmp_path) -> None:
     app, engine, _ = _create_client_and_session_factory(tmp_path)
 
@@ -269,7 +309,10 @@ def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> N
             return result.scalar_one()
 
     user = run_async(_fetch_user())
+    assert user.external_auth_id == "kc-user-access-1"
     assert user.email == "access1@example.com"
+    assert user.first_name == "Access"
+    assert user.last_name == "Denied"
     run_async(engine.dispose())
 
 
@@ -350,7 +393,10 @@ def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> N
             return result.scalar_one()
 
     user = run_async(_fetch_user())
+    assert user.external_auth_id == "kc-user-access-2"
     assert user.email == "access2@example.com"
+    assert user.first_name == "Access"
+    assert user.last_name == "Denied"
     run_async(engine.dispose())
 
 
