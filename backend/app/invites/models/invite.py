@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base
@@ -24,6 +24,9 @@ class InviteStatus(StrEnum):
 
 class Invite(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "invites"
+    __table_args__ = (
+        Index("ix_invites_token_hash", "token_hash", unique=True),
+    )
 
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     organisation_id: Mapped[UUID] = mapped_column(
@@ -46,8 +49,6 @@ class Invite(UUIDMixin, TimestampMixin, Base):
     token_hash: Mapped[str] = mapped_column(
         String(128),
         nullable=False,
-        unique=True,
-        index=True,
     )
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

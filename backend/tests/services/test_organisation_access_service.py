@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 from app.core.auth import AuthenticatedPrincipal
@@ -21,8 +21,16 @@ def _identity() -> AuthenticatedPrincipal:
     )
 
 
+def _session_stub() -> Mock:
+    session = Mock()
+    session.in_transaction = Mock(return_value=False)
+    session.begin = Mock()
+    session.begin_nested = Mock()
+    return session
+
+
 def test_get_organisation_for_member_provisions_and_checks_access() -> None:
-    service = OrganisationAccessService(session=AsyncMock())
+    service = OrganisationAccessService(session=_session_stub())
 
     organisation_id = uuid4()
     identity = _identity()
@@ -64,7 +72,7 @@ def test_get_organisation_for_member_provisions_and_checks_access() -> None:
 
 
 def test_list_memberships_for_member_organisation_uses_single_access_use_case() -> None:
-    service = OrganisationAccessService(session=AsyncMock())
+    service = OrganisationAccessService(session=_session_stub())
 
     organisation_id = uuid4()
     identity = _identity()
@@ -113,7 +121,7 @@ def test_list_memberships_for_member_organisation_uses_single_access_use_case() 
 
 
 def test_list_memberships_loads_organisation_before_access_check() -> None:
-    service = OrganisationAccessService(session=AsyncMock())
+    service = OrganisationAccessService(session=_session_stub())
 
     organisation_id = uuid4()
     identity = _identity()

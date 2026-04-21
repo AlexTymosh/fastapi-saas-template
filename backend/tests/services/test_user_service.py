@@ -66,9 +66,16 @@ class _AsyncContextManager:
         return False
 
 
-def test_get_or_create_current_user_recovers_from_unique_conflict_race() -> None:
-    session = AsyncMock()
+def _session_stub() -> Mock:
+    session = Mock()
+    session.in_transaction = Mock(return_value=False)
+    session.begin = Mock(return_value=_AsyncContextManager())
     session.begin_nested = Mock(return_value=_AsyncContextManager())
+    return session
+
+
+def test_get_or_create_current_user_recovers_from_unique_conflict_race() -> None:
+    session = _session_stub()
     service = UserService(session=session)
 
     existing_user = User(

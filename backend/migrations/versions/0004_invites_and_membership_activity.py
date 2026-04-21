@@ -84,7 +84,6 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_invites")),
-        sa.UniqueConstraint("token_hash", name=op.f("uq_invites_token_hash")),
     )
     op.create_index(op.f("ix_invites_email"), "invites", ["email"], unique=False)
     op.create_index(
