@@ -68,23 +68,25 @@ def _create_client_and_session_factory(tmp_path):
     return app, engine, session_factory
 
 
-def test_users_me_persists_projection_across_request_boundaries(tmp_path) -> None:
-    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
-
-    with TestClient(app) as client:
+def test_users_me_persists_projection_across_request_boundaries(
+    client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    with client_factory(database_url=migrated_database_url, redis_url=None) as client:
         first = client.get("/api/v1/users/me")
         assert first.status_code == 200
         first_payload = first.json()
 
     async def _fetch_user() -> User:
-        async with session_factory() as session:
+        async with migrated_session_factory() as session:
             result = await session.execute(select(User))
             return result.scalar_one()
 
     persisted_after_first = run_async(_fetch_user())
     first_updated_at = persisted_after_first.updated_at
 
-    with TestClient(app) as client:
+    with client_factory(database_url=migrated_database_url, redis_url=None) as client:
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
         second_payload = second.json()
@@ -96,8 +98,6 @@ def test_users_me_persists_projection_across_request_boundaries(tmp_path) -> Non
     assert persisted_after_first.id == persisted_after_second.id
     assert persisted_after_second.external_auth_id == "kc-user-1"
     assert persisted_after_second.updated_at == first_updated_at
-
-    run_async(engine.dispose())
 
 
 def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
@@ -184,10 +184,11 @@ def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) 
     run_async(engine.dispose())
 
 
-def test_create_organisation_sets_owner_and_onboarding_completed(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
-
-    with TestClient(app) as client:
+def test_create_organisation_sets_owner_and_onboarding_completed(
+    client_factory,
+    migrated_database_url: str,
+) -> None:
+    with client_factory(database_url=migrated_database_url, redis_url=None) as client:
         response = client.post(
             "/api/v1/organisations",
             json={"name": "Acme Ltd", "slug": "  AcMe-ORG  "},
@@ -204,8 +205,6 @@ def test_create_organisation_sets_owner_and_onboarding_completed(tmp_path) -> No
         memberships = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert memberships.status_code == 200
         assert memberships.json()["data"][0]["role"] == MembershipRole.OWNER.value
-
-    run_async(engine.dispose())
 
 
 def test_admin_and_owner_roles_exist_in_enum() -> None:
