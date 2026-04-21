@@ -57,3 +57,30 @@ class MembershipService:
             raise ForbiddenError(
                 detail="You are not a member of this organisation",
             )
+
+    async def ensure_user_can_list_organisation_memberships(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+    ) -> None:
+        membership = await self.membership_repository.get_membership(
+            user_id=user_id,
+            organisation_id=organisation_id,
+        )
+        if membership is None or membership.role not in {
+            MembershipRole.OWNER,
+            MembershipRole.ADMIN,
+        }:
+            raise ForbiddenError(
+                detail="You are not allowed to view organisation memberships",
+            )
+
+    async def ensure_user_can_create_organisation(self, *, user_id: UUID) -> None:
+        has_membership = await self.membership_repository.has_any_membership_for_user(
+            user_id=user_id
+        )
+        if has_membership:
+            raise ConflictError(
+                detail="You already belong to an organisation",
+            )

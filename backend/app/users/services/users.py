@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthenticatedIdentity
+from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError
 from app.users.models.user import User
 from app.users.repositories.users import UserRepository
@@ -14,13 +14,17 @@ class UserService:
         self.session = session
         self.user_repository = UserRepository(session)
 
-    async def get_or_create_current_user(self, identity: AuthenticatedIdentity) -> User:
-        user = await self.user_repository.get_by_external_auth_id(identity.sub)
+    async def get_or_create_current_user(
+        self, identity: AuthenticatedPrincipal
+    ) -> User:
+        user = await self.user_repository.get_by_external_auth_id(
+            identity.external_auth_id
+        )
         if user is None:
             try:
                 async with self.session.begin_nested():
                     return await self.user_repository.create(
-                        external_auth_id=identity.sub,
+                        external_auth_id=identity.external_auth_id,
                         email=identity.email,
                         email_verified=identity.email_verified,
                         first_name=identity.first_name,
@@ -28,7 +32,7 @@ class UserService:
                     )
             except IntegrityError as exc:
                 existing = await self.user_repository.get_by_external_auth_id(
-                    identity.sub
+                    identity.external_auth_id
                 )
                 if existing is not None:
                     return existing
@@ -60,7 +64,7 @@ class UserService:
 
         return user
 
-    async def provision_current_user(self, identity: AuthenticatedIdentity) -> User:
+    async def provision_current_user(self, identity: AuthenticatedPrincipal) -> User:
         """Persist JIT user projection changes with explicit transaction boundaries."""
         if self.session.in_transaction():
             return await self.get_or_create_current_user(identity=identity)
@@ -77,5 +81,5 @@ class UserService:
             onboarding_completed=True,
         )
 
-    async def get_me(self, identity: AuthenticatedIdentity) -> User:
+    async def get_me(self, identity: AuthenticatedPrincipal) -> User:
         return await self.provision_current_user(identity)

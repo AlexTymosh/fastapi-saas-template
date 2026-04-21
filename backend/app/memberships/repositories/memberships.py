@@ -56,3 +56,23 @@ class MembershipRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none() is not None
+
+    async def get_membership(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+    ) -> Membership | None:
+        stmt = (
+            select(Membership)
+            .where(Membership.user_id == user_id)
+            .where(Membership.organisation_id == organisation_id)
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def has_any_membership_for_user(self, *, user_id: UUID) -> bool:
+        stmt = select(Membership.id).where(Membership.user_id == user_id).limit(1)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
