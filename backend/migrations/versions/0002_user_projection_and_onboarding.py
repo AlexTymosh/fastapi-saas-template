@@ -1,4 +1,4 @@
-"""user projection, onboarding fields, and membership roles
+"""user projection + onboarding fields, final identity/email constraints, and membership roles
 
 Revision ID: 0002
 Revises: 0001
@@ -121,4 +121,6 @@ def downgrade() -> None:
         )
         batch_op.alter_column("external_auth_id", new_column_name="keycloak_id")
         batch_op.create_unique_constraint(op.f("uq_users_keycloak_id"), ["keycloak_id"])
+        # Restore the historical 0001 email-uniqueness model; this assumes data is
+        # compatible, but duplicates introduced under the newer schema can block it.
         batch_op.create_unique_constraint(op.f("uq_users_email"), ["email"])
