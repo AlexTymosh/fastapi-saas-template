@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,7 +29,7 @@ class User(UUIDMixin, TimestampMixin, Base):
         Boolean,
         nullable=False,
         default=False,
-        server_default="false",
+        server_default=sa.text("false"),
     )
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -36,7 +37,7 @@ class User(UUIDMixin, TimestampMixin, Base):
         Boolean,
         nullable=False,
         default=False,
-        server_default="false",
+        server_default=sa.text("false"),
     )
 
     memberships: Mapped[list[Membership]] = relationship(

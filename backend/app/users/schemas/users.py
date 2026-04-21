@@ -23,6 +23,6 @@ class UserMeResponse(BaseModel):
     first_name: str | None
     last_name: str | None
     onboarding_completed: bool
-    memberships: list[MembershipSummary]
+    membership: MembershipSummary | None
     created_at: datetime
     updated_at: datetime

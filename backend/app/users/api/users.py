@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthenticatedIdentity, get_current_identity
+from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES
 from app.memberships.services.memberships import MembershipService
@@ -14,7 +14,6 @@ from app.users.services.users import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-CurrentIdentityDep = Annotated[AuthenticatedIdentity, Depends(get_current_identity)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
@@ -25,14 +24,17 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
     name="get_me",
 )
 async def get_me(
-    identity: CurrentIdentityDep,
+    identity: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_authenticated_principal),
+    ],
     db_session: DbSessionDep,
 ) -> UserMeResponse:
     user_service = UserService(db_session)
     membership_service = MembershipService(db_session)
 
     user = await user_service.get_me(identity)
-    memberships = await membership_service.list_memberships_for_user(user.id)
+    membership = await membership_service.get_membership_for_user(user.id)
 
     return UserMeResponse(
         id=user.id,
@@ -42,13 +44,14 @@ async def get_me(
         first_name=user.first_name,
         last_name=user.last_name,
         onboarding_completed=user.onboarding_completed,
-        memberships=[
+        membership=(
             MembershipSummary(
                 organisation_id=membership.organisation_id,
                 role=membership.role,
             )
-            for membership in memberships
-        ],
+            if membership is not None
+            else None
+        ),
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
