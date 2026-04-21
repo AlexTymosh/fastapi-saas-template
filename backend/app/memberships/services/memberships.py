@@ -12,9 +12,30 @@ from app.memberships.repositories.memberships import MembershipRepository
 
 class MembershipService:
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self.membership_repository = MembershipRepository(session)
 
     async def create_membership(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+        role: MembershipRole,
+    ) -> Membership:
+        if self.session.in_transaction():
+            return await self._create_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+        async with self.session.begin():
+            return await self._create_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+
+    async def _create_membership(
         self,
         *,
         user_id: UUID,
@@ -39,6 +60,26 @@ class MembershipService:
             ) from exc
 
     async def transfer_membership(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+        role: MembershipRole,
+    ) -> Membership:
+        if self.session.in_transaction():
+            return await self._transfer_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+        async with self.session.begin():
+            return await self._transfer_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+
+    async def _transfer_membership(
         self,
         *,
         user_id: UUID,
@@ -133,5 +174,11 @@ class MembershipService:
             )
 
     async def deactivate_membership(self, membership: Membership) -> Membership:
+        if self.session.in_transaction():
+            return await self._deactivate_membership(membership)
+        async with self.session.begin():
+            return await self._deactivate_membership(membership)
+
+    async def _deactivate_membership(self, membership: Membership) -> Membership:
         await self.ensure_owner_invariant_before_deactivation(membership)
         return await self.membership_repository.deactivate_membership(membership)

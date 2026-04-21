@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 from app.invites.models.invite import InviteStatus
 from app.memberships.models.membership import MembershipRole
@@ -12,6 +12,14 @@ from app.memberships.models.membership import MembershipRole
 class CreateInviteRequest(BaseModel):
     email: EmailStr
     role: MembershipRole = MembershipRole.MEMBER
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: MembershipRole) -> MembershipRole:
+        if value == MembershipRole.OWNER:
+            msg = "Owner role cannot be assigned via invite"
+            raise ValueError(msg)
+        return value
 
 
 class InviteResponse(BaseModel):

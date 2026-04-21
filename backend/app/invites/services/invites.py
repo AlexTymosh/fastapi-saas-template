@@ -13,7 +13,7 @@ from app.invites.repositories.invites import InviteRepository
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from app.organisations.services.organisations import OrganisationService
-from app.users.repositories.users import UserRepository
+from app.users.services.users import UserService
 
 
 class InviteService:
@@ -22,7 +22,7 @@ class InviteService:
         self.invite_repository = InviteRepository(session)
         self.membership_service = MembershipService(session)
         self.organisation_service = OrganisationService(session)
-        self.user_repository = UserRepository(session)
+        self.user_service = UserService(session)
 
     @staticmethod
     def _token_hash(token: str) -> str:
@@ -37,7 +37,35 @@ class InviteService:
         email: str,
         actor_is_superadmin: bool,
     ) -> tuple[Invite, str]:
+        if self.session.in_transaction():
+            return await self._create_invite(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                role=role,
+                email=email,
+                actor_is_superadmin=actor_is_superadmin,
+            )
+        async with self.session.begin():
+            return await self._create_invite(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                role=role,
+                email=email,
+                actor_is_superadmin=actor_is_superadmin,
+            )
+
+    async def _create_invite(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        role: MembershipRole,
+        email: str,
+        actor_is_superadmin: bool,
+    ) -> tuple[Invite, str]:
         await self.organisation_service.get_organisation(organisation_id)
+        if role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Owner role cannot be assigned via invite")
 
         if not actor_is_superadmin:
             membership_repo = self.membership_service.membership_repository
@@ -78,25 +106,30 @@ class InviteService:
         if invite.status != InviteStatus.PENDING:
             raise ConflictError(detail="Invite is no longer pending")
 
-        user = await self.user_repository.get_by_external_auth_id(
-            identity.external_auth_id
-        )
-        if user is None:
-            raise ConflictError(
-                detail="Invite cannot be accepted until user projection exists"
-            )
-
+        if not identity.external_auth_id:
+            raise ForbiddenError(detail="Authenticated identity is required")
         if identity.email is None or invite.email.lower() != identity.email.lower():
             raise ForbiddenError(
                 detail="Invite email does not match authenticated user"
             )
 
+        if self.session.in_transaction():
+            return await self._accept_invite(invite=invite, identity=identity)
         async with self.session.begin():
-            membership = await self.membership_service.transfer_membership(
-                user_id=user.id,
-                organisation_id=invite.organisation_id,
-                role=invite.role,
-            )
-            await self.invite_repository.mark_status(invite, InviteStatus.ACCEPTED)
+            return await self._accept_invite(invite=invite, identity=identity)
+
+    async def _accept_invite(
+        self,
+        *,
+        invite: Invite,
+        identity: AuthenticatedPrincipal,
+    ) -> Membership:
+        user = await self.user_service.get_or_create_current_user(identity=identity)
+        membership = await self.membership_service.transfer_membership(
+            user_id=user.id,
+            organisation_id=invite.organisation_id,
+            role=invite.role,
+        )
+        await self.invite_repository.mark_status(invite, InviteStatus.ACCEPTED)
 
         return membership

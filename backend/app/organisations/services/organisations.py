@@ -22,6 +22,7 @@ _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 class OrganisationService:
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self.organisation_repository = OrganisationRepository(session)
         self.membership_repository = MembershipRepository(session)
 
@@ -47,6 +48,12 @@ class OrganisationService:
         return normalized
 
     async def create_organisation(self, *, name: str, slug: str) -> Organisation:
+        if self.session.in_transaction():
+            return await self._create_organisation(name=name, slug=slug)
+        async with self.session.begin():
+            return await self._create_organisation(name=name, slug=slug)
+
+    async def _create_organisation(self, *, name: str, slug: str) -> Organisation:
         normalized_name = self.normalize_name(name)
         normalized_slug = self.normalize_slug(slug)
         existing = await self.organisation_repository.get_by_slug(normalized_slug)
@@ -74,6 +81,26 @@ class OrganisationService:
         actor_user_id: UUID,
         slug: str,
     ) -> Organisation:
+        if self.session.in_transaction():
+            return await self._update_slug(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                slug=slug,
+            )
+        async with self.session.begin():
+            return await self._update_slug(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                slug=slug,
+            )
+
+    async def _update_slug(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        slug: str,
+    ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
         membership = await self.membership_repository.get_membership(
             user_id=actor_user_id,
@@ -95,6 +122,23 @@ class OrganisationService:
             raise ConflictError(detail="Organisation slug already exists") from exc
 
     async def soft_delete(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+    ) -> Organisation:
+        if self.session.in_transaction():
+            return await self._soft_delete(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+            )
+        async with self.session.begin():
+            return await self._soft_delete(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+            )
+
+    async def _soft_delete(
         self,
         *,
         organisation_id: UUID,
