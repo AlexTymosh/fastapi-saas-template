@@ -95,3 +95,70 @@ def test_superadmin_can_invite_without_membership(
         )
 
     assert response.status_code == 201
+
+
+def test_invite_accept_jit_provisions_user_projection(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-3", "owner3@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org D", "slug": "orgd"},
+        )
+        assert create_org.status_code == 201
+        org_id = create_org.json()["id"]
+
+        invite_response = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "jit-invitee@example.com", "role": "member"},
+        )
+        assert invite_response.status_code == 201
+        token = invite_response.json()["token"]
+
+    invitee_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-jit-invitee", "jit-invitee@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with invitee_client as client:
+        accepted = client.post(f"/api/v1/invites/{token}/accept")
+        assert accepted.status_code == 200
+
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+        payload = me.json()
+        assert payload["external_auth_id"] == "kc-jit-invitee"
+        assert payload["membership"]["organisation_id"] == org_id
+
+
+def test_create_invite_rejects_owner_role(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-4", "owner4@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org E", "slug": "orge"},
+        )
+        assert create_org.status_code == 201
+        org_id = create_org.json()["id"]
+
+        response = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "owner-invite@example.com", "role": "owner"},
+        )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/problem+json")

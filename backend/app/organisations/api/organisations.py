@@ -43,6 +43,8 @@ async def create_organisation(
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
     if identity.is_superadmin():
+        # Platform superadmin can bootstrap organisations as a support action,
+        # but does not gain automatic organisation membership.
         service = OrganisationService(db_session)
         organisation = await service.create_organisation(
             name=payload.name,

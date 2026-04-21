@@ -277,6 +277,39 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
         assert memberships.json()["data"][0]["role"] == MembershipRole.OWNER.value
 
 
+def test_superadmin_create_organisation_does_not_create_membership(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    superadmin_client, _ = authenticated_client_factory(
+        identity=AuthenticatedPrincipal(
+            external_auth_id="kc-superadmin-org",
+            email="support@example.com",
+            email_verified=True,
+            platform_roles=["superadmin"],
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with superadmin_client as client:
+        response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Support Bootstrap Org", "slug": "support-bootstrap-org"},
+        )
+        assert response.status_code == 201
+        organisation_id = UUID(response.json()["id"])
+
+    async def _membership_count() -> int:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(Membership).where(Membership.organisation_id == organisation_id)
+            )
+            return len(list(result.scalars().all()))
+
+    assert run_async(_membership_count()) == 0
+
+
 def test_admin_and_owner_roles_exist_in_enum() -> None:
     assert MembershipRole.ADMIN.value == "admin"
     assert MembershipRole.OWNER.value == "owner"

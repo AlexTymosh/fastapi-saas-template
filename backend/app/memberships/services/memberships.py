@@ -12,6 +12,7 @@ from app.memberships.repositories.memberships import MembershipRepository
 
 class MembershipService:
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self.membership_repository = MembershipRepository(session)
 
     async def create_membership(
@@ -21,22 +22,31 @@ class MembershipService:
         organisation_id: UUID,
         role: MembershipRole,
     ) -> Membership:
-        existing_membership = await self.membership_repository.get_membership_for_user(
-            user_id=user_id
-        )
-        if existing_membership is not None:
-            raise ConflictError(detail="User already belongs to an organisation")
-
-        try:
-            return await self.membership_repository.create_membership(
-                user_id=user_id,
-                organisation_id=organisation_id,
-                role=role,
+        async def _create() -> Membership:
+            existing_membership = (
+                await self.membership_repository.get_membership_for_user(
+                    user_id=user_id
+                )
             )
-        except IntegrityError as exc:
-            raise ConflictError(
-                detail="User already belongs to an organisation"
-            ) from exc
+            if existing_membership is not None:
+                raise ConflictError(detail="User already belongs to an organisation")
+
+            try:
+                return await self.membership_repository.create_membership(
+                    user_id=user_id,
+                    organisation_id=organisation_id,
+                    role=role,
+                )
+            except IntegrityError as exc:
+                raise ConflictError(
+                    detail="User already belongs to an organisation"
+                ) from exc
+
+        if self.session.in_transaction():
+            return await _create()
+
+        async with self.session.begin():
+            return await _create()
 
     async def transfer_membership(
         self,
@@ -45,25 +55,32 @@ class MembershipService:
         organisation_id: UUID,
         role: MembershipRole,
     ) -> Membership:
-        existing = await self.membership_repository.get_membership_for_user(
-            user_id=user_id
-        )
-        if existing is not None:
-            if existing.role == MembershipRole.OWNER:
-                owner_count = await self.membership_repository.count_active_owners(
-                    organisation_id=existing.organisation_id
-                )
-                if owner_count <= 1:
-                    raise ConflictError(
-                        detail="Organisation must always have at least one owner"
+        async def _transfer() -> Membership:
+            existing = await self.membership_repository.get_membership_for_user(
+                user_id=user_id
+            )
+            if existing is not None:
+                if existing.role == MembershipRole.OWNER:
+                    owner_count = await self.membership_repository.count_active_owners(
+                        organisation_id=existing.organisation_id
                     )
-            await self.membership_repository.deactivate_membership(existing)
+                    if owner_count <= 1:
+                        raise ConflictError(
+                            detail="Organisation must always have at least one owner"
+                        )
+                await self.membership_repository.deactivate_membership(existing)
 
-        return await self.membership_repository.create_membership(
-            user_id=user_id,
-            organisation_id=organisation_id,
-            role=role,
-        )
+            return await self.membership_repository.create_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+
+        if self.session.in_transaction():
+            return await _transfer()
+
+        async with self.session.begin():
+            return await _transfer()
 
     async def list_memberships_for_organisation(
         self,
@@ -133,5 +150,12 @@ class MembershipService:
             )
 
     async def deactivate_membership(self, membership: Membership) -> Membership:
-        await self.ensure_owner_invariant_before_deactivation(membership)
-        return await self.membership_repository.deactivate_membership(membership)
+        async def _deactivate() -> Membership:
+            await self.ensure_owner_invariant_before_deactivation(membership)
+            return await self.membership_repository.deactivate_membership(membership)
+
+        if self.session.in_transaction():
+            return await _deactivate()
+
+        async with self.session.begin():
+            return await _deactivate()
