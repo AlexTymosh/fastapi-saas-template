@@ -5,6 +5,8 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.core.auth import AuthenticatedPrincipal
+from app.invites.models.invite import Invite
+from app.invites.services.invites import InviteService
 from app.memberships.models.membership import Membership
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -23,6 +25,8 @@ def _identity_for(
     )
 
 
+# Foundation-step seam: test environment responses include `_test_token`
+# so acceptance flows can be verified without exposing raw token in public schema.
 def test_invite_accept_transfers_membership(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -58,7 +62,8 @@ def test_invite_accept_transfers_membership(
             json={"email": "invitee@example.com", "role": "member"},
         )
         assert invite_response.status_code == 201
-        token = invite_response.json()["token"]
+        assert "token" not in invite_response.json()
+        token = invite_response.json()["_test_token"]
 
     with invitee_client as client:
         accepted = client.post(f"/api/v1/invites/{token}/accept")
@@ -126,7 +131,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
             json={"email": "jit-invitee@example.com", "role": "member"},
         )
         assert invite_response.status_code == 201
-        token = invite_response.json()["token"]
+        token = invite_response.json()["_test_token"]
 
     invitee_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-invitee-jit", "jit-invitee@example.com"),
@@ -175,7 +180,7 @@ def test_accept_invite_rejects_email_mismatch(
             json={"email": "expected@example.com", "role": "member"},
         )
         assert invite_response.status_code == 201
-        token = invite_response.json()["token"]
+        token = invite_response.json()["_test_token"]
 
     wrong_user_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-wrong-email", "wrong@example.com"),
@@ -208,3 +213,51 @@ def test_create_invite_rejects_owner_role(
             json={"email": "invitee-owner@example.com", "role": "owner"},
         )
     assert response.status_code == 422
+
+
+def test_accept_expired_invite_fails(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-expired", "owner-expired@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org Expired", "slug": "org-expired"},
+        )
+        assert create_org.status_code == 201
+        org_id = create_org.json()["id"]
+        invite_response = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "expired-invitee@example.com", "role": "member"},
+        )
+        assert invite_response.status_code == 201
+        token = invite_response.json()["_test_token"]
+
+    async def _expire_invite() -> None:
+        async with migrated_session_factory() as session:
+            invite = await session.scalar(
+                select(Invite).where(
+                    Invite.token_hash == InviteService._token_hash(token)
+                )
+            )
+            assert invite is not None
+            invite.expires_at = invite.created_at
+            await session.commit()
+
+    run_async(_expire_invite())
+
+    invitee_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-expired-invitee", "expired-invitee@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with invitee_client as client:
+        response = client.post(f"/api/v1/invites/{token}/accept")
+        assert response.status_code == 409
