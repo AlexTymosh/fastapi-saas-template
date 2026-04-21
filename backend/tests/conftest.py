@@ -1,5 +1,13 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config.settings import Settings, get_settings
 from app.core.db import dispose_engine
@@ -45,3 +53,38 @@ def client_factory(monkeypatch):
 def client(client_factory) -> TestClient:
     with client_factory(database_url=None, redis_url=None) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def migrated_database_url(tmp_path) -> str:
+    database_url = f"sqlite+aiosqlite:///{tmp_path}/migrated.db"
+    backend_root = Path(__file__).resolve().parents[1]
+
+    env = os.environ.copy()
+    env["DATABASE__URL"] = database_url
+
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=backend_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        pytest.fail(f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}")
+
+    return database_url
+
+
+@pytest.fixture
+def migrated_session_factory(migrated_database_url: str):
+    engine = create_async_engine(migrated_database_url)
+    session_factory = async_sessionmaker(
+        engine,
+        expire_on_commit=False,
+        class_=AsyncSession,
+    )
+    yield session_factory
+    run_async(engine.dispose())
