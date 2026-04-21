@@ -505,6 +505,35 @@ def test_list_memberships_returns_200_for_owner(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+def test_list_memberships_returns_404_for_soft_deleted_organisation_even_for_non_member(
+    tmp_path,
+) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Soft Deleted Org", "slug": "soft-deleted-org"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        delete_response = client.delete(f"/api/v1/organisations/{organisation_id}")
+        assert delete_response.status_code == 204
+
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-soft-delete-outsider",
+                email="soft-delete-outsider@example.com",
+            )
+        )
+
+        response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
+        assert response.status_code == 404
+
+    run_async(engine.dispose())
+
+
 def test_create_organisation_rejects_second_creation_for_same_user(
     authenticated_client_factory,
     migrated_database_url: str,

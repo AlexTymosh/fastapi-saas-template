@@ -15,6 +15,7 @@ from app.invites.schemas.invites import (
     InviteCreateResponse,
     InviteResponse,
 )
+from app.invites.services.delivery import InviteTokenSink, get_invite_token_sink
 from app.invites.services.invites import InviteService
 from app.users.services.users import UserService
 
@@ -24,6 +25,7 @@ PrincipalDep = Annotated[
     AuthenticatedPrincipal,
     Depends(require_authenticated_principal),
 ]
+InviteTokenSinkDep = Annotated[InviteTokenSink, Depends(get_invite_token_sink)]
 
 
 @router.post(
@@ -38,10 +40,11 @@ async def create_invite(
     payload: CreateInviteRequest,
     identity: PrincipalDep,
     db_session: DbSessionDep,
+    token_sink: InviteTokenSinkDep,
 ) -> InviteCreateResponse:
     user = await UserService(db_session).provision_current_user(identity)
-    invite_service = InviteService(db_session)
-    invite, _token = await invite_service.create_invite(
+    invite_service = InviteService(db_session, token_sink=token_sink)
+    invite = await invite_service.create_invite(
         organisation_id=organisation_id,
         actor_user_id=user.id,
         role=payload.role,

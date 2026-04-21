@@ -27,3 +27,15 @@ The following capabilities are intentionally out of scope for this foundation an
 ## Security and delivery note
 
 Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract.
+
+## Authorisation semantics and invite token test seam
+
+For organisation-scoped foundation endpoints, this branch now applies a single access rule consistently:
+
+1. Load organisation first.
+2. Return `404 Not Found` when organisation does not exist (including soft-deleted records).
+3. Only then evaluate actor access and return `403 Forbidden` when the organisation exists but actor permissions are insufficient.
+
+This policy is applied to organisation read/membership-list flows and organisation-scoped invite creation.
+
+To keep invite API tests realistic without exposing raw tokens in the public API contract, invite creation now calls a token delivery port (`InviteTokenSink`). The production default sink is a no-op placeholder for out-of-band delivery, while tests override the sink with an in-memory capture implementation to retrieve tokens for acceptance tests.

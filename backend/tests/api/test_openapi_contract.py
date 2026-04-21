@@ -76,7 +76,7 @@ def test_openapi_health_ready_documents_503_problem_response(monkeypatch) -> Non
     assert schema_ref.endswith("/ProblemDetails")
 
 
-def test_openapi_includes_user_and_organisation_endpoints(monkeypatch) -> None:
+def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) -> None:
     app = _build_app(monkeypatch, docs_enabled="true")
     client = TestClient(app)
 
@@ -90,3 +90,14 @@ def test_openapi_includes_user_and_organisation_endpoints(monkeypatch) -> None:
     assert "/api/v1/organisations" in paths
     assert "/api/v1/organisations/{organisation_id}" in paths
     assert "/api/v1/organisations/{organisation_id}/memberships" in paths
+    assert "/api/v1/organisations/{organisation_id}/invites" in paths
+    assert "/api/v1/invites/{token}/accept" in paths
+
+    invite_create = paths["/api/v1/organisations/{organisation_id}/invites"]["post"]
+    invite_accept = paths["/api/v1/invites/{token}/accept"]["post"]
+
+    create_problem = invite_create["responses"]["403"]["content"]
+    assert "application/problem+json" in create_problem
+
+    accept_problem = invite_accept["responses"]["404"]["content"]
+    assert "application/problem+json" in accept_problem
