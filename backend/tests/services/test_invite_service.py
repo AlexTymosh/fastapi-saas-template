@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -22,9 +22,9 @@ async def _transaction_context():
 
 
 def _service() -> InviteService:
-    session = AsyncMock()
-    session.begin.return_value = _transaction_context()
-    session.in_transaction.return_value = False
+    session = Mock()
+    session.begin = Mock(return_value=_transaction_context())
+    session.in_transaction = Mock(return_value=False)
     return InviteService(session=session)
 
 

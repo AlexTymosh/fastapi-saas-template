@@ -127,10 +127,19 @@ class InviteService:
             )
 
     @staticmethod
+    def _normalize_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @staticmethod
     def _is_expired(*, expires_at: datetime | None) -> bool:
-        if expires_at is None:
+        normalized_expires_at = InviteService._normalize_utc(expires_at)
+        if normalized_expires_at is None:
             return False
-        return expires_at <= datetime.now(UTC)
+        return normalized_expires_at <= datetime.now(UTC)
 
     async def _accept_invite_in_transaction(
         self,

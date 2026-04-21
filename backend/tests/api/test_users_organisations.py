@@ -13,7 +13,7 @@ from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
-from tests.helpers.auth import TestAuthProvider
+from tests.helpers.auth import FakeAuthProvider
 
 
 def _identity() -> AuthenticatedPrincipal:
@@ -30,6 +30,7 @@ def _identity_for(
     external_auth_id: str,
     email: str,
     *,
+    roles: list[str] | None = None,
     email_verified: bool = True,
     first_name: str = "Test",
     last_name: str = "User",
@@ -40,6 +41,7 @@ def _identity_for(
         email_verified=email_verified,
         first_name=first_name,
         last_name=last_name,
+        platform_roles=roles or [],
     )
 
 
@@ -63,7 +65,7 @@ def _create_client_and_session_factory(tmp_path):
             yield session
 
     app = create_app()
-    auth_provider = TestAuthProvider(identity=_identity())
+    auth_provider = FakeAuthProvider(identity=_identity())
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_authenticated_principal] = (
         auth_provider.get_authenticated_principal

@@ -32,6 +32,7 @@ class InviteRepository:
         )
         self.session.add(invite)
         await self.session.flush()
+        await self.session.refresh(invite)
         return invite
 
     async def get_by_token_hash(self, token_hash: str) -> Invite | None:
@@ -42,4 +43,5 @@ class InviteRepository:
     async def mark_status(self, invite: Invite, status: InviteStatus) -> Invite:
         invite.status = status
         await self.session.flush()
+        await self.session.refresh(invite)
         return invite
