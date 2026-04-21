@@ -4,13 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.auth import AuthenticatedIdentity, get_authenticated_identity
+from app.core.auth import AuthenticatedPrincipal, extract_authenticated_principal
 from app.core.config.settings import Settings, get_settings
 from app.core.db import dispose_engine
 from app.main import create_app
-from tests.helpers.auth import TestAuthProvider
 from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
+from tests.helpers.auth import TestAuthProvider
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +56,7 @@ def test_auth_provider() -> TestAuthProvider:
 def authenticated_client_factory(monkeypatch, test_auth_provider: TestAuthProvider):
     def _build(
         *,
-        identity: AuthenticatedIdentity,
+        identity: AuthenticatedPrincipal,
         database_url: str | None = None,
         redis_url: str | None = None,
     ) -> tuple[TestClient, TestAuthProvider]:
@@ -73,8 +73,8 @@ def authenticated_client_factory(monkeypatch, test_auth_provider: TestAuthProvid
         get_settings.cache_clear()
         test_auth_provider.set_identity(identity)
         app = create_app()
-        app.dependency_overrides[get_authenticated_identity] = (
-            test_auth_provider.get_authenticated_identity
+        app.dependency_overrides[extract_authenticated_principal] = (
+            test_auth_provider.extract_authenticated_principal
         )
         return TestClient(app), test_auth_provider
 

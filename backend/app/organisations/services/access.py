@@ -4,8 +4,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthenticatedIdentity
-from app.memberships.models.membership import Membership
+from app.core.auth import AuthenticatedPrincipal
+from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from app.organisations.models.organisation import Organisation
 from app.organisations.services.organisations import OrganisationService
@@ -21,7 +21,7 @@ class OrganisationAccessService:
     async def get_organisation_for_member(
         self,
         *,
-        identity: AuthenticatedIdentity,
+        identity: AuthenticatedPrincipal,
         organisation_id: UUID,
     ) -> Organisation:
         user = await self.user_service.provision_current_user(identity=identity)
@@ -37,16 +37,17 @@ class OrganisationAccessService:
     async def list_memberships_for_member_organisation(
         self,
         *,
-        identity: AuthenticatedIdentity,
+        identity: AuthenticatedPrincipal,
         organisation_id: UUID,
     ) -> list[Membership]:
         user = await self.user_service.provision_current_user(identity=identity)
         await self.organisation_service.get_organisation(
             organisation_id=organisation_id
         )
-        await self.membership_service.ensure_user_has_organisation_access(
+        await self.membership_service.ensure_user_has_organisation_role(
             user_id=user.id,
             organisation_id=organisation_id,
+            allowed_roles={MembershipRole.OWNER, MembershipRole.ADMIN},
         )
         return await self.membership_service.list_memberships_for_organisation(
             organisation_id=organisation_id

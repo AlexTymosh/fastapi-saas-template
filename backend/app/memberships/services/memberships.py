@@ -57,3 +57,20 @@ class MembershipService:
             raise ForbiddenError(
                 detail="You are not a member of this organisation",
             )
+
+    async def ensure_user_has_organisation_role(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+        allowed_roles: set[MembershipRole],
+    ) -> Membership:
+        membership = await self.membership_repository.get_membership(
+            user_id=user_id,
+            organisation_id=organisation_id,
+        )
+        if membership is None or membership.role not in allowed_roles:
+            raise ForbiddenError(
+                detail="You do not have permission to access organisation memberships",
+            )
+        return membership

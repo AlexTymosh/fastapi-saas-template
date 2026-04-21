@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.core.auth import AuthenticatedIdentity
+from app.core.auth import AuthenticatedPrincipal
 from app.core.db import Base
 from app.users.models.user import User
 from app.users.services.users import UserService
@@ -21,14 +21,14 @@ from tests.helpers.asyncio_runner import run_async
 
 def _identity_for(
     *,
-    sub: str = "kc-user-1",
+    external_auth_id: str = "kc-user-1",
     email: str | None = "owner@example.com",
     email_verified: bool = True,
     first_name: str | None = "Owner",
     last_name: str | None = "User",
-) -> AuthenticatedIdentity:
-    return AuthenticatedIdentity(
-        sub=sub,
+) -> AuthenticatedPrincipal:
+    return AuthenticatedPrincipal(
+        external_auth_id=external_auth_id,
         email=email,
         email_verified=email_verified,
         first_name=first_name,
@@ -90,7 +90,7 @@ def test_get_or_create_current_user_recovers_from_unique_conflict_race() -> None
     result = run_async(
         service.get_or_create_current_user(
             _identity_for(
-                sub="kc-race-user",
+                external_auth_id="kc-race-user",
                 email="race@example.com",
                 email_verified=True,
                 first_name="Race",

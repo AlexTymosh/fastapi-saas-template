@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthenticatedIdentity, get_current_identity
+from app.core.auth import CurrentPrincipal
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
 from app.organisations.schemas.organisations import (
@@ -20,7 +20,6 @@ from app.organisations.services.onboarding import OnboardingService
 
 router = APIRouter(prefix="/organisations", tags=["organisations"])
 
-CurrentIdentityDep = Annotated[AuthenticatedIdentity, Depends(get_current_identity)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
@@ -33,7 +32,7 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 )
 async def create_organisation(
     payload: CreateOrganisationRequest,
-    identity: CurrentIdentityDep,
+    identity: CurrentPrincipal,
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
     onboarding_service = OnboardingService(db_session)
@@ -53,7 +52,7 @@ async def create_organisation(
 )
 async def get_organisation(
     organisation_id: UUID,
-    identity: CurrentIdentityDep,
+    identity: CurrentPrincipal,
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
     access_service = OrganisationAccessService(db_session)
@@ -72,7 +71,7 @@ async def get_organisation(
 )
 async def list_organisation_memberships(
     organisation_id: UUID,
-    identity: CurrentIdentityDep,
+    identity: CurrentPrincipal,
     db_session: DbSessionDep,
 ) -> MembershipListResponse:
     access_service = OrganisationAccessService(db_session)
