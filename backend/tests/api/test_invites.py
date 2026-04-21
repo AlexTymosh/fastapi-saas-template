@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.auth import AuthenticatedPrincipal
 from app.invites.services.delivery import get_invite_token_sink
-from app.memberships.models.membership import Membership
+from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
@@ -45,6 +45,7 @@ def _override_token_sink(test_client) -> InMemoryInviteTokenSink:
 def test_invite_accept_transfers_membership(
     authenticated_client_factory,
     migrated_database_url: str,
+    migrated_session_factory,
 ) -> None:
     owner_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-owner", "owner@example.com"),
@@ -52,43 +53,133 @@ def test_invite_accept_transfers_membership(
         redis_url=None,
     )
     owner_sink = _override_token_sink(owner_client)
-    with owner_client as client:
+
+    source_owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-source-owner", "source-owner@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    source_owner_sink = _override_token_sink(source_owner_client)
+
+    with source_owner_client as client:
         create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org Source", "slug": "org-source"},
+        )
+        assert create_org.status_code == 201
+        source_org_id = create_org.json()["id"]
+
+        seed_invite = client.post(
+            f"/api/v1/organisations/{source_org_id}/invites",
+            json={"email": "invitee@example.com", "role": "member"},
+        )
+        assert seed_invite.status_code == 201
+
+    with owner_client as client:
+        create_target_org = client.post(
             "/api/v1/organisations",
             json={"name": "Org A", "slug": "orga"},
         )
-        assert create_org.status_code == 201
-        org_a = create_org.json()["id"]
+        assert create_target_org.status_code == 201
+        target_org_id = create_target_org.json()["id"]
+
+        transfer_invite = client.post(
+            f"/api/v1/organisations/{target_org_id}/invites",
+            json={"email": "invitee@example.com", "role": "member"},
+        )
+        assert transfer_invite.status_code == 201
+
+    source_token = source_owner_sink.token_for_email("invitee@example.com")
+    transfer_token = owner_sink.token_for_email("invitee@example.com")
 
     invitee_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-invitee", "invitee@example.com"),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    with invitee_client as client:
-        create_org = client.post(
-            "/api/v1/organisations",
-            json={"name": "Org B", "slug": "orgb"},
-        )
-        assert create_org.status_code == 201
-
-    with owner_client as client:
-        invite_response = client.post(
-            f"/api/v1/organisations/{org_a}/invites",
-            json={"email": "invitee@example.com", "role": "member"},
-        )
-        assert invite_response.status_code == 201
-        assert "token" not in invite_response.json()
-
-    token = owner_sink.token_for_email("invitee@example.com")
 
     with invitee_client as client:
-        accepted = client.post(f"/api/v1/invites/{token}/accept")
+        accepted_source = client.post(f"/api/v1/invites/{source_token}/accept")
+        assert accepted_source.status_code == 200
+
+        accepted = client.post(f"/api/v1/invites/{transfer_token}/accept")
         assert accepted.status_code == 200
 
         me = client.get("/api/v1/users/me")
         assert me.status_code == 200
-        assert me.json()["membership"]["organisation_id"] == org_a
+        assert me.json()["membership"]["organisation_id"] == target_org_id
+
+    async def _assert_membership_transfer() -> None:
+        async with migrated_session_factory() as session:
+            user_result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-invitee")
+            )
+            invitee = user_result.scalar_one()
+
+            memberships_result = await session.execute(
+                select(Membership).where(Membership.user_id == invitee.id)
+            )
+            memberships = list(memberships_result.scalars().all())
+            assert len(memberships) == 2
+
+            source_membership = next(
+                membership
+                for membership in memberships
+                if str(membership.organisation_id) == source_org_id
+            )
+            target_membership = next(
+                membership
+                for membership in memberships
+                if str(membership.organisation_id) == target_org_id
+            )
+
+            assert source_membership.is_active is False
+            assert target_membership.is_active is True
+            assert target_membership.role == MembershipRole.MEMBER
+
+    run_async(_assert_membership_transfer())
+
+
+def test_invite_accept_rejects_transfer_for_sole_owner(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-sole", "owner-sole@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_client)
+    with owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org Sole Target", "slug": "org-sole-target"},
+        )
+        assert create_org.status_code == 201
+        target_org_id = create_org.json()["id"]
+
+        invite_response = client.post(
+            f"/api/v1/organisations/{target_org_id}/invites",
+            json={"email": "invitee-sole@example.com", "role": "member"},
+        )
+        assert invite_response.status_code == 201
+
+    sole_owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-invitee-sole", "invitee-sole@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with sole_owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org Sole Source", "slug": "org-sole-source"},
+        )
+        assert create_org.status_code == 201
+
+    token = owner_sink.token_for_email("invitee-sole@example.com")
+    with sole_owner_client as client:
+        response = client.post(f"/api/v1/invites/{token}/accept")
+        assert response.status_code == 409
 
 
 def test_superadmin_can_invite_without_membership(
