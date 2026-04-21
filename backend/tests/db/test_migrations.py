@@ -60,9 +60,14 @@ def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
             constraint["name"]
             for constraint in inspector.get_unique_constraints("users")
         }
+        membership_role_checks = inspector.get_check_constraints("memberships")
 
     assert "uq_users_external_auth_id" in unique_constraints
     assert "uq_users_email" not in unique_constraints
+    assert any(
+        "admin" in (constraint.get("sqltext") or "")
+        for constraint in membership_role_checks
+    )
 
     check = _run_alembic("check", env=env)
     assert check.returncode == 0, check.stdout + "\n" + check.stderr
