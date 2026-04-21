@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from app.core.auth import AuthenticatedPrincipal
-from app.core.errors.exceptions import ForbiddenError
+from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.invites import InviteService
 from app.memberships.models.membership import Membership, MembershipRole
@@ -92,6 +93,62 @@ def test_accept_invite_provisions_missing_projection_user() -> None:
     )
 
     service.user_service.get_or_create_current_user.assert_awaited_once()
+
+
+def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> None:
+    service = _service()
+    service.invite_repository = AsyncMock()
+    invite = Invite(
+        email="invited@example.com",
+        organisation_id=uuid4(),
+        role=MembershipRole.MEMBER,
+        status=InviteStatus.PENDING,
+        token_hash="x",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
+    service.invite_repository.mark_status = AsyncMock()
+    service.user_service = AsyncMock()
+
+    with pytest.raises(ConflictError):
+        run_async(
+            service.accept_invite(
+                token="abc",
+                identity=_identity("invited@example.com"),
+            )
+        )
+
+    service.invite_repository.mark_status.assert_awaited_once_with(
+        invite, InviteStatus.EXPIRED
+    )
+    service.user_service.get_or_create_current_user.assert_not_called()
+
+
+def test_accept_invite_rejects_non_pending_expired_invite() -> None:
+    service = _service()
+    service.invite_repository = AsyncMock()
+    service.invite_repository.get_by_token_hash = AsyncMock(
+        return_value=Invite(
+            email="invited@example.com",
+            organisation_id=uuid4(),
+            role=MembershipRole.MEMBER,
+            status=InviteStatus.EXPIRED,
+            token_hash="x",
+        )
+    )
+    service.invite_repository.mark_status = AsyncMock()
+    service.user_service = AsyncMock()
+
+    with pytest.raises(ConflictError):
+        run_async(
+            service.accept_invite(
+                token="abc",
+                identity=_identity("invited@example.com"),
+            )
+        )
+
+    service.invite_repository.mark_status.assert_not_called()
+    service.user_service.get_or_create_current_user.assert_not_called()
 
 
 def test_create_invite_admin_cannot_assign_admin_role() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -20,12 +21,14 @@ class InviteRepository:
         organisation_id: UUID,
         role: MembershipRole,
         token_hash: str,
+        expires_at: datetime | None,
     ) -> Invite:
         invite = Invite(
             email=email,
             organisation_id=organisation_id,
             role=role,
             token_hash=token_hash,
+            expires_at=expires_at,
         )
         self.session.add(invite)
         await self.session.flush()

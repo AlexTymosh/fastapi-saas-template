@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
 from uuid import UUID
@@ -17,6 +18,10 @@ from app.users.services.users import UserService
 
 
 class InviteService:
+    # Foundation default: a one-week validity window keeps invitations usable while
+    # limiting long-lived pending tokens until dedicated lifecycle flows are added.
+    DEFAULT_INVITE_TTL = timedelta(days=7)
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.invite_repository = InviteRepository(session)
@@ -85,11 +90,13 @@ class InviteService:
                 raise ForbiddenError(detail="Admin cannot assign admin role")
 
         token = token_urlsafe(32)
+        expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
         invite = await self.invite_repository.create_invite(
             email=email.strip().lower(),
             organisation_id=organisation_id,
             role=role,
             token_hash=self._token_hash(token),
+            expires_at=expires_at,
         )
         return invite, token
 
@@ -100,11 +107,38 @@ class InviteService:
         identity: AuthenticatedPrincipal,
     ) -> Membership:
         token_hash = self._token_hash(token)
+        if self.session.in_transaction():
+            return await self._accept_invite_in_transaction(
+                token_hash=token_hash,
+                identity=identity,
+            )
+        async with self.session.begin():
+            return await self._accept_invite_in_transaction(
+                token_hash=token_hash,
+                identity=identity,
+            )
+
+    @staticmethod
+    def _is_expired(*, expires_at: datetime | None) -> bool:
+        if expires_at is None:
+            return False
+        return expires_at <= datetime.now(UTC)
+
+    async def _accept_invite_in_transaction(
+        self,
+        *,
+        token_hash: str,
+        identity: AuthenticatedPrincipal,
+    ) -> Membership:
         invite = await self.invite_repository.get_by_token_hash(token_hash)
         if invite is None:
             raise NotFoundError(detail="Invite not found")
         if invite.status != InviteStatus.PENDING:
             raise ConflictError(detail="Invite is no longer pending")
+
+        if self._is_expired(expires_at=invite.expires_at):
+            await self.invite_repository.mark_status(invite, InviteStatus.EXPIRED)
+            raise ConflictError(detail="Invite has expired")
 
         if not identity.external_auth_id:
             raise ForbiddenError(detail="Authenticated identity is required")
@@ -113,17 +147,6 @@ class InviteService:
                 detail="Invite email does not match authenticated user"
             )
 
-        if self.session.in_transaction():
-            return await self._accept_invite(invite=invite, identity=identity)
-        async with self.session.begin():
-            return await self._accept_invite(invite=invite, identity=identity)
-
-    async def _accept_invite(
-        self,
-        *,
-        invite: Invite,
-        identity: AuthenticatedPrincipal,
-    ) -> Membership:
         user = await self.user_service.get_or_create_current_user(identity=identity)
         membership = await self.membership_service.transfer_membership(
             user_id=user.id,

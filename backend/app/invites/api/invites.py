@@ -41,7 +41,7 @@ async def create_invite(
 ) -> InviteCreateResponse:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session)
-    invite, token = await invite_service.create_invite(
+    invite, _token = await invite_service.create_invite(
         organisation_id=organisation_id,
         actor_user_id=user.id,
         role=payload.role,
@@ -49,7 +49,7 @@ async def create_invite(
         actor_is_superadmin=identity.is_superadmin(),
     )
     invite_payload = InviteResponse.model_validate(invite)
-    return InviteCreateResponse(invite=invite_payload, token=token)
+    return InviteCreateResponse(invite=invite_payload)
 
 
 @router.post(

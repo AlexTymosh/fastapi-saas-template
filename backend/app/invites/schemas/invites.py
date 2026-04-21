@@ -30,13 +30,13 @@ class InviteResponse(BaseModel):
     organisation_id: UUID
     role: MembershipRole
     status: InviteStatus
+    expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
 
 class InviteCreateResponse(BaseModel):
     invite: InviteResponse
-    token: str
 
 
 class AcceptInviteResponse(BaseModel):

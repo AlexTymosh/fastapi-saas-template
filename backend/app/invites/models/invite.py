@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Enum, ForeignKey, String
+from sqlalchemy import DateTime, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base
@@ -46,6 +47,11 @@ class Invite(UUIDMixin, TimestampMixin, Base):
         String(128),
         nullable=False,
         unique=True,
+        index=True,
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
         index=True,
     )
 
