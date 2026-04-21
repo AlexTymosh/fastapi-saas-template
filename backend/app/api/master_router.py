@@ -1,15 +1,13 @@
 from fastapi import APIRouter
 
 from app.api.health import router as health_router
+from app.invites.api.invites import router as invites_router
 from app.organisations.api.organisations import router as organisations_router
 from app.users.api.users import router as users_router
 
 
 def build_master_router(*, v1_prefix: str) -> APIRouter:
-    # Master API router
     router = APIRouter()
-
-    # --- API version 1 router ---
     v1_router = APIRouter()
 
     # 001. Health check endpoint
@@ -18,7 +16,8 @@ def build_master_router(*, v1_prefix: str) -> APIRouter:
     v1_router.include_router(users_router)
     # 003. Organisations and memberships endpoints
     v1_router.include_router(organisations_router)
+    # 004. Invite endpoints
+    v1_router.include_router(invites_router)
 
-    # Attach v1 router to the master router
     router.include_router(v1_router, prefix=v1_prefix)
     return router

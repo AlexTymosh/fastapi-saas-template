@@ -6,8 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.memberships.models.membership import MembershipRole
-
 _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 
@@ -37,6 +35,10 @@ class CreateOrganisationRequest(BaseModel):
         return slug
 
 
+class UpdateOrganisationSlugRequest(BaseModel):
+    slug: str = Field(min_length=1, max_length=255)
+
+
 class OrganisationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -45,18 +47,3 @@ class OrganisationResponse(BaseModel):
     slug: str
     created_at: datetime
     updated_at: datetime
-
-
-class MembershipResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    user_id: UUID
-    organisation_id: UUID
-    role: MembershipRole
-    created_at: datetime
-    updated_at: datetime
-
-
-class MembershipListResponse(BaseModel):
-    data: list[MembershipResponse]

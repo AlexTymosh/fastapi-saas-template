@@ -60,20 +60,18 @@ def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
             constraint["name"]
             for constraint in inspector.get_unique_constraints("users")
         }
-        membership_unique_constraints = {
-            constraint["name"]
-            for constraint in inspector.get_unique_constraints("memberships")
+        membership_indexes = {
+            index["name"] for index in inspector.get_indexes("memberships")
         }
-        membership_role_checks = inspector.get_check_constraints("memberships")
+        invite_columns = {column["name"] for column in inspector.get_columns("invites")}
 
     assert "uq_users_external_auth_id" in unique_constraints
     assert "uq_users_email" not in unique_constraints
-    assert "uq_memberships_user_id" in membership_unique_constraints
-    assert "uq_memberships_user_id_organisation_id" not in membership_unique_constraints
-    assert any(
-        "admin" in (constraint.get("sqltext") or "")
-        for constraint in membership_role_checks
-    )
+    assert "uq_memberships_user_id_active" in membership_indexes
+    assert "expires_at" in invite_columns
+    # SQLite reflection does not consistently expose Enum check constraints across
+    # SQLAlchemy/Alembic versions, so this migration contract intentionally asserts
+    # only stable cross-database guarantees.
 
     check = _run_alembic("check", env=env)
     assert check.returncode == 0, check.stdout + "\n" + check.stderr

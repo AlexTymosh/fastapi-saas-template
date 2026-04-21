@@ -51,3 +51,15 @@ def test_jwt_claim_mapping_rejects_invalid_email_claim() -> None:
                 "email": "not-an-email",
             }
         )
+
+
+def test_principal_superadmin_flag_comes_from_roles_claim() -> None:
+    principal = AuthenticatedPrincipal.from_unverified_jwt_claims(
+        {
+            "sub": "kc-super-1",
+            "email": "super@example.com",
+            "roles": ["superadmin"],
+        }
+    )
+
+    assert principal.is_superadmin() is True

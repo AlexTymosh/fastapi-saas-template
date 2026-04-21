@@ -13,7 +13,7 @@ from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
-from tests.helpers.auth import TestAuthProvider
+from tests.helpers.auth import FakeAuthProvider
 
 
 def _identity() -> AuthenticatedPrincipal:
@@ -30,6 +30,7 @@ def _identity_for(
     external_auth_id: str,
     email: str,
     *,
+    roles: list[str] | None = None,
     email_verified: bool = True,
     first_name: str = "Test",
     last_name: str = "User",
@@ -40,6 +41,7 @@ def _identity_for(
         email_verified=email_verified,
         first_name=first_name,
         last_name=last_name,
+        platform_roles=roles or [],
     )
 
 
@@ -63,7 +65,7 @@ def _create_client_and_session_factory(tmp_path):
             yield session
 
     app = create_app()
-    auth_provider = TestAuthProvider(identity=_identity())
+    auth_provider = FakeAuthProvider(identity=_identity())
     app.dependency_overrides[get_db_session] = _db_override
     app.dependency_overrides[get_authenticated_principal] = (
         auth_provider.get_authenticated_principal
@@ -505,6 +507,35 @@ def test_list_memberships_returns_200_for_owner(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+def test_list_memberships_returns_404_for_soft_deleted_organisation_even_for_non_member(
+    tmp_path,
+) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Soft Deleted Org", "slug": "soft-deleted-org"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        delete_response = client.delete(f"/api/v1/organisations/{organisation_id}")
+        assert delete_response.status_code == 204
+
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-soft-delete-outsider",
+                email="soft-delete-outsider@example.com",
+            )
+        )
+
+        response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
+        assert response.status_code == 404
+
+    run_async(engine.dispose())
+
+
 def test_create_organisation_rejects_second_creation_for_same_user(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -688,3 +719,78 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
     with outsider_client as client:
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert response.status_code == 403
+
+
+def test_superadmin_created_organisation_has_no_memberships(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    superadmin_client, _ = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-super-create-org",
+            email="super-create-org@example.com",
+            roles=["superadmin"],
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with superadmin_client as client:
+        response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Support Org", "slug": "support-org"},
+        )
+        assert response.status_code == 201
+        organisation_id = response.json()["id"]
+
+    async def _assert_no_membership() -> None:
+        async with migrated_session_factory() as session:
+            user_result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-super-create-org")
+            )
+            user = user_result.scalar_one_or_none()
+            if user is not None:
+                membership_result = await session.execute(
+                    select(Membership).where(
+                        Membership.user_id == user.id,
+                        Membership.organisation_id == UUID(organisation_id),
+                        Membership.is_active.is_(True),
+                    )
+                )
+                assert membership_result.scalar_one_or_none() is None
+
+    run_async(_assert_no_membership())
+
+
+def test_owner_can_update_slug_and_soft_delete_organisation(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-owner-mutate-org",
+            email="owner-mutate-org@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_client as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Mutable Org", "slug": "mutable-org"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        patch_response = client.patch(
+            f"/api/v1/organisations/{organisation_id}/slug",
+            json={"slug": "mutable-org-updated"},
+        )
+        assert patch_response.status_code == 200
+        assert patch_response.json()["slug"] == "mutable-org-updated"
+
+        delete_response = client.delete(f"/api/v1/organisations/{organisation_id}")
+        assert delete_response.status_code == 204
+
+        get_response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert get_response.status_code == 404

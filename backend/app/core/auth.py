@@ -18,6 +18,7 @@ class AuthenticatedPrincipal(BaseModel):
     - email_verified -> email_verified
     - given_name / first_name -> first_name
     - family_name / last_name -> last_name
+    - roles/platform_roles -> platform_roles
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -27,16 +28,15 @@ class AuthenticatedPrincipal(BaseModel):
     email_verified: bool = False
     first_name: str | None = None
     last_name: str | None = None
+    platform_roles: list[str] = Field(default_factory=list)
+
+    def is_superadmin(self) -> bool:
+        return any(role.lower() == "superadmin" for role in self.platform_roles)
 
     @classmethod
     def from_unverified_jwt_claims(
         cls, claims: dict[str, object]
     ) -> AuthenticatedPrincipal:
-        """
-        Placeholder claims mapping for future JWT/JWKS validation integration.
-
-        Validation of token signature/audience/issuer intentionally deferred.
-        """
         payload = JwtClaimsPayload.model_validate(claims)
         return payload.to_authenticated_principal()
 
@@ -60,6 +60,10 @@ class JwtClaimsPayload(BaseModel):
         default=None,
         validation_alias=AliasChoices("family_name", "last_name"),
     )
+    platform_roles: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("platform_roles", "roles"),
+    )
 
     def to_authenticated_principal(self) -> AuthenticatedPrincipal:
         return AuthenticatedPrincipal.model_validate(self.model_dump())
@@ -68,14 +72,6 @@ class JwtClaimsPayload(BaseModel):
 async def get_authenticated_principal(
     request: Request,
 ) -> AuthenticatedPrincipal | None:
-    """
-    Extract authenticated principal from request context.
-
-    Current implementation is a placeholder. This is the future plug-in point for:
-    - bearer token extraction
-    - JWT verification using JWKS
-    - claim validation (iss/aud/exp/etc)
-    """
     _ = request
     return None
 

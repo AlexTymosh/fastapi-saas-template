@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -12,8 +12,23 @@ from app.memberships.services.memberships import MembershipService
 from tests.helpers.asyncio_runner import run_async
 
 
+class _AsyncContextManager:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+def _session_stub() -> Mock:
+    session = Mock()
+    session.in_transaction = Mock(return_value=False)
+    session.begin = Mock(return_value=_AsyncContextManager())
+    return session
+
+
 def test_ensure_user_can_create_organisation_rejects_existing_membership() -> None:
-    service = MembershipService(session=AsyncMock())
+    service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
     service.membership_repository.get_membership_for_user = AsyncMock(
         return_value=Membership(
@@ -28,7 +43,7 @@ def test_ensure_user_can_create_organisation_rejects_existing_membership() -> No
 
 
 def test_create_membership_rejects_user_with_existing_membership() -> None:
-    service = MembershipService(session=AsyncMock())
+    service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
     service.membership_repository.get_membership_for_user = AsyncMock(
         return_value=Membership(
@@ -49,7 +64,7 @@ def test_create_membership_rejects_user_with_existing_membership() -> None:
 
 
 def test_create_membership_maps_integrity_error_to_policy_conflict() -> None:
-    service = MembershipService(session=AsyncMock())
+    service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
     service.membership_repository.get_membership_for_user = AsyncMock(return_value=None)
     service.membership_repository.create_membership = AsyncMock(
@@ -67,7 +82,7 @@ def test_create_membership_maps_integrity_error_to_policy_conflict() -> None:
 
 
 def test_ensure_user_can_list_organisation_memberships_allows_owner_and_admin() -> None:
-    service = MembershipService(session=AsyncMock())
+    service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
 
     for role in (MembershipRole.OWNER, MembershipRole.ADMIN):
@@ -87,7 +102,7 @@ def test_ensure_user_can_list_organisation_memberships_allows_owner_and_admin() 
 
 
 def test_ensure_user_cannot_list_org_memberships_for_member_or_non_member() -> None:
-    service = MembershipService(session=AsyncMock())
+    service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
 
     service.membership_repository.get_membership = AsyncMock(
@@ -111,5 +126,26 @@ def test_ensure_user_cannot_list_org_memberships_for_member_or_non_member() -> N
             service.ensure_user_can_list_organisation_memberships(
                 user_id=uuid4(),
                 organisation_id=uuid4(),
+            )
+        )
+
+
+def test_transfer_membership_rejects_when_user_is_last_owner() -> None:
+    service = MembershipService(session=_session_stub())
+    service.membership_repository = AsyncMock()
+    old = Membership(
+        user_id=uuid4(),
+        organisation_id=uuid4(),
+        role=MembershipRole.OWNER,
+    )
+    service.membership_repository.get_membership_for_user = AsyncMock(return_value=old)
+    service.membership_repository.count_active_owners = AsyncMock(return_value=1)
+
+    with pytest.raises(ConflictError):
+        run_async(
+            service.transfer_membership(
+                user_id=old.user_id,
+                organisation_id=uuid4(),
+                role=MembershipRole.MEMBER,
             )
         )

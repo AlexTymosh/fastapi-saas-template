@@ -34,6 +34,7 @@ class UserRepository:
         )
         self.session.add(user)
         await self.session.flush()
+        await self.session.refresh(user)
         return user
 
     async def update_profile_fields(
@@ -50,6 +51,7 @@ class UserRepository:
         user.first_name = first_name
         user.last_name = last_name
         await self.session.flush()
+        await self.session.refresh(user)
         return user
 
     async def update_onboarding_completed(
@@ -60,4 +62,5 @@ class UserRepository:
     ) -> User:
         user.onboarding_completed = onboarding_completed
         await self.session.flush()
+        await self.session.refresh(user)
         return user

@@ -110,3 +110,48 @@ def test_list_memberships_for_member_organisation_uses_single_access_use_case() 
     service.membership_service.list_memberships_for_organisation.assert_awaited_once_with(
         organisation_id=organisation_id,
     )
+
+
+def test_list_memberships_loads_organisation_before_access_check() -> None:
+    service = OrganisationAccessService(session=AsyncMock())
+
+    organisation_id = uuid4()
+    identity = _identity()
+    user = User(
+        external_auth_id="kc-sequence",
+        email="sequence@example.com",
+        email_verified=True,
+        first_name="Sequence",
+        last_name="User",
+    )
+
+    calls: list[str] = []
+
+    service.organisation_service = AsyncMock()
+
+    async def _load_org(*, organisation_id):
+        calls.append("load_organisation")
+
+    service.organisation_service.get_organisation = AsyncMock(side_effect=_load_org)
+    service.user_service = AsyncMock()
+    service.user_service.provision_current_user = AsyncMock(return_value=user)
+    service.membership_service = AsyncMock()
+
+    async def _check_access(*, user_id, organisation_id):
+        calls.append("check_access")
+
+    service.membership_service.ensure_user_can_list_organisation_memberships = (
+        AsyncMock(side_effect=_check_access)
+    )
+    service.membership_service.list_memberships_for_organisation = AsyncMock(
+        return_value=[]
+    )
+
+    run_async(
+        service.list_memberships_for_member_organisation(
+            identity=identity,
+            organisation_id=organisation_id,
+        )
+    )
+
+    assert calls == ["load_organisation", "check_access"]
