@@ -123,7 +123,7 @@ def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
 
 
 def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
@@ -138,8 +138,48 @@ def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
 
+    async def _users_for_sub_count(sub: str) -> int:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == sub)
+            )
+            return len(result.scalars().all())
+
+    assert run_async(_users_for_sub_count("kc-user-1")) == 1
     assert second.json()["email"] == "owner-updated@example.com"
     assert second.json()["first_name"] == "OwnerUpdated"
+    assert second.json()["updated_at"] != first.json()["updated_at"]
+    run_async(engine.dispose())
+
+
+def test_users_me_updates_email_verified_for_same_sub(tmp_path) -> None:
+    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        first = client.get("/api/v1/users/me")
+        assert first.status_code == 200
+        assert first.json()["email_verified"] is True
+
+        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
+            sub="kc-user-1",
+            email="owner@example.com",
+            email_verified=False,
+            first_name="Owner",
+            last_name="User",
+        )
+        second = client.get("/api/v1/users/me")
+        assert second.status_code == 200
+
+    async def _fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            return result.scalar_one()
+
+    persisted = run_async(_fetch_user())
+    assert persisted.email_verified is False
+    assert second.json()["id"] == first.json()["id"]
     assert second.json()["updated_at"] != first.json()["updated_at"]
     run_async(engine.dispose())
 

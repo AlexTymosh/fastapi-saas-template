@@ -23,7 +23,6 @@ class User(UUIDMixin, TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(
         String(320),
         nullable=True,
-        unique=True,
     )
     email_verified: Mapped[bool] = mapped_column(
         Boolean,

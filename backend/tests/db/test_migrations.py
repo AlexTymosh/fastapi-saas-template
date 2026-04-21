@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+from sqlalchemy import create_engine, inspect
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -86,3 +87,23 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
 
     check = _run_alembic("check", env=env)
     assert check.returncode == 0, check.stdout + "\n" + check.stderr
+
+
+@pytest.mark.integration
+def test_alembic_head_keeps_external_auth_unique_and_email_non_unique(tmp_path) -> None:
+    db_path = tmp_path / "constraints.db"
+    database_url = f"sqlite+aiosqlite:///{db_path}"
+    env = os.environ.copy()
+    env["DATABASE__URL"] = database_url
+
+    upgrade = _run_alembic("upgrade", "head", env=env)
+    assert upgrade.returncode == 0, upgrade.stdout + "\n" + upgrade.stderr
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    inspector = inspect(engine)
+    unique_constraints = inspector.get_unique_constraints("users")
+    unique_columns = [tuple(constraint["column_names"]) for constraint in unique_constraints]
+
+    assert ("external_auth_id",) in unique_columns
+    assert ("email",) not in unique_columns
+    engine.dispose()
