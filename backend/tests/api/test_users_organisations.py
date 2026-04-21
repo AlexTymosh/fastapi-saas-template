@@ -7,11 +7,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.auth import AuthenticatedIdentity, get_current_identity
+from app.core.auth import AuthenticatedIdentity, get_authenticated_identity
 from app.core.db import Base, get_db_session
 from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
+from tests.helpers.auth import TestAuthProvider
 from tests.helpers.asyncio_runner import run_async
 
 
@@ -62,18 +63,67 @@ def _create_client_and_session_factory(tmp_path):
             yield session
 
     app = create_app()
+    auth_provider = TestAuthProvider(identity=_identity())
     app.dependency_overrides[get_db_session] = _db_override
-    app.dependency_overrides[get_current_identity] = _identity
+    app.dependency_overrides[get_authenticated_identity] = (
+        auth_provider.get_authenticated_identity
+    )
 
-    return app, engine, session_factory
+    return app, engine, session_factory, auth_provider
+
+
+def test_protected_endpoints_return_401_without_auth(client_factory) -> None:
+    with client_factory(database_url=None, redis_url=None) as client:
+        endpoints = [
+            ("get", "/api/v1/users/me"),
+            ("post", "/api/v1/organisations"),
+            ("get", f"/api/v1/organisations/{uuid4()}"),
+            ("get", f"/api/v1/organisations/{uuid4()}/memberships"),
+        ]
+        for method, path in endpoints:
+            if method == "post":
+                response = client.post(
+                    path,
+                    json={"name": "Unauth Org", "slug": "unauth-org"},
+                )
+            else:
+                response = getattr(client, method)(path)
+            assert response.status_code == 401
+            assert response.headers["content-type"].startswith(
+                "application/problem+json"
+            )
+
+
+def test_authenticated_client_uses_explicit_test_auth_provider(
+    authenticated_client_factory, migrated_database_url: str
+) -> None:
+    test_client, _ = authenticated_client_factory(
+        identity=_identity_for(
+            sub="kc-explicit-auth-user",
+            email="explicit@example.com",
+            first_name="Explicit",
+            last_name="Identity",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with test_client as client:
+        response = client.get("/api/v1/users/me")
+        assert response.status_code == 200
+        assert response.json()["external_auth_id"] == "kc-explicit-auth-user"
 
 
 def test_users_me_persists_projection_across_request_boundaries(
-    client_factory,
+    authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
 ) -> None:
-    with client_factory(database_url=migrated_database_url, redis_url=None) as client:
+    test_client, _ = authenticated_client_factory(
+        identity=_identity(),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with test_client as client:
         first = client.get("/api/v1/users/me")
         assert first.status_code == 200
         first_payload = first.json()
@@ -86,7 +136,12 @@ def test_users_me_persists_projection_across_request_boundaries(
     persisted_after_first = run_async(_fetch_user())
     first_updated_at = persisted_after_first.updated_at
 
-    with client_factory(database_url=migrated_database_url, redis_url=None) as client:
+    test_client, _ = authenticated_client_factory(
+        identity=_identity(),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with test_client as client:
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
         second_payload = second.json()
@@ -101,7 +156,7 @@ def test_users_me_persists_projection_across_request_boundaries(
 
 
 def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
-    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
@@ -123,16 +178,18 @@ def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
 
 
 def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
         assert first.status_code == 200
 
-        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
-            sub="kc-user-1",
-            email="owner-updated@example.com",
-            first_name="OwnerUpdated",
+        auth_provider.set_identity(
+            _identity_for(
+                sub="kc-user-1",
+                email="owner-updated@example.com",
+                first_name="OwnerUpdated",
+            )
         )
 
         second = client.get("/api/v1/users/me")
@@ -145,7 +202,9 @@ def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
 
 
 def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) -> None:
-    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
@@ -162,12 +221,14 @@ def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) 
     persisted_after_first = run_async(_fetch_user_by_external_id("kc-user-1"))
 
     with TestClient(app) as client:
-        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
-            sub="kc-user-1",
-            email="owner@example.com",
-            email_verified=False,
-            first_name="Owner",
-            last_name="User",
+        auth_provider.set_identity(
+            _identity_for(
+                sub="kc-user-1",
+                email="owner@example.com",
+                email_verified=False,
+                first_name="Owner",
+                last_name="User",
+            )
         )
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
@@ -185,10 +246,15 @@ def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) 
 
 
 def test_create_organisation_sets_owner_and_onboarding_completed(
-    client_factory,
+    authenticated_client_factory,
     migrated_database_url: str,
 ) -> None:
-    with client_factory(database_url=migrated_database_url, redis_url=None) as client:
+    test_client, _ = authenticated_client_factory(
+        identity=_identity(),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with test_client as client:
         response = client.post(
             "/api/v1/organisations",
             json={"name": "Acme Ltd", "slug": "  AcMe-ORG  "},
@@ -213,7 +279,7 @@ def test_admin_and_owner_roles_exist_in_enum() -> None:
 
 
 def test_organisation_slug_conflict_returns_problem_details(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         first = client.post(
@@ -234,7 +300,7 @@ def test_organisation_slug_conflict_returns_problem_details(tmp_path) -> None:
 
 
 def test_create_organisation_invalid_slug_returns_validation_problem(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         response = client.post(
@@ -248,7 +314,7 @@ def test_create_organisation_invalid_slug_returns_validation_problem(tmp_path) -
 
 
 def test_get_organisation_not_found_returns_problem_details(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         response = client.get(f"/api/v1/organisations/{uuid4()}")
@@ -259,7 +325,7 @@ def test_get_organisation_not_found_returns_problem_details(tmp_path) -> None:
 
 
 def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         create_response = client.post(
@@ -269,9 +335,11 @@ def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
         assert create_response.status_code == 201
         organisation_id = create_response.json()["id"]
 
-        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
-            sub="kc-user-2",
-            email="member2@example.com",
+        auth_provider.set_identity(
+            _identity_for(
+                sub="kc-user-2",
+                email="member2@example.com",
+            )
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
@@ -281,7 +349,9 @@ def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
 
 
 def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> None:
-    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
 
     with TestClient(app) as client:
         create_response = client.post(
@@ -291,11 +361,13 @@ def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> N
         assert create_response.status_code == 201
         organisation_id = create_response.json()["id"]
 
-        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
-            sub="kc-user-access-1",
-            email="access1@example.com",
-            first_name="Access",
-            last_name="Denied",
+        auth_provider.set_identity(
+            _identity_for(
+                sub="kc-user-access-1",
+                email="access1@example.com",
+                first_name="Access",
+                last_name="Denied",
+            )
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
@@ -316,7 +388,7 @@ def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> N
 
 
 def test_get_organisation_returns_200_for_member(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         create_response = client.post(
@@ -333,7 +405,7 @@ def test_get_organisation_returns_200_for_member(tmp_path) -> None:
 
 
 def test_list_memberships_not_found_returns_404(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         response = client.get(f"/api/v1/organisations/{uuid4()}/memberships")
@@ -343,7 +415,7 @@ def test_list_memberships_not_found_returns_404(tmp_path) -> None:
 
 
 def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         create_response = client.post(
@@ -353,9 +425,11 @@ def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
         assert create_response.status_code == 201
         organisation_id = create_response.json()["id"]
 
-        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
-            sub="kc-user-3",
-            email="member3@example.com",
+        auth_provider.set_identity(
+            _identity_for(
+                sub="kc-user-3",
+                email="member3@example.com",
+            )
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert response.status_code == 403
@@ -365,7 +439,9 @@ def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
 
 
 def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> None:
-    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
 
     with TestClient(app) as client:
         create_response = client.post(
@@ -375,11 +451,13 @@ def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> N
         assert create_response.status_code == 201
         organisation_id = create_response.json()["id"]
 
-        app.dependency_overrides[get_current_identity] = lambda: _identity_for(
-            sub="kc-user-access-2",
-            email="access2@example.com",
-            first_name="Access",
-            last_name="Denied",
+        auth_provider.set_identity(
+            _identity_for(
+                sub="kc-user-access-2",
+                email="access2@example.com",
+                first_name="Access",
+                last_name="Denied",
+            )
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert response.status_code == 403
@@ -400,7 +478,7 @@ def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> N
 
 
 def test_list_memberships_returns_200_for_member(tmp_path) -> None:
-    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory, _ = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         create_response = client.post(

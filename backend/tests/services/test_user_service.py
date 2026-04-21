@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -58,8 +58,18 @@ def _dispose_engine(engine: AsyncEngine) -> None:
     run_async(engine.dispose())
 
 
+class _AsyncContextManager:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
 def test_get_or_create_current_user_recovers_from_unique_conflict_race() -> None:
-    service = UserService(session=AsyncMock())
+    session = AsyncMock()
+    session.begin_nested = Mock(return_value=_AsyncContextManager())
+    service = UserService(session=session)
 
     existing_user = User(
         external_auth_id="kc-race-user",
@@ -92,6 +102,7 @@ def test_get_or_create_current_user_recovers_from_unique_conflict_race() -> None
     assert result is existing_user
     assert repo.get_by_external_auth_id.await_count == 2
     repo.create.assert_awaited_once()
+    session.begin_nested.assert_called_once_with()
 
 
 def test_provision_current_user_updates_existing_row_when_email_changes(
