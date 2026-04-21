@@ -23,13 +23,7 @@ class MembershipRole(StrEnum):
 
 class Membership(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "memberships"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "organisation_id",
-            name="uq_memberships_user_id_organisation_id",
-        ),
-    )
+    __table_args__ = (UniqueConstraint("user_id", name="uq_memberships_user_id"),)
 
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),

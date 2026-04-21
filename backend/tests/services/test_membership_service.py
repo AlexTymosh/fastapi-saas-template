@@ -22,6 +22,27 @@ def test_ensure_user_can_create_organisation_rejects_existing_membership() -> No
         run_async(service.ensure_user_can_create_organisation(user_id=uuid4()))
 
 
+def test_create_membership_rejects_user_with_existing_membership() -> None:
+    service = MembershipService(session=AsyncMock())
+    service.membership_repository = AsyncMock()
+    service.membership_repository.get_membership_for_user = AsyncMock(
+        return_value=Membership(
+            user_id=uuid4(),
+            organisation_id=uuid4(),
+            role=MembershipRole.MEMBER,
+        )
+    )
+
+    with pytest.raises(ConflictError, match="User already belongs to an organisation"):
+        run_async(
+            service.create_membership(
+                user_id=uuid4(),
+                organisation_id=uuid4(),
+                role=MembershipRole.MEMBER,
+            )
+        )
+
+
 def test_ensure_user_can_list_organisation_memberships_allows_owner_and_admin() -> None:
     service = MembershipService(session=AsyncMock())
     service.membership_repository = AsyncMock()

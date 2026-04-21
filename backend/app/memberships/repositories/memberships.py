@@ -42,6 +42,11 @@ class MembershipRepository:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_membership_for_user(self, *, user_id: UUID) -> Membership | None:
+        stmt = select(Membership).where(Membership.user_id == user_id).limit(1)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def has_membership(
         self,
         *,

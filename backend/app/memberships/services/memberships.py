@@ -21,6 +21,12 @@ class MembershipService:
         organisation_id: UUID,
         role: MembershipRole,
     ) -> Membership:
+        existing_membership = await self.membership_repository.get_membership_for_user(
+            user_id=user_id
+        )
+        if existing_membership is not None:
+            raise ConflictError(detail="User already belongs to an organisation")
+
         try:
             return await self.membership_repository.create_membership(
                 user_id=user_id,
@@ -28,7 +34,9 @@ class MembershipService:
                 role=role,
             )
         except IntegrityError as exc:
-            raise ConflictError(detail="Membership already exists") from exc
+            raise ConflictError(
+                detail="User already belongs to an organisation"
+            ) from exc
 
     async def list_memberships_for_organisation(
         self,
@@ -42,6 +50,9 @@ class MembershipService:
         return await self.membership_repository.list_memberships_for_user(
             user_id=user_id,
         )
+
+    async def get_membership_for_user(self, user_id: UUID) -> Membership | None:
+        return await self.membership_repository.get_membership_for_user(user_id=user_id)
 
     async def ensure_user_has_organisation_access(
         self,

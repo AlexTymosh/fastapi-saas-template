@@ -17,6 +17,7 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 1. **Claim requirements**
    - `sub` is required. Requests without a valid non-empty `sub` cannot be mapped to a local user.
    - `email`, `email_verified`, `first_name`, and `last_name` are optional projection claims; missing optional claims must not block identity linkage.
+   - When `email` is present, it must be a valid email address at the auth-boundary schema layer.
 
 2. **Missing or null email**
    - Identity linkage must still succeed when `email` is missing or `null`.
@@ -39,6 +40,8 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
    - `users.external_auth_id` is required and unique.
    - `users.email` is mutable profile data and not a uniqueness boundary.
    - Domain links (for example memberships/onboarding state) attach to the local user projection, not directly to JWT claim values.
+   - A local user may have **at most one** row in `memberships` (`memberships.user_id` is unique).
+   - Membership is the only organisation linkage for a user; creating a second membership is forbidden by project policy.
 
 7. **Failure behavior**
    - If `sub` is missing/invalid, authentication or identity mapping must fail.

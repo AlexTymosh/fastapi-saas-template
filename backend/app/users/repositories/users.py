@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import EmailStr
 
 from app.users.models.user import User
 
@@ -19,7 +20,7 @@ class UserRepository:
         self,
         *,
         external_auth_id: str,
-        email: str | None,
+        email: EmailStr | None,
         email_verified: bool,
         first_name: str | None,
         last_name: str | None,
@@ -39,7 +40,7 @@ class UserRepository:
         self,
         user: User,
         *,
-        email: str | None,
+        email: EmailStr | None,
         email_verified: bool,
         first_name: str | None,
         last_name: str | None,
