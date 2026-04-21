@@ -113,3 +113,24 @@ def test_ensure_user_cannot_list_org_memberships_for_member_or_non_member() -> N
                 organisation_id=uuid4(),
             )
         )
+
+
+def test_transfer_membership_rejects_when_user_is_last_owner() -> None:
+    service = MembershipService(session=AsyncMock())
+    service.membership_repository = AsyncMock()
+    old = Membership(
+        user_id=uuid4(),
+        organisation_id=uuid4(),
+        role=MembershipRole.OWNER,
+    )
+    service.membership_repository.get_membership_for_user = AsyncMock(return_value=old)
+    service.membership_repository.count_active_owners = AsyncMock(return_value=1)
+
+    with pytest.raises(ConflictError):
+        run_async(
+            service.transfer_membership(
+                user_id=old.user_id,
+                organisation_id=uuid4(),
+                role=MembershipRole.MEMBER,
+            )
+        )

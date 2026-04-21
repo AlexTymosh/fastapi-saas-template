@@ -4,7 +4,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Enum, ForeignKey, UniqueConstraint
+import sqlalchemy as sa
+from sqlalchemy import Boolean, Enum, ForeignKey, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base
@@ -23,7 +24,15 @@ class MembershipRole(StrEnum):
 
 class Membership(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "memberships"
-    __table_args__ = (UniqueConstraint("user_id", name="uq_memberships_user_id"),)
+    __table_args__ = (
+        Index(
+            "uq_memberships_user_id_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active = true"),
+            sqlite_where=text("is_active = 1"),
+        ),
+    )
 
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -40,6 +49,12 @@ class Membership(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         default=MembershipRole.MEMBER,
         server_default=MembershipRole.MEMBER.value,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=sa.text("true"),
     )
 
     user: Mapped[User] = relationship(back_populates="memberships")

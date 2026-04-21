@@ -38,6 +38,33 @@ class MembershipService:
                 detail="User already belongs to an organisation"
             ) from exc
 
+    async def transfer_membership(
+        self,
+        *,
+        user_id: UUID,
+        organisation_id: UUID,
+        role: MembershipRole,
+    ) -> Membership:
+        existing = await self.membership_repository.get_membership_for_user(
+            user_id=user_id
+        )
+        if existing is not None:
+            if existing.role == MembershipRole.OWNER:
+                owner_count = await self.membership_repository.count_active_owners(
+                    organisation_id=existing.organisation_id
+                )
+                if owner_count <= 1:
+                    raise ConflictError(
+                        detail="Organisation must always have at least one owner"
+                    )
+            await self.membership_repository.deactivate_membership(existing)
+
+        return await self.membership_repository.create_membership(
+            user_id=user_id,
+            organisation_id=organisation_id,
+            role=role,
+        )
+
     async def list_memberships_for_organisation(
         self,
         organisation_id: UUID,
@@ -90,3 +117,21 @@ class MembershipService:
             raise ConflictError(
                 detail="You already belong to an organisation",
             )
+
+    async def ensure_owner_invariant_before_deactivation(
+        self,
+        membership: Membership,
+    ) -> None:
+        if membership.role != MembershipRole.OWNER:
+            return
+        owner_count = await self.membership_repository.count_active_owners(
+            organisation_id=membership.organisation_id
+        )
+        if owner_count <= 1:
+            raise ConflictError(
+                detail="Organisation must always have at least one owner"
+            )
+
+    async def deactivate_membership(self, membership: Membership) -> Membership:
+        await self.ensure_owner_invariant_before_deactivation(membership)
+        return await self.membership_repository.deactivate_membership(membership)

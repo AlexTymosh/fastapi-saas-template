@@ -8,9 +8,9 @@ from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.config.settings import Settings, get_settings
 from app.core.db import dispose_engine
 from app.main import create_app
-from tests.helpers.auth import TestAuthProvider
 from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
+from tests.helpers.auth import TestAuthProvider
 
 
 @pytest.fixture(autouse=True)

@@ -10,3 +10,4 @@ def test_metadata_contains_expected_tables() -> None:
     assert "users" in table_names
     assert "organisations" in table_names
     assert "memberships" in table_names
+    assert "invites" in table_names

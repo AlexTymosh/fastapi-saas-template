@@ -37,6 +37,10 @@ class CreateOrganisationRequest(BaseModel):
         return slug
 
 
+class UpdateOrganisationSlugRequest(BaseModel):
+    slug: str = Field(min_length=1, max_length=255)
+
+
 class OrganisationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -54,6 +58,7 @@ class MembershipResponse(BaseModel):
     user_id: UUID
     organisation_id: UUID
     role: MembershipRole
+    is_active: bool
     created_at: datetime
     updated_at: datetime
 
