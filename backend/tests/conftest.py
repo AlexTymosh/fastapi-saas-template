@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -12,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config.settings import Settings, get_settings
 from app.core.db import dispose_engine
 from app.main import create_app
+from tests.helpers.alembic import AlembicUpgradeError, upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
 
 
@@ -58,22 +54,10 @@ def client(client_factory) -> TestClient:
 @pytest.fixture
 def migrated_database_url(tmp_path) -> str:
     database_url = f"sqlite+aiosqlite:///{tmp_path}/migrated.db"
-    backend_root = Path(__file__).resolve().parents[1]
-
-    env = os.environ.copy()
-    env["DATABASE__URL"] = database_url
-
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=backend_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if result.returncode != 0:
-        pytest.fail(f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}")
+    try:
+        upgrade_database_to_head(database_url)
+    except AlembicUpgradeError as exc:
+        pytest.fail(str(exc))
 
     return database_url
 
