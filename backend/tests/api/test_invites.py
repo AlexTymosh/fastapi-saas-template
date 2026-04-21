@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
 from app.core.auth import AuthenticatedPrincipal
-from app.invites.services.invites import InviteService
-from app.memberships.models.membership import Membership, MembershipRole
+from app.invites.api.invites import get_invite_token_sink
+from app.invites.models.invite import Invite
+from app.invites.services.token_delivery import InviteTokenSink
+from app.memberships.models.membership import Membership
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
@@ -25,37 +27,20 @@ def _identity_for(
     )
 
 
-def _create_invite_token(
-    *,
-    migrated_session_factory,
-    actor_external_auth_id: str,
-    organisation_id: str,
-    email: str,
-    role: MembershipRole = MembershipRole.MEMBER,
-) -> str:
-    async def _create() -> str:
-        async with migrated_session_factory() as session:
-            actor_result = await session.execute(
-                select(User).where(User.external_auth_id == actor_external_auth_id)
-            )
-            actor = actor_result.scalar_one()
-            invite_service = InviteService(session)
-            _invite, token = await invite_service.create_invite(
-                organisation_id=UUID(organisation_id),
-                actor_user_id=actor.id,
-                role=role,
-                email=email,
-                actor_is_superadmin=False,
-            )
-            return token
+class InMemoryInviteTokenSink(InviteTokenSink):
+    def __init__(self) -> None:
+        self.tokens_by_email: dict[str, str] = {}
 
-    return run_async(_create())
+    async def deliver(self, *, invite: Invite, raw_token: str) -> None:
+        self.tokens_by_email[invite.email.lower()] = raw_token
+
+    def token_for(self, *, email: str) -> str:
+        return self.tokens_by_email[email.lower()]
 
 
 def test_invite_accept_transfers_membership(
     authenticated_client_factory,
     migrated_database_url: str,
-    migrated_session_factory,
 ) -> None:
     owner_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-owner", "owner@example.com"),
@@ -83,19 +68,15 @@ def test_invite_accept_transfers_membership(
         assert create_org.status_code == 201
 
     with owner_client as client:
+        token_sink = InMemoryInviteTokenSink()
+        client.app.dependency_overrides[get_invite_token_sink] = lambda: token_sink
         invite_response = client.post(
             f"/api/v1/organisations/{org_a}/invites",
             json={"email": "invitee@example.com", "role": "member"},
         )
         assert invite_response.status_code == 201
         assert "token" not in invite_response.json()
-
-    token = _create_invite_token(
-        migrated_session_factory=migrated_session_factory,
-        actor_external_auth_id="kc-owner",
-        organisation_id=org_a,
-        email="invitee@example.com",
-    )
+        token = token_sink.token_for(email="invitee@example.com")
 
     with invitee_client as client:
         accepted = client.post(f"/api/v1/invites/{token}/accept")
@@ -152,6 +133,8 @@ def test_invite_accepts_for_first_login_user_without_projection(
         redis_url=None,
     )
     with owner_client as client:
+        token_sink = InMemoryInviteTokenSink()
+        client.app.dependency_overrides[get_invite_token_sink] = lambda: token_sink
         create_org = client.post(
             "/api/v1/organisations",
             json={"name": "Org JIT", "slug": "org-jit"},
@@ -164,13 +147,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
         )
         assert invite_response.status_code == 201
         assert "token" not in invite_response.json()
-
-    token = _create_invite_token(
-        migrated_session_factory=migrated_session_factory,
-        actor_external_auth_id="kc-owner-jit",
-        organisation_id=org_id,
-        email="jit-invitee@example.com",
-    )
+        token = token_sink.token_for(email="jit-invitee@example.com")
 
     invitee_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-invitee-jit", "jit-invitee@example.com"),
@@ -201,7 +178,6 @@ def test_invite_accepts_for_first_login_user_without_projection(
 def test_accept_invite_rejects_email_mismatch(
     authenticated_client_factory,
     migrated_database_url: str,
-    migrated_session_factory,
 ) -> None:
     owner_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-owner-mismatch", "owner-mismatch@example.com"),
@@ -209,6 +185,8 @@ def test_accept_invite_rejects_email_mismatch(
         redis_url=None,
     )
     with owner_client as client:
+        token_sink = InMemoryInviteTokenSink()
+        client.app.dependency_overrides[get_invite_token_sink] = lambda: token_sink
         create_org = client.post(
             "/api/v1/organisations",
             json={"name": "Org Mismatch", "slug": "org-mismatch"},
@@ -221,13 +199,7 @@ def test_accept_invite_rejects_email_mismatch(
         )
         assert invite_response.status_code == 201
         assert "token" not in invite_response.json()
-
-    token = _create_invite_token(
-        migrated_session_factory=migrated_session_factory,
-        actor_external_auth_id="kc-owner-mismatch",
-        organisation_id=org_id,
-        email="expected@example.com",
-    )
+        token = token_sink.token_for(email="expected@example.com")
 
     wrong_user_client, _ = authenticated_client_factory(
         identity=_identity_for("kc-wrong-email", "wrong@example.com"),
@@ -250,19 +222,20 @@ def test_accept_invite_rejects_expired_invite(
         redis_url=None,
     )
     with owner_client as client:
+        token_sink = InMemoryInviteTokenSink()
+        client.app.dependency_overrides[get_invite_token_sink] = lambda: token_sink
         create_org = client.post(
             "/api/v1/organisations",
             json={"name": "Org Expired", "slug": "org-expired"},
         )
         assert create_org.status_code == 201
         org_id = create_org.json()["id"]
-
-    token = _create_invite_token(
-        migrated_session_factory=migrated_session_factory,
-        actor_external_auth_id="kc-owner-expired",
-        organisation_id=org_id,
-        email="invitee-expired@example.com",
-    )
+        invite_response = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "invitee-expired@example.com", "role": "member"},
+        )
+        assert invite_response.status_code == 201
+        token = token_sink.token_for(email="invitee-expired@example.com")
 
     async def _expire_invite() -> None:
         from datetime import UTC, datetime, timedelta
@@ -315,3 +288,52 @@ def test_create_invite_rejects_owner_role(
             json={"email": "invitee-owner@example.com", "role": "owner"},
         )
     assert response.status_code == 422
+
+
+def test_create_invite_returns_404_when_organisation_missing(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-missing", "owner-missing@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_client as client:
+        response = client.post(
+            f"/api/v1/organisations/{uuid4()}/invites",
+            json={"email": "missing@example.com", "role": "member"},
+        )
+
+    assert response.status_code == 404
+
+
+def test_create_invite_returns_403_when_organisation_exists_but_user_has_no_access(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-existing", "owner-existing@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Access Org", "slug": "access-org"},
+        )
+        assert create_org.status_code == 201
+        organisation_id = create_org.json()["id"]
+
+    outsider_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-outsider-existing", "outsider-existing@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with outsider_client as client:
+        response = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "invitee@example.com", "role": "member"},
+        )
+
+    assert response.status_code == 403

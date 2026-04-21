@@ -27,3 +27,10 @@ The following capabilities are intentionally out of scope for this foundation an
 ## Security and delivery note
 
 Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract.
+
+For organisation-scoped endpoints in this foundation, authorization semantics are intentionally consistent:
+
+- `404 Not Found` when the target organisation does not exist (including soft-deleted rows).
+- `403 Forbidden` when the organisation exists but the authenticated actor is not allowed to access it.
+
+To keep API tests realistic without widening the public contract, invite token delivery uses a narrow sink abstraction. Production keeps a no-op/out-of-band sink while tests inject an in-memory sink via dependency override to capture raw tokens for accept-flow assertions.

@@ -11,6 +11,7 @@ from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.repositories.invites import InviteRepository
+from app.invites.services.token_delivery import InviteTokenSink, NullInviteTokenSink
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from app.organisations.services.organisations import OrganisationService
@@ -22,8 +23,13 @@ class InviteService:
     # limiting long-lived pending tokens until dedicated lifecycle flows are added.
     DEFAULT_INVITE_TTL = timedelta(days=7)
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        token_sink: InviteTokenSink | None = None,
+    ) -> None:
         self.session = session
+        self.token_sink = token_sink or NullInviteTokenSink()
         self.invite_repository = InviteRepository(session)
         self.membership_service = MembershipService(session)
         self.organisation_service = OrganisationService(session)
@@ -41,7 +47,7 @@ class InviteService:
         role: MembershipRole,
         email: str,
         actor_is_superadmin: bool,
-    ) -> tuple[Invite, str]:
+    ) -> Invite:
         if self.session.in_transaction():
             return await self._create_invite(
                 organisation_id=organisation_id,
@@ -67,7 +73,7 @@ class InviteService:
         role: MembershipRole,
         email: str,
         actor_is_superadmin: bool,
-    ) -> tuple[Invite, str]:
+    ) -> Invite:
         await self.organisation_service.get_organisation(organisation_id)
         if role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner role cannot be assigned via invite")
@@ -98,7 +104,8 @@ class InviteService:
             token_hash=self._token_hash(token),
             expires_at=expires_at,
         )
-        return invite, token
+        await self.token_sink.deliver(invite=invite, raw_token=token)
+        return invite
 
     async def accept_invite(
         self,

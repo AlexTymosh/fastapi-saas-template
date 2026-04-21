@@ -90,3 +90,27 @@ def test_openapi_includes_user_and_organisation_endpoints(monkeypatch) -> None:
     assert "/api/v1/organisations" in paths
     assert "/api/v1/organisations/{organisation_id}" in paths
     assert "/api/v1/organisations/{organisation_id}/memberships" in paths
+    assert "/api/v1/organisations/{organisation_id}/invites" in paths
+    assert "/api/v1/invites/{token}/accept" in paths
+
+
+def test_openapi_invite_create_documents_problem_details_errors(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    invite_create = spec["paths"]["/api/v1/organisations/{organisation_id}/invites"][
+        "post"
+    ]
+    responses = invite_create["responses"]
+
+    assert "403" in responses
+    assert "application/problem+json" in responses["403"]["content"]
+
+    schema_ref = responses["403"]["content"]["application/problem+json"]["schema"][
+        "$ref"
+    ]
+    assert schema_ref.endswith("/ProblemDetails")

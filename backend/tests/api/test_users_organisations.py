@@ -418,6 +418,25 @@ def test_list_memberships_not_found_returns_404(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+def test_list_memberships_non_member_gets_404_when_organisation_missing(
+    tmp_path,
+) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-user-no-org",
+                email="no-org-user@example.com",
+            )
+        )
+        response = client.get(f"/api/v1/organisations/{uuid4()}/memberships")
+        assert response.status_code == 404
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    run_async(engine.dispose())
+
+
 def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 

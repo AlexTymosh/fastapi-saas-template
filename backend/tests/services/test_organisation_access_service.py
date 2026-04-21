@@ -3,7 +3,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
+
 from app.core.auth import AuthenticatedPrincipal
+from app.core.errors.exceptions import NotFoundError
 from app.memberships.models.membership import Membership
 from app.organisations.models.organisation import Organisation
 from app.organisations.services.access import OrganisationAccessService
@@ -110,3 +113,31 @@ def test_list_memberships_for_member_organisation_uses_single_access_use_case() 
     service.membership_service.list_memberships_for_organisation.assert_awaited_once_with(
         organisation_id=organisation_id,
     )
+
+
+def test_list_memberships_checks_organisation_existence_before_access_check() -> None:
+    service = OrganisationAccessService(session=AsyncMock())
+
+    organisation_id = uuid4()
+    identity = _identity()
+
+    service.user_service = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        side_effect=NotFoundError(detail="Organisation not found")
+    )
+    service.membership_service = AsyncMock()
+    service.membership_service.ensure_user_can_list_organisation_memberships = (
+        AsyncMock()
+    )
+
+    with pytest.raises(NotFoundError):
+        run_async(
+            service.list_memberships_for_member_organisation(
+                identity=identity,
+                organisation_id=organisation_id,
+            )
+        )
+
+    service.user_service.provision_current_user.assert_not_called()
+    service.membership_service.ensure_user_can_list_organisation_memberships.assert_not_called()

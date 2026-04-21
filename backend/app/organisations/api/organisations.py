@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
-from app.organisations.schemas.organisations import (
-    CreateOrganisationRequest,
+from app.memberships.schemas.memberships import (
     MembershipListResponse,
     MembershipResponse,
+)
+from app.organisations.schemas.organisations import (
+    CreateOrganisationRequest,
     OrganisationResponse,
     UpdateOrganisationSlugRequest,
 )
