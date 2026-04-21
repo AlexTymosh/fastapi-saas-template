@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
-
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -58,40 +55,56 @@ def _dispose_engine(engine: AsyncEngine) -> None:
     run_async(engine.dispose())
 
 
-def test_get_or_create_current_user_recovers_from_unique_conflict_race() -> None:
-    service = UserService(session=AsyncMock())
+def test_get_or_create_current_user_recovers_from_unique_conflict_race(
+    tmp_path,
+) -> None:
+    session_factory, engine = _create_session_factory(tmp_path)
 
-    existing_user = User(
-        external_auth_id="kc-race-user",
-        email="race@example.com",
-        email_verified=True,
-        first_name="Race",
-        last_name="Condition",
-    )
-
-    repo = AsyncMock()
-    repo.get_by_external_auth_id = AsyncMock(side_effect=[None, existing_user])
-    repo.create = AsyncMock(
-        side_effect=IntegrityError("insert", params={}, orig=Exception("duplicate"))
-    )
-
-    service.user_repository = repo
-
-    result = run_async(
-        service.get_or_create_current_user(
-            _identity_for(
-                sub="kc-race-user",
+    async def _scenario() -> User:
+        async with session_factory() as setup_session:
+            existing_user = User(
+                external_auth_id="kc-race-user",
                 email="race@example.com",
                 email_verified=True,
                 first_name="Race",
                 last_name="Condition",
             )
-        )
-    )
+            setup_session.add(existing_user)
+            await setup_session.commit()
 
-    assert result is existing_user
-    assert repo.get_by_external_auth_id.await_count == 2
-    repo.create.assert_awaited_once()
+        async with session_factory() as session:
+            service = UserService(session=session)
+            original_get = service.user_repository.get_by_external_auth_id
+            read_attempts = {"count": 0}
+
+            async def _racey_get(external_auth_id: str) -> User | None:
+                read_attempts["count"] += 1
+                if read_attempts["count"] == 1:
+                    return None
+                return await original_get(external_auth_id)
+
+            service.user_repository.get_by_external_auth_id = _racey_get
+
+            return await service.provision_current_user(
+                _identity_for(
+                    sub="kc-race-user",
+                    email="race@example.com",
+                    email_verified=True,
+                    first_name="Race",
+                    last_name="Condition",
+                )
+            )
+
+    recovered_user = run_async(_scenario())
+    assert recovered_user.external_auth_id == "kc-race-user"
+
+    async def _assert_session_usable() -> int:
+        async with session_factory() as session:
+            result = await session.execute(select(func.count(User.id)))
+            return result.scalar_one()
+
+    assert run_async(_assert_session_usable()) == 1
+    _dispose_engine(engine)
 
 
 def test_provision_current_user_updates_existing_row_when_email_changes(

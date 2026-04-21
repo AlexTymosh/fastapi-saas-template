@@ -18,13 +18,14 @@ class UserService:
         user = await self.user_repository.get_by_external_auth_id(identity.sub)
         if user is None:
             try:
-                return await self.user_repository.create(
-                    external_auth_id=identity.sub,
-                    email=identity.email,
-                    email_verified=identity.email_verified,
-                    first_name=identity.first_name,
-                    last_name=identity.last_name,
-                )
+                async with self.session.begin_nested():
+                    return await self.user_repository.create(
+                        external_auth_id=identity.sub,
+                        email=identity.email,
+                        email_verified=identity.email_verified,
+                        first_name=identity.first_name,
+                        last_name=identity.last_name,
+                    )
             except IntegrityError as exc:
                 existing = await self.user_repository.get_by_external_auth_id(
                     identity.sub

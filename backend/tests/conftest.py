@@ -4,11 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.auth import AuthenticatedIdentity, get_authenticated_identity
 from app.core.config.settings import Settings, get_settings
 from app.core.db import dispose_engine
 from app.main import create_app
 from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
+from tests.helpers.auth import TestAuthProvider
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +29,7 @@ def client_factory(monkeypatch):
         *,
         database_url: str | None = None,
         redis_url: str | None = None,
+        authenticated_identity: AuthenticatedIdentity | None = None,
     ) -> TestClient:
         if database_url is None:
             monkeypatch.delenv("DATABASE__URL", raising=False)
@@ -40,6 +43,11 @@ def client_factory(monkeypatch):
 
         get_settings.cache_clear()
         app = create_app()
+        test_auth_provider = TestAuthProvider(authenticated_identity)
+        app.dependency_overrides[get_authenticated_identity] = (
+            test_auth_provider.get_authenticated_identity
+        )
+        app.state.test_auth_provider = test_auth_provider
         return TestClient(app)
 
     return _build

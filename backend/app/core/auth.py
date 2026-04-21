@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import Depends, Request
+from typing import Annotated
+
+from fastapi import Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.errors.exceptions import UnauthorizedError
@@ -16,19 +18,24 @@ class AuthenticatedIdentity(BaseModel):
     last_name: str | None = None
 
 
-async def get_current_identity(request: Request) -> AuthenticatedIdentity:
-    """Placeholder dependency for JWT-authenticated identity from Keycloak."""
-    identity = getattr(request.state, "authenticated_identity", None)
-    if identity is None:
+async def get_authenticated_identity() -> AuthenticatedIdentity | None:
+    """Authentication provider placeholder for future Keycloak/JWT integration."""
+    return None
+
+
+IdentityProviderDep = Annotated[
+    AuthenticatedIdentity | None,
+    Depends(get_authenticated_identity),
+]
+
+
+async def get_current_identity(
+    authenticated_identity: IdentityProviderDep,
+) -> AuthenticatedIdentity:
+    if authenticated_identity is None:
         raise UnauthorizedError(detail="Authentication required")
 
-    if isinstance(identity, AuthenticatedIdentity):
-        return identity
-
-    if isinstance(identity, dict):
-        return AuthenticatedIdentity.model_validate(identity)
-
-    raise UnauthorizedError(detail="Invalid authentication context")
+    return authenticated_identity
 
 
 CurrentIdentity = Depends(get_current_identity)
