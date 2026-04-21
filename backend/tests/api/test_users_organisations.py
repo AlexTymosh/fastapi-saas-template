@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
+import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.auth import AuthenticatedIdentity, get_current_identity
-from app.core.db import Base, get_db_session
+from app.core.db import Base, get_db_session, get_session_factory
 from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
@@ -68,13 +70,20 @@ def _create_client_and_session_factory(tmp_path):
     return app, engine, session_factory
 
 
-def test_users_me_persists_projection_across_request_boundaries(tmp_path) -> None:
-    app, engine, session_factory = _create_client_and_session_factory(tmp_path)
+@pytest.fixture
+def migrated_api_client(client_factory, migrated_database_url) -> TestClient:
+    with client_factory(database_url=migrated_database_url, redis_url=None) as client:
+        client.app.dependency_overrides[get_current_identity] = _identity
+        yield client
+        client.app.dependency_overrides.clear()
 
-    with TestClient(app) as client:
-        first = client.get("/api/v1/users/me")
-        assert first.status_code == 200
-        first_payload = first.json()
+
+def test_users_me_persists_projection_across_request_boundaries(migrated_api_client) -> None:
+    first = migrated_api_client.get("/api/v1/users/me")
+    assert first.status_code == 200
+    first_payload = first.json()
+
+    session_factory = get_session_factory()
 
     async def _fetch_user() -> User:
         async with session_factory() as session:
@@ -84,10 +93,9 @@ def test_users_me_persists_projection_across_request_boundaries(tmp_path) -> Non
     persisted_after_first = run_async(_fetch_user())
     first_updated_at = persisted_after_first.updated_at
 
-    with TestClient(app) as client:
-        second = client.get("/api/v1/users/me")
-        assert second.status_code == 200
-        second_payload = second.json()
+    second = migrated_api_client.get("/api/v1/users/me")
+    assert second.status_code == 200
+    second_payload = second.json()
 
     persisted_after_second = run_async(_fetch_user())
 
@@ -96,8 +104,6 @@ def test_users_me_persists_projection_across_request_boundaries(tmp_path) -> Non
     assert persisted_after_first.id == persisted_after_second.id
     assert persisted_after_second.external_auth_id == "kc-user-1"
     assert persisted_after_second.updated_at == first_updated_at
-
-    run_async(engine.dispose())
 
 
 def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
@@ -184,28 +190,27 @@ def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) 
     run_async(engine.dispose())
 
 
-def test_create_organisation_sets_owner_and_onboarding_completed(tmp_path) -> None:
-    app, engine, _ = _create_client_and_session_factory(tmp_path)
+def test_create_organisation_sets_owner_and_onboarding_completed(
+    migrated_api_client,
+) -> None:
+    response = migrated_api_client.post(
+        "/api/v1/organisations",
+        json={"name": "Acme Ltd", "slug": "  AcMe-ORG  "},
+    )
+    assert response.status_code == 201
+    assert response.json()["slug"] == "acme-org"
+    organisation_id = response.json()["id"]
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/organisations",
-            json={"name": "Acme Ltd", "slug": "  AcMe-ORG  "},
-        )
-        assert response.status_code == 201
-        assert response.json()["slug"] == "acme-org"
-        organisation_id = response.json()["id"]
+    me = migrated_api_client.get("/api/v1/users/me")
+    assert me.status_code == 200
+    payload = me.json()
+    assert payload["onboarding_completed"] is True
 
-        me = client.get("/api/v1/users/me")
-        assert me.status_code == 200
-        payload = me.json()
-        assert payload["onboarding_completed"] is True
-
-        memberships = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
-        assert memberships.status_code == 200
-        assert memberships.json()["data"][0]["role"] == MembershipRole.OWNER.value
-
-    run_async(engine.dispose())
+    memberships = migrated_api_client.get(
+        f"/api/v1/organisations/{organisation_id}/memberships"
+    )
+    assert memberships.status_code == 200
+    assert memberships.json()["data"][0]["role"] == MembershipRole.OWNER.value
 
 
 def test_admin_and_owner_roles_exist_in_enum() -> None:

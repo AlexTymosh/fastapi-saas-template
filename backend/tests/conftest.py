@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app.core.config.settings import Settings, get_settings
 from app.core.db import dispose_engine
 from app.main import create_app
+from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
 
 
@@ -39,6 +40,13 @@ def client_factory(monkeypatch):
         return TestClient(app)
 
     return _build
+
+
+@pytest.fixture
+def migrated_database_url(tmp_path) -> str:
+    database_url = f"sqlite+aiosqlite:///{tmp_path}/migrated.db"
+    upgrade_database_to_head(database_url)
+    return database_url
 
 
 @pytest.fixture
