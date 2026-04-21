@@ -1,4 +1,4 @@
-"""user projection and onboarding fields
+"""user projection, onboarding fields, and membership roles
 
 Revision ID: 0002
 Revises: 0001
@@ -46,6 +46,7 @@ def upgrade() -> None:
 
     with op.batch_alter_table("users") as batch_op:
         batch_op.drop_constraint(op.f("uq_users_keycloak_id"), type_="unique")
+        batch_op.drop_constraint(op.f("uq_users_email"), type_="unique")
         batch_op.alter_column(
             "external_auth_id",
             existing_type=sa.String(length=255),
@@ -120,3 +121,4 @@ def downgrade() -> None:
         )
         batch_op.alter_column("external_auth_id", new_column_name="keycloak_id")
         batch_op.create_unique_constraint(op.f("uq_users_keycloak_id"), ["keycloak_id"])
+        batch_op.create_unique_constraint(op.f("uq_users_email"), ["email"])
