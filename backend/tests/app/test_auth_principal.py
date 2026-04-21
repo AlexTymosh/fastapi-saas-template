@@ -51,3 +51,13 @@ def test_jwt_claim_mapping_rejects_invalid_email_claim() -> None:
                 "email": "not-an-email",
             }
         )
+
+
+def test_principal_detects_superadmin_role_case_insensitively() -> None:
+    principal = AuthenticatedPrincipal(
+        external_auth_id="kc-admin",
+        email="admin@example.com",
+        platform_roles=frozenset({"SuperAdmin"}),
+    )
+
+    assert principal.is_superadmin() is True

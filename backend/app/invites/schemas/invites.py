@@ -5,25 +5,27 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
+from app.invites.models.invite import InviteStatus
 from app.memberships.models.membership import MembershipRole
 
 
-class MembershipSummary(BaseModel):
-    organisation_id: UUID
+class CreateInviteRequest(BaseModel):
+    email: EmailStr
     role: MembershipRole
 
 
-class UserMeResponse(BaseModel):
+class InviteResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    external_auth_id: str
-    email: EmailStr | None
-    email_verified: bool
-    first_name: str | None
-    last_name: str | None
-    onboarding_completed: bool
-    is_superadmin: bool
-    membership: MembershipSummary | None
+    email: EmailStr
+    organisation_id: UUID
+    role: MembershipRole
+    status: InviteStatus
+    token: str
     created_at: datetime
     updated_at: datetime
+
+
+class AcceptInviteResponse(BaseModel):
+    invite: InviteResponse

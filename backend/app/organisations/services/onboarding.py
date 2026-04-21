@@ -24,15 +24,19 @@ class OnboardingService:
         identity: AuthenticatedPrincipal,
         organisation_name: str,
         organisation_slug: str,
-    ) -> tuple[User, Organisation, Membership]:
+    ) -> tuple[User, Organisation, Membership | None]:
         async with self.session.begin():
             user = await self.user_service.get_or_create_current_user(identity)
-            await self.membership_service.ensure_user_can_create_organisation(
-                user_id=user.id
-            )
             organisation = await self.organisation_service.create_organisation(
                 name=organisation_name,
                 slug=organisation_slug,
+            )
+
+            if identity.is_superadmin():
+                return user, organisation, None
+
+            await self.membership_service.ensure_user_can_create_organisation(
+                user_id=user.id
             )
             membership = await self.membership_service.create_membership(
                 user_id=user.id,

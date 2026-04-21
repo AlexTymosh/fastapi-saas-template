@@ -90,3 +90,5 @@ def test_openapi_includes_user_and_organisation_endpoints(monkeypatch) -> None:
     assert "/api/v1/organisations" in paths
     assert "/api/v1/organisations/{organisation_id}" in paths
     assert "/api/v1/organisations/{organisation_id}/memberships" in paths
+    assert "/api/v1/organisations/{organisation_id}/invites" in paths
+    assert "/api/v1/invites/{token}/accept" in paths

@@ -23,6 +23,7 @@ class MembershipRepository:
             user_id=user_id,
             organisation_id=organisation_id,
             role=role,
+            active=True,
         )
         self.session.add(membership)
         await self.session.flush()
@@ -33,12 +34,19 @@ class MembershipRepository:
         *,
         organisation_id: UUID,
     ) -> list[Membership]:
-        stmt = select(Membership).where(Membership.organisation_id == organisation_id)
+        stmt = select(Membership).where(
+            Membership.organisation_id == organisation_id,
+            Membership.active.is_(True),
+        )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def get_membership_for_user(self, *, user_id: UUID) -> Membership | None:
-        stmt = select(Membership).where(Membership.user_id == user_id).limit(1)
+        stmt = (
+            select(Membership)
+            .where(Membership.user_id == user_id, Membership.active.is_(True))
+            .limit(1)
+        )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -50,8 +58,11 @@ class MembershipRepository:
     ) -> bool:
         stmt = (
             select(Membership.id)
-            .where(Membership.user_id == user_id)
-            .where(Membership.organisation_id == organisation_id)
+            .where(
+                Membership.user_id == user_id,
+                Membership.organisation_id == organisation_id,
+                Membership.active.is_(True),
+            )
             .limit(1)
         )
         result = await self.session.execute(stmt)
@@ -65,8 +76,11 @@ class MembershipRepository:
     ) -> Membership | None:
         stmt = (
             select(Membership)
-            .where(Membership.user_id == user_id)
-            .where(Membership.organisation_id == organisation_id)
+            .where(
+                Membership.user_id == user_id,
+                Membership.organisation_id == organisation_id,
+                Membership.active.is_(True),
+            )
             .limit(1)
         )
         result = await self.session.execute(stmt)
@@ -74,3 +88,25 @@ class MembershipRepository:
 
     async def has_any_membership_for_user(self, *, user_id: UUID) -> bool:
         return await self.get_membership_for_user(user_id=user_id) is not None
+
+    async def deactivate_membership(self, membership: Membership) -> Membership:
+        membership.active = False
+        await self.session.flush()
+        return membership
+
+    async def count_active_owners(self, *, organisation_id: UUID) -> int:
+        stmt = select(Membership.id).where(
+            Membership.organisation_id == organisation_id,
+            Membership.role == MembershipRole.OWNER,
+            Membership.active.is_(True),
+        )
+        result = await self.session.execute(stmt)
+        return len(list(result.scalars().all()))
+
+    async def deactivate_all_for_organisation(self, *, organisation_id: UUID) -> None:
+        memberships = await self.list_memberships_for_organisation(
+            organisation_id=organisation_id
+        )
+        for membership in memberships:
+            membership.active = False
+        await self.session.flush()

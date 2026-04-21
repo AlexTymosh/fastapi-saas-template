@@ -44,6 +44,7 @@ async def get_me(
         first_name=user.first_name,
         last_name=user.last_name,
         onboarding_completed=user.onboarding_completed,
+        is_superadmin=identity.is_superadmin(),
         membership=(
             MembershipSummary(
                 organisation_id=membership.organisation_id,

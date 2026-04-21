@@ -27,6 +27,10 @@ class AuthenticatedPrincipal(BaseModel):
     email_verified: bool = False
     first_name: str | None = None
     last_name: str | None = None
+    platform_roles: frozenset[str] = frozenset()
+
+    def is_superadmin(self) -> bool:
+        return "superadmin" in {role.lower() for role in self.platform_roles}
 
     @classmethod
     def from_unverified_jwt_claims(
@@ -59,6 +63,10 @@ class JwtClaimsPayload(BaseModel):
     last_name: str | None = Field(
         default=None,
         validation_alias=AliasChoices("family_name", "last_name"),
+    )
+    platform_roles: frozenset[str] = Field(
+        default_factory=frozenset,
+        validation_alias=AliasChoices("platform_roles", "realm_roles"),
     )
 
     def to_authenticated_principal(self) -> AuthenticatedPrincipal:

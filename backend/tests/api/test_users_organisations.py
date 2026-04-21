@@ -79,13 +79,20 @@ def test_protected_endpoints_return_401_without_auth(client_factory) -> None:
             ("post", "/api/v1/organisations"),
             ("get", f"/api/v1/organisations/{uuid4()}"),
             ("get", f"/api/v1/organisations/{uuid4()}/memberships"),
+            ("post", f"/api/v1/organisations/{uuid4()}/invites"),
+            ("post", "/api/v1/invites/test-token/accept"),
         ]
         for method, path in endpoints:
             if method == "post":
-                response = client.post(
-                    path,
-                    json={"name": "Unauth Org", "slug": "unauth-org"},
-                )
+                if path.endswith("/invites"):
+                    response = client.post(path, json={"email": "x@example.com", "role": "member"})
+                elif path.endswith("/accept"):
+                    response = client.post(path)
+                else:
+                    response = client.post(
+                        path,
+                        json={"name": "Unauth Org", "slug": "unauth-org"},
+                    )
             else:
                 response = getattr(client, method)(path)
             assert response.status_code == 401
@@ -269,6 +276,7 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
         assert me.status_code == 200
         payload = me.json()
         assert payload["onboarding_completed"] is True
+        assert payload["is_superadmin"] is False
         assert payload["membership"]["organisation_id"] == organisation_id
         assert payload["membership"]["role"] == MembershipRole.OWNER.value
 
