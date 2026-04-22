@@ -224,6 +224,21 @@ def test_superadmin_can_invite_without_membership(
     assert response.status_code == 201
 
 
+def test_old_invite_accept_path_route_is_not_available(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-invitee-legacy-path", "legacy@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with client as api_client:
+        response = api_client.post("/api/v1/invites/some-token/accept")
+
+    assert response.status_code == 404
+
+
 def test_invite_accepts_for_first_login_user_without_projection(
     authenticated_client_factory,
     migrated_database_url: str,

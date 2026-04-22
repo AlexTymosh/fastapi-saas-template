@@ -95,3 +95,36 @@ def test_access_log_middleware_logs_failed_request(monkeypatch) -> None:
     assert record["status_code"] == 500
     assert "duration_ms" in record
     assert record["request_id"] == "req-500"
+
+
+def test_access_log_does_not_leak_invite_token_from_request_body(monkeypatch) -> None:
+    stream = io.StringIO()
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
+    fake_token = "invite-token-super-secret-value"
+
+    with patch("sys.stdout", stream):
+        client = create_app()
+        api_client = TestClient(client)
+        response = api_client.post(
+            "/api/v1/invites/accept",
+            headers={"X-Request-ID": "req-invite-accept"},
+            json={"token": fake_token},
+        )
+
+    # Endpoint requires authentication, but access logging should still be emitted.
+    assert response.status_code == 401
+
+    output = stream.getvalue()
+    records = _parse_json_lines(output)
+    access_logs = [r for r in records if r.get("event") == "request_completed"]
+    assert access_logs, f"request_completed log was not emitted. Output: {output}"
+
+    record = access_logs[-1]
+    assert record["method"] == "POST"
+    assert record["path"] == "/api/v1/invites/accept"
+    assert record["status_code"] == 401
+    assert record["request_id"] == "req-invite-accept"
+
+    assert fake_token not in output
+    assert f"/api/v1/invites/{fake_token}/accept" not in output
