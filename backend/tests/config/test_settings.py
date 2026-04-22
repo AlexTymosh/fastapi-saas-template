@@ -24,12 +24,14 @@ def test_settings_parses_nested_env(monkeypatch) -> None:
 
 def test_settings_parse_auth_algorithms_from_csv(monkeypatch) -> None:
     monkeypatch.setenv("AUTH__ALGORITHMS", "RS256")
+    monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-api")
     monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-web")
 
     get_settings.cache_clear()
     settings = get_settings()
 
     assert settings.auth.algorithms == ["RS256"]
+    assert settings.auth.audience == "fastapi-api"
     assert settings.auth.client_id == "fastapi-web"
 
     get_settings.cache_clear()

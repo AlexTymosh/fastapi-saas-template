@@ -47,6 +47,11 @@ def test_users_me_accepts_validated_jwt_without_auth_override(
             "given_name": "JWT",
             "family_name": "Path",
             "realm_access": {"roles": ["member"]},
+            "resource_access": {
+                "fastapi-web": {
+                    "roles": ["org-member"],
+                }
+            },
         },
     )
 

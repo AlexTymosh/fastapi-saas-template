@@ -84,16 +84,22 @@ Local Keycloak defaults:
 - Admin user: `admin`
 - Admin password: `admin`
 - Realm: `fastapi-saas`
-- Browser/public OIDC client for local Authorization Code + PKCE login: `fastapi-web`
-- Backend JWT audience expected by FastAPI: `fastapi-api`
+- Browser/public OIDC login client: `fastapi-web`
+- API/resource audience client: `fastapi-api`
 - Dev test user for browser login in Keycloak: `api-user` / `api-user-password`
 
-The imported dev client is intentionally configured for **Authorization Code + PKCE**:
+The imported dev browser client is intentionally configured for **Authorization Code + PKCE**:
 
 - `standardFlowEnabled=true`
 - `directAccessGrantsEnabled=false`
 - explicit localhost redirect URIs (no wildcard)
 - explicit localhost web origins (no wildcard)
+
+The local realm also includes a separate API/resource client:
+
+- `fastapi-api` is not for interactive login
+- it exists as the explicit access token audience (`aud`) validated by FastAPI
+- tokens issued through `fastapi-web` include `aud=fastapi-api` via an explicit audience mapper
 
 > [!IMPORTANT]
 > The previous password-grant (`grant_type=password`) testing path was intentionally removed.
@@ -145,6 +151,8 @@ Runtime assumptions for this scenario:
 - `AUTH__AUDIENCE=fastapi-api` (FastAPI validates `aud` against this value)
 - `AUTH__CLIENT_ID=fastapi-web` (FastAPI uses this for `resource_access.<client_id>.roles` extraction)
 - backend started via Docker Compose (`compose.yaml`)
+
+This split is intentional: users authenticate with `fastapi-web`, while the backend accepts the token only when it is targeted to the API audience `fastapi-api`.
 
 Steps:
 

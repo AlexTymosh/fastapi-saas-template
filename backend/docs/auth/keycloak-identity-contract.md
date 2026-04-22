@@ -53,7 +53,10 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 - This backend validates bearer tokens and projects users locally by `external_auth_id == sub`.
 - Runtime JWT settings source of truth is `AUTH__*` (`AUTH__ENABLED`, `AUTH__ISSUER_URL`, `AUTH__AUDIENCE`, `AUTH__CLIENT_ID`).
 - Role extraction for `resource_access` uses `AUTH__CLIENT_ID` (auth-scoped config).
-- Local dev browser/public Keycloak client id is `fastapi-web`; expected API token audience is `fastapi-api`.
+- Local dev intentionally uses two distinct Keycloak clients:
+  - `fastapi-web`: browser/public Authorization Code + PKCE login client.
+  - `fastapi-api`: API/resource audience descriptor client for backend `aud` validation.
+- Runtime split remains: `AUTH__CLIENT_ID=fastapi-web` for `resource_access.fastapi-web.roles`, and `AUTH__AUDIENCE=fastapi-api` for JWT audience validation.
 - JWT signature verification is intentionally limited to `RS256`.
 - Organisations, memberships, onboarding, and invites stay in the local business database.
 - Registration, email verification, and CAPTCHA are intentionally delegated to Keycloak (not implemented in this backend).

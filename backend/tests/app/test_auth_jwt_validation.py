@@ -100,6 +100,22 @@ def test_invalid_audience_is_rejected() -> None:
         run_async(validator.validate_token(token))
 
 
+def test_expected_audience_fastapi_api_is_accepted() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-valid-aud",
+    )
+    validator = _build_validator(_make_fetcher({"keys": [jwk]}))
+
+    claims = run_async(validator.validate_token(token))
+
+    assert claims["aud"] == "fastapi-api"
+
+
 def test_expired_token_is_rejected() -> None:
     jwk, private_key = generate_rsa_jwk()
     token = issue_access_token(
