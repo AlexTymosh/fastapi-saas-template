@@ -27,7 +27,7 @@ def test_users_me_accepts_validated_jwt_without_auth_override(
     monkeypatch.setenv("AUTH__ENABLED", "true")
     monkeypatch.setenv("AUTH__ISSUER_URL", issuer)
     monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-backend")
-    monkeypatch.setenv("SECURITY__KEYCLOAK_CLIENT_ID", "fastapi-backend")
+    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-backend")
 
     import app.core.auth as auth_module
 

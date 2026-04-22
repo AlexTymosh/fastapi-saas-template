@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import jwt
 import pytest
 from starlette.requests import Request
 
+import app.core.auth as auth_module
 from app.core.auth import JwtValidator, get_authenticated_principal
-from app.core.config.settings import AuthSettings
+from app.core.config.settings import AuthSettings, get_settings
 from app.core.errors.exceptions import UnauthorizedError
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.jwt import generate_rsa_jwk, issue_access_token
@@ -114,6 +116,27 @@ def test_expired_token_is_rejected() -> None:
         run_async(validator.validate_token(token))
 
 
+def test_token_with_disallowed_signing_algorithm_is_rejected() -> None:
+    token = jwt.encode(
+        {
+            "iss": ISSUER,
+            "aud": "fastapi-backend",
+            "sub": "kc-sub-hs256",
+            "exp": 4_200_000_000,
+        },
+        key="dev-secret",
+        algorithm="HS256",
+        headers={"kid": "ignored"},
+    )
+    validator = _build_validator(_make_fetcher({"keys": []}))
+
+    with pytest.raises(
+        UnauthorizedError,
+        match="Token signing algorithm is not allowed",
+    ):
+        run_async(validator.validate_token(token))
+
+
 def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
     jwk, private_key = generate_rsa_jwk()
     token = issue_access_token(
@@ -153,3 +176,46 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
     assert principal.last_name == "User"
     assert principal.platform_roles == ["member", "org-admin"]
 
+
+def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
+    monkeypatch,
+) -> None:
+    jwk, private_key = generate_rsa_jwk()
+
+    def _fetch(url: str) -> dict[str, object]:
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            return {"keys": [jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setenv("AUTH__ENABLED", "true")
+    monkeypatch.setenv("AUTH__ISSUER_URL", ISSUER)
+    monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-backend")
+    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-backend")
+    monkeypatch.setattr(auth_module, "_fetch_json_url", _fetch)
+    monkeypatch.setattr(auth_module, "_jwt_validator", None)
+    monkeypatch.setattr(auth_module, "_jwt_validator_signature", None)
+    get_settings.cache_clear()
+
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-backend",
+        subject="kc-client-role-user",
+        claims={
+            "resource_access": {
+                "fastapi-backend": {
+                    "roles": ["org-admin"],
+                }
+            },
+        },
+    )
+    request = _request_with_headers({"Authorization": f"Bearer {token}"})
+    principal = run_async(get_authenticated_principal(request))
+
+    assert principal is not None
+    assert principal.platform_roles == ["org-admin"]
+
+    get_settings.cache_clear()

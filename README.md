@@ -85,16 +85,35 @@ Local Keycloak defaults:
 - OIDC client for backend token testing: `fastapi-backend`
 - Dev test user: `api-user` / `api-user-password`
 
+Auth defaults are safe in this repository (`AUTH__ENABLED=false` in `.env.example`).  
+To test real JWT validation locally, set:
+
+```env
+AUTH__ENABLED=true
+AUTH__ISSUER_URL=http://localhost:8080/realms/fastapi-saas
+AUTH__AUDIENCE=fastapi-backend
+AUTH__CLIENT_ID=fastapi-backend
+AUTH__ALGORITHMS=RS256
+```
+
+`AUTH__ALGORITHMS` intentionally supports only `RS256`.
+
 Get an access token for backend API testing (direct grant, no frontend required):
 
 ```bash
-curl -s -X POST 'http://localhost:8080/realms/fastapi-saas/protocol/openid-connect/token'   -H 'Content-Type: application/x-www-form-urlencoded'   -d 'grant_type=password'   -d 'client_id=fastapi-backend'   -d 'username=api-user'   -d 'password=api-user-password'
+curl -s -X POST 'http://localhost:8080/realms/fastapi-saas/protocol/openid-connect/token' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'grant_type=password' \
+  -d 'client_id=fastapi-backend' \
+  -d 'username=api-user' \
+  -d 'password=api-user-password'
 ```
 
 Use the returned `access_token` for protected backend endpoints, for example:
 
 ```bash
-curl http://localhost:8000/api/v1/users/me   -H "Authorization: Bearer <access_token>"
+curl http://localhost:8000/api/v1/users/me \
+  -H "Authorization: Bearer <access_token>"
 ```
 
 
@@ -226,18 +245,20 @@ For technical details, project goals, and the current roadmap:
 
 Implemented now:
 
-- Backend validates Keycloak-compatible bearer JWTs (issuer, signature, expiration, audience, allowed algorithms).
+- Keycloak is the identity source (JWT issuer and claims authority).
+- FastAPI validates bearer JWTs (issuer, signature, `aud`, `exp`) with `RS256`.
 - Backend maps token claims into `AuthenticatedPrincipal`.
 - Backend keeps local JIT user projection using `external_auth_id == sub`.
+- Organisations, memberships, and invites remain local business data in the app DB.
 
 Intentionally out of scope in this repository:
 
 - Local signup/password flows
 - Local email verification/captcha
+- Password reset flows
 - Frontend login UI
 
 Identity model split:
 
 - Keycloak = identity source.
 - FastAPI app DB = business model (organisations, memberships, invites, local user projection).
-

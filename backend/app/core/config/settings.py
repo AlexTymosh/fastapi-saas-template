@@ -72,6 +72,7 @@ class AuthSettings(BaseModel):
     enabled: bool = False
     issuer_url: str | None = None
     audience: str | None = None
+    client_id: str | None = None
     jwks_url: str | None = None
     algorithms: list[str] = Field(default_factory=lambda: ["RS256"])
     leeway_seconds: int = 30
@@ -93,6 +94,16 @@ class AuthSettings(BaseModel):
             return parsed or ["RS256"]
 
         raise TypeError("AUTH__ALGORITHMS must be a comma-separated string or list")
+
+    @field_validator("algorithms")
+    @classmethod
+    def _validate_algorithms(cls, value: list[str]) -> list[str]:
+        normalized = [item.upper() for item in value]
+        allowed = {"RS256"}
+        unsupported = sorted({item for item in normalized if item not in allowed})
+        if unsupported:
+            raise ValueError("AUTH__ALGORITHMS supports only RS256")
+        return ["RS256"]
 
 
 class Settings(BaseSettings):

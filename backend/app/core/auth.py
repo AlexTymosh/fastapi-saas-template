@@ -196,8 +196,7 @@ class JwtValidator:
         document = await self._fetch_json_async(discovery_url)
         self._discovery_cache = _CacheEntry(
             value=document,
-            expires_at=time.time()
-            + self.auth_settings.discovery_cache_ttl_seconds,
+            expires_at=time.time() + self.auth_settings.discovery_cache_ttl_seconds,
         )
         return document
 
@@ -345,7 +344,7 @@ async def get_authenticated_principal(
 
     return AuthenticatedPrincipal.from_verified_jwt_claims(
         claims,
-        resource_client_id=settings.security.keycloak_client_id,
+        resource_client_id=settings.auth.client_id,
     )
 
 
