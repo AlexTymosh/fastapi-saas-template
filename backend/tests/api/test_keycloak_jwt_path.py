@@ -27,13 +27,13 @@ def test_users_me_accepts_validated_jwt_without_auth_override(
     monkeypatch.setenv("AUTH__ENABLED", "true")
     monkeypatch.setenv("AUTH__ISSUER_URL", issuer)
     monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-backend")
-    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-backend")
+    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-web")
 
-    import app.core.auth as auth_module
+    import app.core.auth_jwt as auth_jwt_module
 
-    monkeypatch.setattr(auth_module, "_fetch_json_url", _fetch)
-    monkeypatch.setattr(auth_module, "_jwt_validator", None)
-    monkeypatch.setattr(auth_module, "_jwt_validator_signature", None)
+    monkeypatch.setattr(auth_jwt_module, "_fetch_json_url", _fetch)
+    monkeypatch.setattr(auth_jwt_module, "_jwt_validator", None)
+    monkeypatch.setattr(auth_jwt_module, "_jwt_validator_signature", None)
 
     token = issue_access_token(
         private_key=private_key,

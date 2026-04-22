@@ -62,9 +62,8 @@ class RedisSettings(BaseModel):
 
 
 class SecuritySettings(BaseModel):
-    keycloak_server_url: str | None = None
-    keycloak_realm: str | None = None
-    keycloak_client_id: str | None = None
+    """Legacy security settings retained only for secret sourcing compatibility."""
+
     keycloak_client_secret: str | None = None
 
 

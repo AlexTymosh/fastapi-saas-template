@@ -6,8 +6,9 @@ import jwt
 import pytest
 from starlette.requests import Request
 
-import app.core.auth as auth_module
-from app.core.auth import JwtValidator, get_authenticated_principal
+import app.core.auth_jwt as auth_jwt_module
+from app.core.auth import get_authenticated_principal
+from app.core.auth_jwt import JwtValidator
 from app.core.config.settings import AuthSettings, get_settings
 from app.core.errors.exceptions import UnauthorizedError
 from tests.helpers.asyncio_runner import run_async
@@ -137,6 +138,63 @@ def test_token_with_disallowed_signing_algorithm_is_rejected() -> None:
         run_async(validator.validate_token(token))
 
 
+def test_jwks_kid_miss_refreshes_once_and_succeeds() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-backend",
+        subject="kc-sub-refresh-success",
+    )
+    calls = {"jwks": 0}
+
+    def _fetch(url: str) -> dict[str, object]:
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            calls["jwks"] += 1
+            if calls["jwks"] == 1:
+                return {"keys": []}
+            return {"keys": [jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    validator = _build_validator(_fetch)
+
+    claims = run_async(validator.validate_token(token))
+
+    assert claims["sub"] == "kc-sub-refresh-success"
+    assert calls["jwks"] == 2
+
+
+def test_jwks_kid_miss_after_refresh_still_fails() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-backend",
+        subject="kc-sub-refresh-fail",
+    )
+    other_jwk, _ = generate_rsa_jwk()
+    calls = {"jwks": 0}
+
+    def _fetch(url: str) -> dict[str, object]:
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            calls["jwks"] += 1
+            return {"keys": [other_jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    validator = _build_validator(_fetch)
+
+    with pytest.raises(UnauthorizedError, match="Unable to match token signing key"):
+        run_async(validator.validate_token(token))
+
+    assert calls["jwks"] == 2
+
+
 def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
     jwk, private_key = generate_rsa_jwk()
     token = issue_access_token(
@@ -152,7 +210,7 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
             "family_name": "User",
             "realm_access": {"roles": ["member"]},
             "resource_access": {
-                "fastapi-backend": {
+                "fastapi-web": {
                     "roles": ["org-admin"],
                 }
             },
@@ -166,7 +224,7 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
 
     principal = AuthenticatedPrincipal.from_verified_jwt_claims(
         claims,
-        resource_client_id="fastapi-backend",
+        resource_client_id="fastapi-web",
     )
 
     assert principal.external_auth_id == "kc-sub-claims"
@@ -192,10 +250,10 @@ def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
     monkeypatch.setenv("AUTH__ENABLED", "true")
     monkeypatch.setenv("AUTH__ISSUER_URL", ISSUER)
     monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-backend")
-    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-backend")
-    monkeypatch.setattr(auth_module, "_fetch_json_url", _fetch)
-    monkeypatch.setattr(auth_module, "_jwt_validator", None)
-    monkeypatch.setattr(auth_module, "_jwt_validator_signature", None)
+    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-web")
+    monkeypatch.setattr(auth_jwt_module, "_fetch_json_url", _fetch)
+    monkeypatch.setattr(auth_jwt_module, "_jwt_validator", None)
+    monkeypatch.setattr(auth_jwt_module, "_jwt_validator_signature", None)
     get_settings.cache_clear()
 
     token = issue_access_token(
@@ -206,7 +264,7 @@ def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
         subject="kc-client-role-user",
         claims={
             "resource_access": {
-                "fastapi-backend": {
+                "fastapi-web": {
                     "roles": ["org-admin"],
                 }
             },

@@ -19,10 +19,6 @@ services:
 
       VAULT__ENABLED: "false"
 
-      AUTH__ENABLED: "true"
-      AUTH__ISSUER_URL: http://keycloak.local:8080/realms/fastapi-saas
-      AUTH__AUDIENCE: fastapi-backend
-      AUTH__CLIENT_ID: fastapi-backend
     depends_on:
       postgres:
         condition: service_healthy

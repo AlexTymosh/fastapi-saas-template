@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.core.auth import AuthenticatedPrincipal, JwtClaimsPayload
+from app.core.auth import AuthenticatedPrincipal
+from app.core.auth_claims import JwtClaimsPayload
 
 
 def test_jwt_claim_mapping_supports_standard_name_claims() -> None:
@@ -71,10 +72,10 @@ def test_verified_claim_mapping_merges_keycloak_realm_and_client_roles() -> None
             "sub": "kc-user-claims-roles",
             "realm_access": {"roles": ["member", "admin"]},
             "resource_access": {
-                "fastapi-backend": {"roles": ["admin", "editor"]},
+                "fastapi-web": {"roles": ["admin", "editor"]},
             },
         },
-        resource_client_id="fastapi-backend",
+        resource_client_id="fastapi-web",
     )
 
     assert principal.platform_roles == ["member", "admin", "editor"]
