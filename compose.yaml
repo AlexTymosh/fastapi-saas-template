@@ -20,7 +20,7 @@ services:
       VAULT__ENABLED: "false"
 
       AUTH__ENABLED: "true"
-      AUTH__ISSUER_URL: http://keycloak:8080/realms/fastapi-saas
+      AUTH__ISSUER_URL: http://keycloak.local:8080/realms/fastapi-saas
       AUTH__AUDIENCE: fastapi-backend
       AUTH__CLIENT_ID: fastapi-backend
     depends_on:
@@ -82,6 +82,7 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://keycloak.local:8080
     command:
       - start-dev
       - --import-realm
@@ -89,6 +90,10 @@ services:
       - "8080:8080"
     volumes:
       - ./docker/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    networks:
+      default:
+        aliases:
+          - keycloak.local
     healthcheck:
       test:
         [
