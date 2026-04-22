@@ -78,7 +78,9 @@ docker compose up --build -d
 
 Local Keycloak defaults:
 
-- Admin Console: `http://localhost:8080/admin`
+- Canonical issuer URL: `http://keycloak.local:8080/realms/fastapi-saas`
+- Realm discovery URL: `http://keycloak.local:8080/realms/fastapi-saas/.well-known/openid-configuration`
+- Admin Console: `http://keycloak.local:8080/admin`
 - Admin user: `admin`
 - Admin password: `admin`
 - Realm: `fastapi-saas`
@@ -96,6 +98,15 @@ The imported dev client is intentionally configured for **Authorization Code + P
 > The previous password-grant (`grant_type=password`) testing path was intentionally removed.
 > This repository no longer documents or enables Direct Access Grants for local development.
 
+To keep `iss` stable across browser and Docker Compose runtime, local development uses one explicit hostname: `keycloak.local`.
+
+Add a hosts-file entry on your machine before running OAuth/OIDC flows:
+
+- macOS/Linux (`/etc/hosts`): `127.0.0.1 keycloak.local`
+- Windows (`C:\Windows\System32\drivers\etc\hosts`): `127.0.0.1 keycloak.local`
+
+Docker Compose maps this same hostname to the Keycloak container on the internal network, so the backend and browser resolve the same issuer URL.
+
 Registered local redirect URIs are limited to common localhost callback patterns used by browser apps and OAuth debugging helpers:
 
 - `http://localhost:3000/auth/callback`
@@ -112,7 +123,7 @@ To test real JWT validation locally, set:
 
 ```env
 AUTH__ENABLED=true
-AUTH__ISSUER_URL=http://localhost:8080/realms/fastapi-saas
+AUTH__ISSUER_URL=http://keycloak.local:8080/realms/fastapi-saas
 AUTH__AUDIENCE=fastapi-backend
 AUTH__CLIENT_ID=fastapi-backend
 AUTH__ALGORITHMS=RS256
@@ -120,28 +131,53 @@ AUTH__ALGORITHMS=RS256
 
 `AUTH__ALGORITHMS` intentionally supports only `RS256`.
 
-> [!NOTE]
-> Inside Docker Compose, the app container uses `AUTH__ISSUER_URL=http://keycloak:8080/realms/fastapi-saas` (`compose.yaml`).
-> From the host machine, use `http://localhost:8080/realms/fastapi-saas`.
+### 6.2 Verifiable local auth scenario (Authorization Code + PKCE)
 
-Manual local testing flow (without adding a frontend to this repo):
+This repository does not include a frontend app. Use any browser-based OAuth/OIDC helper that supports Authorization Code + PKCE.
 
-1. Use a browser-based OAuth/OIDC client tool that supports Authorization Code + PKCE.
-2. Configure it with:
-   - issuer: `http://localhost:8080/realms/fastapi-saas`
+Runtime assumptions for this scenario:
+
+- `AUTH__ENABLED=true` (backend auth boundary enabled)
+- `AUTH__ISSUER_URL=http://keycloak.local:8080/realms/fastapi-saas` (same as token `iss`)
+- backend started via Docker Compose (`compose.yaml`)
+
+Steps:
+
+1. Start the stack:
+   ```bash
+   docker compose up --build -d
+   ```
+2. Confirm hostname resolution on host:
+   ```bash
+   curl -fsS http://keycloak.local:8080/realms/fastapi-saas/.well-known/openid-configuration
+   ```
+3. In your OAuth/OIDC helper tool, configure:
+   - issuer: `http://keycloak.local:8080/realms/fastapi-saas`
    - client_id: `fastapi-backend`
-   - authorization endpoint and token endpoint from realm discovery
-   - one of the registered localhost callback URIs above
-3. Sign in through the browser (for local dev, you can use `api-user`).
-4. Copy the resulting bearer `access_token`.
-5. Call protected API endpoints with that token.
+   - redirect URI/callback: one of:
+     - `http://localhost:8787/callback`
+     - `http://localhost:3000/auth/callback`
+     - `http://localhost:5173/auth/callback`
+   - grant type: Authorization Code
+   - PKCE method: `S256`
+4. Sign in through Keycloak (for local dev, you can use `api-user` / `api-user-password`) and copy the resulting `access_token`.
+5. Optional smoke check: confirm the token issuer is the canonical URL:
+   ```bash
+   python -c "import base64, json; t='<access_token>'.split('.')[1]; print(json.loads(base64.urlsafe_b64decode(t+'='*(-len(t)%4)))['iss'])"
+   ```
+6. Call the protected endpoint:
+   ```bash
+   curl http://localhost:8000/api/v1/users/me \
+     -H "Authorization: Bearer <access_token>"
+   ```
+7. Expected result:
+   - HTTP `200 OK`
+   - token is accepted because `iss == http://keycloak.local:8080/realms/fastapi-saas`
+   - local user projection is created/refreshed from JWT claims (`sub`-based linkage)
 
-Example API call:
+Troubleshooting:
 
-```bash
-curl http://localhost:8000/api/v1/users/me \
-  -H "Authorization: Bearer <access_token>"
-```
+- If you get issuer mismatch errors, re-check hosts mapping and confirm the token `iss` is `http://keycloak.local:8080/realms/fastapi-saas`.
 
 
 Health endpoint:
@@ -211,7 +247,7 @@ Remove-Item Env:TEST_REDIS_URL -ErrorAction SilentlyContinue
 | Postgres  | postgres:5432 (internal)  |
 | Redis     | redis:6379 (internal)     |
 | Vault     | http://localhost:8200     |
-| Keycloak  | http://localhost:8080     |
+| Keycloak  | http://keycloak.local:8080 |
 
 Vault dev token:
 

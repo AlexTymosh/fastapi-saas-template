@@ -20,6 +20,7 @@
     {
       "clientId": "fastapi-backend",
       "name": "fastapi-backend",
+      "description": "Development-only client for local Authorization Code + PKCE testing.",
       "enabled": true,
       "publicClient": true,
       "protocol": "openid-connect",
