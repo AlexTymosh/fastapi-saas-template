@@ -91,13 +91,16 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
     assert "/api/v1/organisations/{organisation_id}" in paths
     assert "/api/v1/organisations/{organisation_id}/memberships" in paths
     assert "/api/v1/organisations/{organisation_id}/invites" in paths
-    assert "/api/v1/invites/{token}/accept" in paths
+    assert "/api/v1/invites/accept" in paths
 
     invite_create = paths["/api/v1/organisations/{organisation_id}/invites"]["post"]
-    invite_accept = paths["/api/v1/invites/{token}/accept"]["post"]
+    invite_accept = paths["/api/v1/invites/accept"]["post"]
 
     create_problem = invite_create["responses"]["403"]["content"]
     assert "application/problem+json" in create_problem
 
     accept_problem = invite_accept["responses"]["404"]["content"]
     assert "application/problem+json" in accept_problem
+
+    request_body = invite_accept["requestBody"]["content"]["application/json"]["schema"]
+    assert request_body["$ref"].endswith("/AcceptInviteRequest")
