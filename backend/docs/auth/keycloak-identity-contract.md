@@ -51,5 +51,6 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 
 - Keycloak is used only as identity provider (JWT issuer + claims source).
 - This backend validates bearer tokens and projects users locally by `external_auth_id == sub`.
+- Client-role extraction for `platform_roles` uses `AUTH__CLIENT_ID`.
 - Organisations, memberships, onboarding, and invites stay in the local business database.
 - Registration, email verification, and CAPTCHA are intentionally delegated to Keycloak (not implemented in this backend).

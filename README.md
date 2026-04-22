@@ -70,7 +70,17 @@ docker compose exec app python -m alembic check
 
 This repository is **backend-only**. Keycloak is the identity provider, while organisations/memberships/invites stay in the local business database.
 
-Start all services (including Keycloak):
+`AUTH__ENABLED` is `false` by default in `.env.example`. To test JWT auth locally, enable auth in `.env`:
+
+```env
+AUTH__ENABLED=true
+AUTH__ISSUER_URL=http://localhost:8080/realms/fastapi-saas
+AUTH__AUDIENCE=fastapi-backend
+AUTH__CLIENT_ID=fastapi-backend
+AUTH__ALGORITHMS=RS256
+```
+
+Then start all services (including Keycloak):
 
 ```bash
 docker compose up --build -d
@@ -88,7 +98,13 @@ Local Keycloak defaults:
 Get an access token for backend API testing (direct grant, no frontend required):
 
 ```bash
-curl -s -X POST 'http://localhost:8080/realms/fastapi-saas/protocol/openid-connect/token'   -H 'Content-Type: application/x-www-form-urlencoded'   -d 'grant_type=password'   -d 'client_id=fastapi-backend'   -d 'username=api-user'   -d 'password=api-user-password'
+curl -s -X POST \
+  'http://localhost:8080/realms/fastapi-saas/protocol/openid-connect/token' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'grant_type=password' \
+  -d 'client_id=fastapi-backend' \
+  -d 'username=api-user' \
+  -d 'password=api-user-password'
 ```
 
 Use the returned `access_token` for protected backend endpoints, for example:
@@ -226,7 +242,8 @@ For technical details, project goals, and the current roadmap:
 
 Implemented now:
 
-- Backend validates Keycloak-compatible bearer JWTs (issuer, signature, expiration, audience, allowed algorithms).
+- Backend validates Keycloak-compatible bearer JWTs (issuer, RSA signature via JWKS, expiration, audience).
+- Supported signing algorithm is intentionally limited to `RS256`.
 - Backend maps token claims into `AuthenticatedPrincipal`.
 - Backend keeps local JIT user projection using `external_auth_id == sub`.
 
@@ -240,4 +257,3 @@ Identity model split:
 
 - Keycloak = identity source.
 - FastAPI app DB = business model (organisations, memberships, invites, local user projection).
-

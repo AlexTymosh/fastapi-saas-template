@@ -6,7 +6,7 @@ import pytest
 from starlette.requests import Request
 
 from app.core.auth import JwtValidator, get_authenticated_principal
-from app.core.config.settings import AuthSettings
+from app.core.config.settings import AuthSettings, get_settings
 from app.core.errors.exceptions import UnauthorizedError
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.jwt import generate_rsa_jwk, issue_access_token
@@ -153,3 +153,43 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
     assert principal.last_name == "User"
     assert principal.platform_roles == ["member", "org-admin"]
 
+
+def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
+    monkeypatch,
+) -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-backend",
+        subject="kc-sub-auth-client-id",
+        claims={
+            "resource_access": {
+                "fastapi-backend": {"roles": ["org-admin"]},
+                "legacy-client-id": {"roles": ["legacy-role"]},
+            }
+        },
+    )
+
+    monkeypatch.setenv("AUTH__ENABLED", "true")
+    monkeypatch.setenv("AUTH__ISSUER_URL", ISSUER)
+    monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-backend")
+    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-backend")
+    monkeypatch.setenv("AUTH__JWKS_URL", JWKS_URL)
+    monkeypatch.setenv("SECURITY__KEYCLOAK_CLIENT_ID", "legacy-client-id")
+
+    import app.core.auth as auth_module
+
+    monkeypatch.setattr(auth_module, "_fetch_json_url", _make_fetcher({"keys": [jwk]}))
+    monkeypatch.setattr(auth_module, "_jwt_validator", None)
+    monkeypatch.setattr(auth_module, "_jwt_validator_signature", None)
+    get_settings.cache_clear()
+
+    request = _request_with_headers({"Authorization": f"Bearer {token}"})
+    principal = run_async(get_authenticated_principal(request))
+
+    assert principal is not None
+    assert principal.platform_roles == ["org-admin"]
+
+    get_settings.cache_clear()

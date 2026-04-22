@@ -12,7 +12,7 @@ from urllib.request import urlopen
 import jwt
 from fastapi import Depends, Request
 from jwt import InvalidAudienceError, InvalidIssuerError, InvalidTokenError
-from jwt.algorithms import get_default_algorithms
+from jwt.algorithms import RSAAlgorithm
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field
 
 from app.core.config.settings import AuthSettings, Settings, get_settings
@@ -125,6 +125,10 @@ class JwtValidator:
             raise UnauthorizedError(detail="Token issuer is not configured")
 
         allowed_algorithms = set(self.auth_settings.algorithms)
+        if allowed_algorithms != {"RS256"}:
+            raise UnauthorizedError(
+                detail="Unsupported token signing algorithm configuration"
+            )
 
         try:
             header = jwt.get_unverified_header(token)
@@ -220,13 +224,11 @@ class JwtValidator:
 
     def _public_key_from_jwk(self, jwk: dict[str, Any]) -> Any:
         kty = jwk.get("kty")
-        algorithm_loader = get_default_algorithms().get("RS256")
-
-        if kty != "RSA" or algorithm_loader is None:
+        if kty != "RSA":
             raise UnauthorizedError(detail="Unsupported signing key type")
 
         try:
-            return algorithm_loader.from_jwk(json.dumps(jwk))
+            return RSAAlgorithm.from_jwk(json.dumps(jwk))
         except Exception as exc:
             raise UnauthorizedError(detail="Invalid JWKS signing key") from exc
 
@@ -345,7 +347,7 @@ async def get_authenticated_principal(
 
     return AuthenticatedPrincipal.from_verified_jwt_claims(
         claims,
-        resource_client_id=settings.security.keycloak_client_id,
+        resource_client_id=settings.auth.client_id,
     )
 
 
