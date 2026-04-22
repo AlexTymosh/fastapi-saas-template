@@ -99,10 +99,16 @@ def test_invite_accept_transfers_membership(
     )
 
     with invitee_client as client:
-        accepted_source = client.post(f"/api/v1/invites/{source_token}/accept")
+        accepted_source = client.post(
+            "/api/v1/invites/accept",
+            json={"token": source_token},
+        )
         assert accepted_source.status_code == 200
 
-        accepted = client.post(f"/api/v1/invites/{transfer_token}/accept")
+        accepted = client.post(
+            "/api/v1/invites/accept",
+            json={"token": transfer_token},
+        )
         assert accepted.status_code == 200
 
         me = client.get("/api/v1/users/me")
@@ -178,7 +184,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
 
     token = owner_sink.token_for_email("invitee-sole@example.com")
     with sole_owner_client as client:
-        response = client.post(f"/api/v1/invites/{token}/accept")
+        response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 409
 
 
@@ -218,6 +224,21 @@ def test_superadmin_can_invite_without_membership(
     assert response.status_code == 201
 
 
+def test_old_invite_accept_path_route_is_not_available(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-invitee-legacy-path", "legacy@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with client as api_client:
+        response = api_client.post("/api/v1/invites/some-token/accept")
+
+    assert response.status_code == 404
+
+
 def test_invite_accepts_for_first_login_user_without_projection(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -251,7 +272,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
         redis_url=None,
     )
     with invitee_client as client:
-        accepted = client.post(f"/api/v1/invites/{token}/accept")
+        accepted = client.post("/api/v1/invites/accept", json={"token": token})
         assert accepted.status_code == 200
 
     async def _assert_user_and_membership() -> None:
@@ -303,7 +324,7 @@ def test_accept_invite_rejects_email_mismatch(
         redis_url=None,
     )
     with wrong_user_client as client:
-        response = client.post(f"/api/v1/invites/{token}/accept")
+        response = client.post("/api/v1/invites/accept", json={"token": token})
     assert response.status_code == 403
 
 
@@ -360,7 +381,7 @@ def test_accept_invite_rejects_expired_invite(
         redis_url=None,
     )
     with invitee_client as client:
-        response = client.post(f"/api/v1/invites/{token}/accept")
+        response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 409
 
 

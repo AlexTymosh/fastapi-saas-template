@@ -10,6 +10,7 @@ from app.core.auth import AuthenticatedPrincipal, require_authenticated_principa
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
 from app.invites.schemas.invites import (
+    AcceptInviteRequest,
     AcceptInviteResponse,
     CreateInviteRequest,
     InviteCreateResponse,
@@ -56,18 +57,21 @@ async def create_invite(
 
 
 @router.post(
-    "/invites/{token}/accept",
+    "/invites/accept",
     response_model=AcceptInviteResponse,
     responses=COMMON_ERROR_RESPONSES,
     name="accept_invite",
 )
 async def accept_invite(
-    token: str,
+    payload: AcceptInviteRequest,
     identity: PrincipalDep,
     db_session: DbSessionDep,
 ) -> AcceptInviteResponse:
     invite_service = InviteService(db_session)
-    membership = await invite_service.accept_invite(token=token, identity=identity)
+    membership = await invite_service.accept_invite(
+        token=payload.token,
+        identity=identity,
+    )
     return AcceptInviteResponse(
         membership_id=membership.id,
         organisation_id=membership.organisation_id,
