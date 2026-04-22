@@ -82,8 +82,26 @@ Local Keycloak defaults:
 - Admin user: `admin`
 - Admin password: `admin`
 - Realm: `fastapi-saas`
-- OIDC client for backend token testing: `fastapi-backend`
+- OIDC public client for local browser login testing: `fastapi-backend`
 - Dev test user: `api-user` / `api-user-password`
+
+The local client is intentionally configured for **Authorization Code + PKCE** (browser-based login):
+
+- `standardFlowEnabled=true`
+- `directAccessGrantsEnabled=false` (password grant intentionally disabled)
+- explicit local development redirect URIs only:
+  - `http://localhost:3000/callback`
+  - `http://127.0.0.1:3000/callback`
+  - `http://localhost:5173/callback`
+  - `http://127.0.0.1:5173/callback`
+- explicit local development web origins only:
+  - `http://localhost:3000`
+  - `http://127.0.0.1:3000`
+  - `http://localhost:5173`
+  - `http://127.0.0.1:5173`
+
+Ports `3000` and `5173` are included as common local dev ports for browser apps and OAuth/OIDC test tools.  
+These settings are **local development only** and are intentionally not wildcard/open-ended.
 
 Auth defaults are safe in this repository (`AUTH__ENABLED=false` in `.env.example`).  
 To test real JWT validation locally, set:
@@ -97,17 +115,17 @@ AUTH__ALGORITHMS=RS256
 ```
 
 `AUTH__ALGORITHMS` intentionally supports only `RS256`.
+When the API runs inside Docker Compose, it uses the internal issuer URL `http://keycloak:8080/realms/fastapi-saas` (see `compose.yaml`).
+Use `http://localhost:8080/realms/fastapi-saas` only when running the backend process directly on the host.
 
-Get an access token for backend API testing (direct grant, no frontend required):
+This repository is backend-only and does **not** provide a login UI.  
+For local manual testing of protected endpoints, obtain a Keycloak access token using an external browser-based OAuth/OIDC client that supports **Authorization Code + PKCE** and configure it with:
 
-```bash
-curl -s -X POST 'http://localhost:8080/realms/fastapi-saas/protocol/openid-connect/token' \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'grant_type=password' \
-  -d 'client_id=fastapi-backend' \
-  -d 'username=api-user' \
-  -d 'password=api-user-password'
-```
+- Issuer/realm: `http://localhost:8080/realms/fastapi-saas`
+- Client ID: `fastapi-backend`
+- Redirect URI: one of the callback URIs listed above (for the tool you use)
+
+Then copy the returned `access_token`.
 
 Use the returned `access_token` for protected backend endpoints, for example:
 
@@ -257,6 +275,14 @@ Intentionally out of scope in this repository:
 - Local email verification/captcha
 - Password reset flows
 - Frontend login UI
+- Production-ready frontend OIDC implementation in this repository
+
+Important note:
+
+- Previous local docs that used the password grant (`grant_type=password`) were intentionally removed.  
+  The target direction is browser-based Authorization Code + PKCE.
+- The backend auth boundary remains JWT bearer validation against Keycloak-issued tokens.
+- The local Keycloak client settings in this repository are for development only; production clients must use strict deployment-specific redirect URIs and web origins.
 
 Identity model split:
 
