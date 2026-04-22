@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -11,8 +12,21 @@ log = get_logger(__name__)
 
 
 class AccessLogMiddleware:
+    _INVITE_ACCEPT_PATH_RE = re.compile(r"^(/api/v\d+/invites/)([^/]+)(/accept)$")
+
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
+
+    @classmethod
+    def _sanitize_path(cls, path: str | None) -> str | None:
+        if path is None:
+            return None
+
+        match = cls._INVITE_ACCEPT_PATH_RE.match(path)
+        if match is None:
+            return path
+
+        return f"{match.group(1)}[redacted]{match.group(3)}"
 
     async def __call__(
         self,
@@ -27,7 +41,7 @@ class AccessLogMiddleware:
         start = time.perf_counter()
         status_code: int | None = None
         method = scope.get("method")
-        path = scope.get("path")
+        path = self._sanitize_path(scope.get("path"))
 
         async def send_wrapper(message: Message) -> None:
             nonlocal status_code

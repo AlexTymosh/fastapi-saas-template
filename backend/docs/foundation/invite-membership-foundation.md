@@ -26,7 +26,7 @@ The following capabilities are intentionally out of scope for this foundation an
 
 ## Security and delivery note
 
-Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract.
+Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract. Invite acceptance submits the token in the JSON body (`POST /api/v1/invites/accept`) to avoid leaking one-time secrets through URL path logging layers.
 
 ## Authorisation semantics and invite token test seam
 

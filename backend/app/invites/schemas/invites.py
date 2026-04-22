@@ -22,6 +22,19 @@ class CreateInviteRequest(BaseModel):
         return value
 
 
+class AcceptInviteRequest(BaseModel):
+    token: str
+
+    @field_validator("token")
+    @classmethod
+    def validate_token(cls, value: str) -> str:
+        token = value.strip()
+        if not token:
+            msg = "Token must not be blank"
+            raise ValueError(msg)
+        return token
+
+
 class InviteResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
