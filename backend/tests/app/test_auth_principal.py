@@ -71,10 +71,10 @@ def test_verified_claim_mapping_merges_keycloak_realm_and_client_roles() -> None
             "sub": "kc-user-claims-roles",
             "realm_access": {"roles": ["member", "admin"]},
             "resource_access": {
-                "fastapi-backend": {"roles": ["admin", "editor"]},
+                "fastapi-web": {"roles": ["admin", "editor"]},
             },
         },
-        resource_client_id="fastapi-backend",
+        resource_client_id="fastapi-web",
     )
 
     assert principal.platform_roles == ["member", "admin", "editor"]

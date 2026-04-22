@@ -84,7 +84,8 @@ Local Keycloak defaults:
 - Admin user: `admin`
 - Admin password: `admin`
 - Realm: `fastapi-saas`
-- OIDC client used by backend JWT validation: `fastapi-backend`
+- Browser/public OIDC client for local Authorization Code + PKCE login: `fastapi-web`
+- Backend JWT audience expected by FastAPI: `fastapi-api`
 - Dev test user for browser login in Keycloak: `api-user` / `api-user-password`
 
 The imported dev client is intentionally configured for **Authorization Code + PKCE**:
@@ -118,18 +119,20 @@ Registered local redirect URIs are limited to common localhost callback patterns
 
 Ports `3000` and `5173` cover common local frontend dev servers, and `8787` is included for local OAuth callback helper tools.
 
-Auth defaults are safe in this repository (`AUTH__ENABLED=false` in `.env.example`).  
+Auth defaults are safe in this repository (`AUTH__ENABLED=false` in `.env.example`), and `compose.yaml` does not override this.  
 To test real JWT validation locally, set:
 
 ```env
 AUTH__ENABLED=true
 AUTH__ISSUER_URL=http://keycloak.local:8080/realms/fastapi-saas
-AUTH__AUDIENCE=fastapi-backend
-AUTH__CLIENT_ID=fastapi-backend
+AUTH__AUDIENCE=fastapi-api
+AUTH__CLIENT_ID=fastapi-web
 AUTH__ALGORITHMS=RS256
 ```
 
 `AUTH__ALGORITHMS` intentionally supports only `RS256`.
+`AUTH__*` is the authoritative runtime JWT configuration block.
+`SECURITY__KEYCLOAK_CLIENT_SECRET` remains optional for non-runtime confidential-client integrations.
 
 ### 6.2 Verifiable local auth scenario (Authorization Code + PKCE)
 
@@ -139,6 +142,8 @@ Runtime assumptions for this scenario:
 
 - `AUTH__ENABLED=true` (backend auth boundary enabled)
 - `AUTH__ISSUER_URL=http://keycloak.local:8080/realms/fastapi-saas` (same as token `iss`)
+- `AUTH__AUDIENCE=fastapi-api` (FastAPI validates `aud` against this value)
+- `AUTH__CLIENT_ID=fastapi-web` (FastAPI uses this for `resource_access.<client_id>.roles` extraction)
 - backend started via Docker Compose (`compose.yaml`)
 
 Steps:
@@ -153,7 +158,7 @@ Steps:
    ```
 3. In your OAuth/OIDC helper tool, configure:
    - issuer: `http://keycloak.local:8080/realms/fastapi-saas`
-   - client_id: `fastapi-backend`
+   - client_id: `fastapi-web`
    - redirect URI/callback: one of:
      - `http://localhost:8787/callback`
      - `http://localhost:3000/auth/callback`

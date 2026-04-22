@@ -18,8 +18,8 @@
   },
   "clients": [
     {
-      "clientId": "fastapi-backend",
-      "name": "fastapi-backend",
+      "clientId": "fastapi-web",
+      "name": "fastapi-web",
       "description": "Development-only client for local Authorization Code + PKCE testing.",
       "enabled": true,
       "publicClient": true,
@@ -46,12 +46,12 @@
       ],
       "protocolMappers": [
         {
-          "name": "aud-fastapi-backend",
+          "name": "aud-fastapi-api",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
           "consentRequired": false,
           "config": {
-            "included.client.audience": "fastapi-backend",
+            "included.client.audience": "fastapi-api",
             "id.token.claim": "false",
             "access.token.claim": "true"
           }

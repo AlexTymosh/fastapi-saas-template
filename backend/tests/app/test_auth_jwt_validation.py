@@ -6,7 +6,7 @@ import jwt
 import pytest
 from starlette.requests import Request
 
-import app.core.auth as auth_module
+import app.core.auth_jwt as auth_jwt_module
 from app.core.auth import JwtValidator, get_authenticated_principal
 from app.core.config.settings import AuthSettings, get_settings
 from app.core.errors.exceptions import UnauthorizedError
@@ -47,7 +47,7 @@ def _build_validator(fetcher: Callable[[str], dict[str, object]]) -> JwtValidato
         auth_settings=AuthSettings(
             enabled=True,
             issuer_url=ISSUER,
-            audience="fastapi-backend",
+            audience="fastapi-api",
             algorithms=["RS256"],
             leeway_seconds=0,
         ),
@@ -76,7 +76,7 @@ def test_invalid_issuer_is_rejected() -> None:
         private_key=private_key,
         kid=jwk["kid"],
         issuer="http://localhost:8080/realms/other",
-        audience="fastapi-backend",
+        audience="fastapi-api",
         subject="kc-sub-issuer",
     )
     validator = _build_validator(_make_fetcher({"keys": [jwk]}))
@@ -106,7 +106,7 @@ def test_expired_token_is_rejected() -> None:
         private_key=private_key,
         kid=jwk["kid"],
         issuer=ISSUER,
-        audience="fastapi-backend",
+        audience="fastapi-api",
         subject="kc-sub-expired",
         expires_in_seconds=-30,
     )
@@ -120,7 +120,7 @@ def test_token_with_disallowed_signing_algorithm_is_rejected() -> None:
     token = jwt.encode(
         {
             "iss": ISSUER,
-            "aud": "fastapi-backend",
+            "aud": "fastapi-api",
             "sub": "kc-sub-hs256",
             "exp": 4_200_000_000,
         },
@@ -143,7 +143,7 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
         private_key=private_key,
         kid=jwk["kid"],
         issuer=ISSUER,
-        audience="fastapi-backend",
+        audience="fastapi-api",
         subject="kc-sub-claims",
         claims={
             "email": "claim-user@example.com",
@@ -152,7 +152,7 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
             "family_name": "User",
             "realm_access": {"roles": ["member"]},
             "resource_access": {
-                "fastapi-backend": {
+                "fastapi-web": {
                     "roles": ["org-admin"],
                 }
             },
@@ -166,7 +166,7 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
 
     principal = AuthenticatedPrincipal.from_verified_jwt_claims(
         claims,
-        resource_client_id="fastapi-backend",
+        resource_client_id="fastapi-web",
     )
 
     assert principal.external_auth_id == "kc-sub-claims"
@@ -191,22 +191,22 @@ def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
 
     monkeypatch.setenv("AUTH__ENABLED", "true")
     monkeypatch.setenv("AUTH__ISSUER_URL", ISSUER)
-    monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-backend")
-    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-backend")
-    monkeypatch.setattr(auth_module, "_fetch_json_url", _fetch)
-    monkeypatch.setattr(auth_module, "_jwt_validator", None)
-    monkeypatch.setattr(auth_module, "_jwt_validator_signature", None)
+    monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-api")
+    monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-web")
+    monkeypatch.setattr(auth_jwt_module, "_fetch_json_url", _fetch)
+    monkeypatch.setattr(auth_jwt_module, "_jwt_validator", None)
+    monkeypatch.setattr(auth_jwt_module, "_jwt_validator_signature", None)
     get_settings.cache_clear()
 
     token = issue_access_token(
         private_key=private_key,
         kid=jwk["kid"],
         issuer=ISSUER,
-        audience="fastapi-backend",
+        audience="fastapi-api",
         subject="kc-client-role-user",
         claims={
             "resource_access": {
-                "fastapi-backend": {
+                "fastapi-web": {
                     "roles": ["org-admin"],
                 }
             },
@@ -219,3 +219,63 @@ def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
     assert principal.platform_roles == ["org-admin"]
 
     get_settings.cache_clear()
+
+
+def test_jwt_validation_retries_once_after_kid_miss_and_succeeds() -> None:
+    stale_jwk, _ = generate_rsa_jwk()
+    fresh_jwk, fresh_private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=fresh_private_key,
+        kid=fresh_jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-rotated",
+    )
+    fetch_count = 0
+
+    def _fetch(url: str) -> dict[str, object]:
+        nonlocal fetch_count
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            fetch_count += 1
+            if fetch_count == 1:
+                return {"keys": [stale_jwk]}
+            return {"keys": [fresh_jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    validator = _build_validator(_fetch)
+
+    claims = run_async(validator.validate_token(token))
+
+    assert claims["sub"] == "kc-sub-rotated"
+    assert fetch_count == 2
+
+
+def test_jwt_validation_fails_if_refreshed_jwks_still_misses_kid() -> None:
+    stale_jwk, _ = generate_rsa_jwk()
+    token_jwk, token_private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=token_private_key,
+        kid=token_jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-unknown-kid",
+    )
+    fetch_count = 0
+
+    def _fetch(url: str) -> dict[str, object]:
+        nonlocal fetch_count
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            fetch_count += 1
+            return {"keys": [stale_jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    validator = _build_validator(_fetch)
+
+    with pytest.raises(UnauthorizedError, match="Unable to match token signing key"):
+        run_async(validator.validate_token(token))
+
+    assert fetch_count == 2
