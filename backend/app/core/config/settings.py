@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,6 +68,25 @@ class SecuritySettings(BaseModel):
     keycloak_client_secret: str | None = None
 
 
+class AuthSettings(BaseModel):
+    enabled: bool = True
+    issuer_url: str | None = None
+    audience: str | None = None
+    jwks_url: str | None = None
+    client_id: str | None = None
+    algorithms: list[str] = Field(default_factory=lambda: ["RS256"])
+    leeway_seconds: int = 0
+    discovery_cache_ttl_seconds: int = 300
+    jwks_cache_ttl_seconds: int = 300
+
+    @field_validator("algorithms", mode="before")
+    @classmethod
+    def parse_algorithms(cls, value: list[str] | str) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -86,6 +105,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
 
 
 @lru_cache(maxsize=1)

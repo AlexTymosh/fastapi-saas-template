@@ -132,11 +132,52 @@ Remove-Item Env:TEST_REDIS_URL -ErrorAction SilentlyContinue
 | Postgres  | postgres:5432 (internal)  |
 | Redis     | redis:6379 (internal)     |
 | Vault     | http://localhost:8200     |
+| Keycloak  | http://localhost:8081     |
 
 Vault dev token:
 
 ```
 dev-only-root-token
+```
+
+---
+
+## 🔐 Backend auth (Keycloak JWT validation)
+
+This repository is backend-only and uses **Keycloak as Identity Provider**.
+
+- FastAPI validates bearer JWTs (signature, issuer, exp, algorithm, and audience when configured).
+- JWT claims are mapped to `AuthenticatedPrincipal`.
+- Local user projection is still provisioned/updated in the backend using `external_auth_id == sub`.
+- Organisations, memberships, onboarding, and invite flows remain in the local business DB.
+- Signup/password reset/email verification/captcha flows are intentionally Keycloak responsibilities (not implemented in this backend).
+
+### Local Keycloak dev setup
+
+`compose.yaml` includes a dev Keycloak service (`start-dev`) and imports:
+
+- Realm: `fastapi-dev`
+- Client: `fastapi-backend` (direct access grants enabled for manual token retrieval)
+- Demo user:
+  - username: `dev-user`
+  - password: `dev-password`
+
+### Get an access token manually (for backend API testing)
+
+```bash
+curl --request POST 'http://localhost:8081/realms/fastapi-dev/protocol/openid-connect/token' \
+  --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=password' \
+  --data-urlencode 'client_id=fastapi-backend' \
+  --data-urlencode 'username=dev-user' \
+  --data-urlencode 'password=dev-password'
+```
+
+Use `access_token` in protected API requests:
+
+```bash
+curl http://localhost:8000/api/v1/users/me \
+  -H "Authorization: Bearer <access_token>"
 ```
 
 ---
