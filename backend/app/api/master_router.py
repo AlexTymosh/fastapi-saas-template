@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.health import router as health_router
+from app.health.api.health import router as health_router
 from app.invites.api.invites import router as invites_router
 from app.organisations.api.organisations import router as organisations_router
 from app.users.api.users import router as users_router

@@ -4,7 +4,7 @@ from app.core.config.settings import get_settings
 from app.core.db import ping_database
 from app.core.logging import LogCategory, get_logger
 from app.core.redis import ping_redis
-from app.schemas.health import HealthReadyResponse, ServiceStatus
+from app.health.schemas.health import HealthReadyResponse, ServiceStatus
 
 log = get_logger(__name__)
 

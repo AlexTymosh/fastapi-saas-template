@@ -32,7 +32,9 @@ def test_health_ready_returns_200_when_postgresql_is_available(
     async def fake_ping_postgresql() -> None:
         return None
 
-    monkeypatch.setattr("app.services.health._ping_postgresql", fake_ping_postgresql)
+    monkeypatch.setattr(
+        "app.health.services.health._ping_postgresql", fake_ping_postgresql
+    )
 
     with client_factory(
         database_url="postgresql+psycopg://user:pass@test/test_db",
@@ -57,7 +59,9 @@ def test_health_ready_returns_503_when_postgresql_is_unavailable(
     async def fake_ping_postgresql() -> None:
         raise RuntimeError("database is down")
 
-    monkeypatch.setattr("app.services.health._ping_postgresql", fake_ping_postgresql)
+    monkeypatch.setattr(
+        "app.health.services.health._ping_postgresql", fake_ping_postgresql
+    )
 
     with client_factory(
         database_url="postgresql+psycopg://user:pass@test/test_db",
@@ -82,7 +86,7 @@ def test_health_ready_returns_200_when_redis_is_available(
     async def fake_ping_redis() -> None:
         return None
 
-    monkeypatch.setattr("app.services.health._ping_redis", fake_ping_redis)
+    monkeypatch.setattr("app.health.services.health._ping_redis", fake_ping_redis)
 
     with client_factory(
         database_url=None,
@@ -107,7 +111,7 @@ def test_health_ready_returns_503_when_redis_is_unavailable(
     async def fake_ping_redis() -> None:
         raise RuntimeError("redis is down")
 
-    monkeypatch.setattr("app.services.health._ping_redis", fake_ping_redis)
+    monkeypatch.setattr("app.health.services.health._ping_redis", fake_ping_redis)
 
     with client_factory(
         database_url=None,
@@ -135,8 +139,10 @@ def test_health_ready_returns_503_when_one_configured_dependency_is_unavailable(
     async def fake_ping_redis() -> None:
         raise RuntimeError("redis is down")
 
-    monkeypatch.setattr("app.services.health._ping_postgresql", fake_ping_postgresql)
-    monkeypatch.setattr("app.services.health._ping_redis", fake_ping_redis)
+    monkeypatch.setattr(
+        "app.health.services.health._ping_postgresql", fake_ping_postgresql
+    )
+    monkeypatch.setattr("app.health.services.health._ping_redis", fake_ping_redis)
 
     with client_factory(
         database_url="postgresql+psycopg://user:pass@test/test_db",

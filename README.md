@@ -16,7 +16,7 @@ This project is currently in the **active development** and architectural design
 ### 2. Clone repository
 
 ```bash
-git clone https://github.com/<your-username>/fastapi-saas-template.git
+git clone https://github.com/AlexTymosh/fastapi-saas-template.git
 cd fastapi-saas-template
 ```
 

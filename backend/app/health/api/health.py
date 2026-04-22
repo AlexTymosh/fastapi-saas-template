@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Response, status
 
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, problem_response
-from app.schemas.health import HealthLiveResponse, HealthReadyResponse
-from app.services.health import get_readiness_status
+from app.health.schemas.health import HealthLiveResponse, HealthReadyResponse
+from app.health.services.health import get_readiness_status
 
 router = APIRouter(prefix="/health", tags=["health"])
 
