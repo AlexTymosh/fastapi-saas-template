@@ -45,3 +45,16 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 7. **Failure behavior**
    - If `sub` is missing/invalid, authentication or identity mapping must fail.
    - The backend must not invent fallback identifiers (for example deriving identity from email).
+
+
+## Local development notes (backend-only)
+
+- Keycloak is used only as identity provider (JWT issuer + claims source).
+- This backend validates bearer tokens and projects users locally by `external_auth_id == sub`.
+- Runtime JWT settings source of truth is `AUTH__*` (`AUTH__ENABLED`, `AUTH__ISSUER_URL`, `AUTH__AUDIENCE`, `AUTH__CLIENT_ID`).
+- Role extraction for `resource_access` uses `AUTH__CLIENT_ID` (auth-scoped config); local default is `fastapi-web`.
+- Audience validation uses `AUTH__AUDIENCE`; local default is `fastapi-api`.
+- Local realm bootstrap intentionally separates browser login client (`fastapi-web`) from API/resource audience client (`fastapi-api`).
+- JWT signature verification is intentionally limited to `RS256`.
+- Organisations, memberships, onboarding, and invites stay in the local business database.
+- Registration, email verification, and CAPTCHA are intentionally delegated to Keycloak (not implemented in this backend).

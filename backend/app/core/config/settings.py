@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -62,10 +62,33 @@ class RedisSettings(BaseModel):
 
 
 class SecuritySettings(BaseModel):
-    keycloak_server_url: str | None = None
-    keycloak_realm: str | None = None
-    keycloak_client_id: str | None = None
+    """
+    Security settings that are unrelated to runtime JWT validation.
+
+    Runtime JWT validation configuration is sourced from `auth.*` only.
+    """
+
     keycloak_client_secret: str | None = None
+
+
+class AuthSettings(BaseModel):
+    enabled: bool = False
+    issuer_url: str | None = None
+    audience: str | None = None
+    client_id: str | None = None
+    jwks_url: str | None = None
+    algorithms: str = "RS256"
+    leeway_seconds: int = 30
+    discovery_cache_ttl_seconds: int = 300
+    jwks_cache_ttl_seconds: int = 300
+
+    @field_validator("algorithms")
+    @classmethod
+    def validate_algorithms(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized != "RS256":
+            raise ValueError("AUTH__ALGORITHMS supports only RS256")
+        return "RS256"
 
 
 class Settings(BaseSettings):
@@ -86,6 +109,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
 
 
 @lru_cache(maxsize=1)

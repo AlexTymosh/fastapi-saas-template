@@ -23,6 +23,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
@@ -67,6 +69,37 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2
+    container_name: fastapi_keycloak
+    restart: unless-stopped
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: keycloak.local
+      KC_HOSTNAME_STRICT: "true"
+    command:
+      - start-dev
+      - --import-realm
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docker/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    networks:
+      default:
+        aliases:
+          - keycloak.local
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8080/realms/fastapi-saas/.well-known/openid-configuration > /dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   vault:
     image: hashicorp/vault:1.21
