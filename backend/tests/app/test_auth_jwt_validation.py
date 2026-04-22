@@ -177,6 +177,37 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
     assert principal.platform_roles == ["member", "org-admin"]
 
 
+def test_valid_token_uses_api_audience_and_web_client_roles_split() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-split-contract-user",
+        claims={
+            "resource_access": {
+                "fastapi-web": {
+                    "roles": ["viewer"],
+                }
+            },
+        },
+    )
+    validator = _build_validator(_make_fetcher({"keys": [jwk]}))
+
+    claims = run_async(validator.validate_token(token))
+
+    from app.core.auth import AuthenticatedPrincipal
+
+    principal = AuthenticatedPrincipal.from_verified_jwt_claims(
+        claims,
+        resource_client_id="fastapi-web",
+    )
+
+    assert claims["aud"] == "fastapi-api"
+    assert principal.platform_roles == ["viewer"]
+
+
 def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
     monkeypatch,
 ) -> None:

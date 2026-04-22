@@ -6,7 +6,7 @@ from app.main import create_app
 from tests.helpers.jwt import generate_rsa_jwk, issue_access_token
 
 
-def test_users_me_accepts_validated_jwt_without_auth_override(
+def test_users_me_accepts_validated_jwt_with_api_audience_and_web_resource_roles(
     monkeypatch,
     migrated_database_url: str,
 ) -> None:
@@ -47,6 +47,7 @@ def test_users_me_accepts_validated_jwt_without_auth_override(
             "given_name": "JWT",
             "family_name": "Path",
             "realm_access": {"roles": ["member"]},
+            "resource_access": {"fastapi-web": {"roles": ["org-admin"]}},
         },
     )
 

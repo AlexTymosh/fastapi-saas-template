@@ -20,7 +20,7 @@
     {
       "clientId": "fastapi-web",
       "name": "fastapi-web",
-      "description": "Development-only client for local Authorization Code + PKCE testing.",
+      "description": "Browser/public OIDC client for local Authorization Code + PKCE login.",
       "enabled": true,
       "publicClient": true,
       "protocol": "openid-connect",
@@ -65,6 +65,24 @@
       "attributes": {
         "pkce.code.challenge.method": "S256"
       }
+    },
+    {
+      "clientId": "fastapi-api",
+      "name": "fastapi-api",
+      "description": "API/resource audience client for FastAPI access token audience validation (non-interactive).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "defaultClientScopes": [
+        "roles"
+      ]
     }
   ],
   "users": [

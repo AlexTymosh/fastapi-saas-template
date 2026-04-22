@@ -84,11 +84,17 @@ Local Keycloak defaults:
 - Admin user: `admin`
 - Admin password: `admin`
 - Realm: `fastapi-saas`
-- Browser/public OIDC client for local Authorization Code + PKCE login: `fastapi-web`
-- Backend JWT audience expected by FastAPI: `fastapi-api`
+- Browser/public OIDC login client (Authorization Code + PKCE): `fastapi-web`
+- API/resource audience client (non-interactive): `fastapi-api`
 - Dev test user for browser login in Keycloak: `api-user` / `api-user-password`
 
-The imported dev client is intentionally configured for **Authorization Code + PKCE**:
+The imported realm intentionally models **two different client identifiers**:
+
+- `fastapi-web` is used for browser login and should be used as `AUTH__CLIENT_ID` for `resource_access.<client_id>.roles`.
+- `fastapi-api` is a non-interactive API/resource descriptor and should be used as `AUTH__AUDIENCE`.
+- Tokens minted through `fastapi-web` include `aud=fastapi-api` via an explicit audience mapper.
+
+The `fastapi-web` dev client is intentionally configured for **Authorization Code + PKCE**:
 
 - `standardFlowEnabled=true`
 - `directAccessGrantsEnabled=false`
@@ -142,7 +148,7 @@ Runtime assumptions for this scenario:
 
 - `AUTH__ENABLED=true` (backend auth boundary enabled)
 - `AUTH__ISSUER_URL=http://keycloak.local:8080/realms/fastapi-saas` (same as token `iss`)
-- `AUTH__AUDIENCE=fastapi-api` (FastAPI validates `aud` against this value)
+- `AUTH__AUDIENCE=fastapi-api` (FastAPI validates `aud` against the API/resource client id)
 - `AUTH__CLIENT_ID=fastapi-web` (FastAPI uses this for `resource_access.<client_id>.roles` extraction)
 - backend started via Docker Compose (`compose.yaml`)
 
@@ -178,6 +184,7 @@ Steps:
 7. Expected result:
    - HTTP `200 OK`
    - token is accepted because `iss == http://keycloak.local:8080/realms/fastapi-saas`
+   - token is accepted because it includes `aud=fastapi-api` (API/resource audience)
    - local user projection is created/refreshed from JWT claims (`sub`-based linkage)
 
 Troubleshooting:
