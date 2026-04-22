@@ -54,9 +54,9 @@ def test_access_log_middleware_logs_success_request(monkeypatch) -> None:
     records = _parse_json_lines(stream.getvalue())
     access_logs = [r for r in records if r.get("event") == "request_completed"]
 
-    assert access_logs, (
-        f"request_completed log was not emitted. Output: {stream.getvalue()}"
-    )
+    assert (
+        access_logs
+    ), f"request_completed log was not emitted. Output: {stream.getvalue()}"
 
     record = access_logs[-1]
     assert record["category"] == "application"
@@ -84,9 +84,9 @@ def test_access_log_middleware_logs_failed_request(monkeypatch) -> None:
     records = _parse_json_lines(stream.getvalue())
     error_logs = [r for r in records if r.get("event") == "request_failed"]
 
-    assert error_logs, (
-        f"request_failed log was not emitted. Output: {stream.getvalue()}"
-    )
+    assert (
+        error_logs
+    ), f"request_failed log was not emitted. Output: {stream.getvalue()}"
 
     record = error_logs[-1]
     assert record["category"] == "application"
@@ -95,3 +95,26 @@ def test_access_log_middleware_logs_failed_request(monkeypatch) -> None:
     assert record["status_code"] == 500
     assert "duration_ms" in record
     assert record["request_id"] == "req-500"
+
+
+def test_access_log_middleware_redacts_invite_token_in_legacy_path(monkeypatch) -> None:
+    stream = io.StringIO()
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
+
+    with patch("sys.stdout", stream):
+        client = build_test_client()
+        token = "raw-secret-token"
+        response = client.get(f"/api/v1/invites/{token}/accept")
+
+    assert response.status_code == 404
+
+    output = stream.getvalue()
+    assert token not in output
+
+    records = _parse_json_lines(output)
+    access_logs = [r for r in records if r.get("event") == "request_completed"]
+    assert access_logs
+
+    record = access_logs[-1]
+    assert record["path"] == "/api/v1/invites/[redacted]/accept"

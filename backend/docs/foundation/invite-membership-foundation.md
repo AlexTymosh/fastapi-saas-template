@@ -27,6 +27,7 @@ The following capabilities are intentionally out of scope for this foundation an
 ## Security and delivery note
 
 Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract.
+Invite acceptance consumes the token through a JSON request body (`POST /api/v1/invites/accept`) rather than URL path parameters, reducing token exposure in access logs and intermediary infrastructure.
 
 ## Authorisation semantics and invite token test seam
 

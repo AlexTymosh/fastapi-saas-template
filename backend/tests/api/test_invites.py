@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
+import json
 from hashlib import sha256
+from unittest.mock import patch
 from uuid import UUID
 
 from sqlalchemy import select
@@ -40,6 +43,22 @@ def _override_token_sink(test_client) -> InMemoryInviteTokenSink:
     sink = InMemoryInviteTokenSink()
     test_client.app.dependency_overrides[get_invite_token_sink] = lambda: sink
     return sink
+
+
+def _parse_json_lines(output: str) -> list[dict]:
+    records: list[dict] = []
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    return records
 
 
 def test_invite_accept_transfers_membership(
@@ -99,10 +118,12 @@ def test_invite_accept_transfers_membership(
     )
 
     with invitee_client as client:
-        accepted_source = client.post(f"/api/v1/invites/{source_token}/accept")
+        accepted_source = client.post(
+            "/api/v1/invites/accept", json={"token": source_token}
+        )
         assert accepted_source.status_code == 200
 
-        accepted = client.post(f"/api/v1/invites/{transfer_token}/accept")
+        accepted = client.post("/api/v1/invites/accept", json={"token": transfer_token})
         assert accepted.status_code == 200
 
         me = client.get("/api/v1/users/me")
@@ -178,7 +199,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
 
     token = owner_sink.token_for_email("invitee-sole@example.com")
     with sole_owner_client as client:
-        response = client.post(f"/api/v1/invites/{token}/accept")
+        response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 409
 
 
@@ -251,7 +272,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
         redis_url=None,
     )
     with invitee_client as client:
-        accepted = client.post(f"/api/v1/invites/{token}/accept")
+        accepted = client.post("/api/v1/invites/accept", json={"token": token})
         assert accepted.status_code == 200
 
     async def _assert_user_and_membership() -> None:
@@ -303,8 +324,57 @@ def test_accept_invite_rejects_email_mismatch(
         redis_url=None,
     )
     with wrong_user_client as client:
-        response = client.post(f"/api/v1/invites/{token}/accept")
+        response = client.post("/api/v1/invites/accept", json={"token": token})
     assert response.status_code == 403
+
+
+def test_accept_invite_access_log_does_not_include_raw_token(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    monkeypatch,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-log", "owner-log@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_client)
+    with owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org Log", "slug": "org-log"},
+        )
+        assert create_org.status_code == 201
+        org_id = create_org.json()["id"]
+        invite_response = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "invitee-log@example.com", "role": "member"},
+        )
+        assert invite_response.status_code == 201
+
+    token = owner_sink.token_for_email("invitee-log@example.com")
+    invitee_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-invitee-log", "invitee-log@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    stream = io.StringIO()
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
+    with patch("sys.stdout", stream):
+        with invitee_client as client:
+            response = client.post("/api/v1/invites/accept", json={"token": token})
+
+    assert response.status_code == 200
+
+    output = stream.getvalue()
+    assert token not in output
+
+    records = _parse_json_lines(output)
+    access_logs = [r for r in records if r.get("event") == "request_completed"]
+    assert access_logs
+    assert access_logs[-1]["path"] == "/api/v1/invites/accept"
 
 
 def test_accept_invite_rejects_expired_invite(
@@ -360,7 +430,7 @@ def test_accept_invite_rejects_expired_invite(
         redis_url=None,
     )
     with invitee_client as client:
-        response = client.post(f"/api/v1/invites/{token}/accept")
+        response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 409
 
 

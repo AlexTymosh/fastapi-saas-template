@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -8,6 +9,15 @@ from app.core.context import get_request_id
 from app.core.logging import LogCategory, get_logger
 
 log = get_logger(__name__)
+
+_INVITE_ACCEPT_PATH_PATTERN = re.compile(r"^(/api/v\d+/invites)/[^/]+(/accept)$")
+
+
+def _redact_sensitive_path(path: str | None) -> str | None:
+    if path is None:
+        return None
+    redacted = _INVITE_ACCEPT_PATH_PATTERN.sub(r"\1/[redacted]\2", path)
+    return redacted
 
 
 class AccessLogMiddleware:
@@ -27,7 +37,7 @@ class AccessLogMiddleware:
         start = time.perf_counter()
         status_code: int | None = None
         method = scope.get("method")
-        path = scope.get("path")
+        path = _redact_sensitive_path(scope.get("path"))
 
         async def send_wrapper(message: Message) -> None:
             nonlocal status_code

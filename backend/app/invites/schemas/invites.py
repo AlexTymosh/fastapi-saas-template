@@ -39,6 +39,19 @@ class InviteCreateResponse(BaseModel):
     invite: InviteResponse
 
 
+class AcceptInviteRequest(BaseModel):
+    token: str
+
+    @field_validator("token")
+    @classmethod
+    def validate_token(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            msg = "Invite token is required"
+            raise ValueError(msg)
+        return normalized
+
+
 class AcceptInviteResponse(BaseModel):
     membership_id: UUID
     organisation_id: UUID
