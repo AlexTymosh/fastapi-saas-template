@@ -45,3 +45,11 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 7. **Failure behavior**
    - If `sub` is missing/invalid, authentication or identity mapping must fail.
    - The backend must not invent fallback identifiers (for example deriving identity from email).
+
+
+## Local development notes (backend-only)
+
+- Keycloak is used only as identity provider (JWT issuer + claims source).
+- This backend validates bearer tokens and projects users locally by `external_auth_id == sub`.
+- Organisations, memberships, onboarding, and invites stay in the local business database.
+- Registration, email verification, and CAPTCHA are intentionally delegated to Keycloak (not implemented in this backend).

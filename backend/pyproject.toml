@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-settings>=2.13,<3.0",
     "scalar-fastapi>=1.8,<2.0",
     "structlog>=25.5,<26.0",
+    "PyJWT[crypto]>=2.10,<3.0",
     "hvac>=2.4,<3.0",
     "sqlalchemy[asyncio]>=2.0,<2.2",
     "alembic>=1.18,<2.0",

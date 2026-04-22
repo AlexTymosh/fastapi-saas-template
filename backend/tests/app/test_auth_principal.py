@@ -63,3 +63,18 @@ def test_principal_superadmin_flag_comes_from_roles_claim() -> None:
     )
 
     assert principal.is_superadmin() is True
+
+
+def test_verified_claim_mapping_merges_keycloak_realm_and_client_roles() -> None:
+    principal = AuthenticatedPrincipal.from_verified_jwt_claims(
+        {
+            "sub": "kc-user-claims-roles",
+            "realm_access": {"roles": ["member", "admin"]},
+            "resource_access": {
+                "fastapi-backend": {"roles": ["admin", "editor"]},
+            },
+        },
+        resource_client_id="fastapi-backend",
+    )
+
+    assert principal.platform_roles == ["member", "admin", "editor"]

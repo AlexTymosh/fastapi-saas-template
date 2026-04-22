@@ -65,6 +65,39 @@ docker compose exec app python -m alembic check
 
 ### 6. Check application
 
+
+### 6.1 Keycloak (local identity provider)
+
+This repository is **backend-only**. Keycloak is the identity provider, while organisations/memberships/invites stay in the local business database.
+
+Start all services (including Keycloak):
+
+```bash
+docker compose up --build -d
+```
+
+Local Keycloak defaults:
+
+- Admin Console: `http://localhost:8080/admin`
+- Admin user: `admin`
+- Admin password: `admin`
+- Realm: `fastapi-saas`
+- OIDC client for backend token testing: `fastapi-backend`
+- Dev test user: `api-user` / `api-user-password`
+
+Get an access token for backend API testing (direct grant, no frontend required):
+
+```bash
+curl -s -X POST 'http://localhost:8080/realms/fastapi-saas/protocol/openid-connect/token'   -H 'Content-Type: application/x-www-form-urlencoded'   -d 'grant_type=password'   -d 'client_id=fastapi-backend'   -d 'username=api-user'   -d 'password=api-user-password'
+```
+
+Use the returned `access_token` for protected backend endpoints, for example:
+
+```bash
+curl http://localhost:8000/api/v1/users/me   -H "Authorization: Bearer <access_token>"
+```
+
+
 Health endpoint:
 
 ```bash
@@ -132,6 +165,7 @@ Remove-Item Env:TEST_REDIS_URL -ErrorAction SilentlyContinue
 | Postgres  | postgres:5432 (internal)  |
 | Redis     | redis:6379 (internal)     |
 | Vault     | http://localhost:8200     |
+| Keycloak  | http://localhost:8080     |
 
 Vault dev token:
 
@@ -186,3 +220,24 @@ For technical details, project goals, and the current roadmap:
 
 > [!NOTE]
 > Official guides and comprehensive documentation will be provided once the base setup is complete.
+
+
+## 🔐 Current authentication scope
+
+Implemented now:
+
+- Backend validates Keycloak-compatible bearer JWTs (issuer, signature, expiration, audience, allowed algorithms).
+- Backend maps token claims into `AuthenticatedPrincipal`.
+- Backend keeps local JIT user projection using `external_auth_id == sub`.
+
+Intentionally out of scope in this repository:
+
+- Local signup/password flows
+- Local email verification/captcha
+- Frontend login UI
+
+Identity model split:
+
+- Keycloak = identity source.
+- FastAPI app DB = business model (organisations, memberships, invites, local user projection).
+

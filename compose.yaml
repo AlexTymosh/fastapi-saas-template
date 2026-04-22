@@ -18,11 +18,19 @@ services:
       TEST_REDIS_URL: redis://redis:6379/0
 
       VAULT__ENABLED: "false"
+
+      AUTH__ENABLED: "true"
+      AUTH__ISSUER_URL: http://keycloak:8080/realms/fastapi-saas
+      AUTH__AUDIENCE: fastapi-backend
+
+      SECURITY__KEYCLOAK_CLIENT_ID: fastapi-backend
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      keycloak:
+        condition: service_started
     ports:
       - "8000:8000"
     volumes:
@@ -67,6 +75,21 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2
+    container_name: fastapi_keycloak
+    restart: unless-stopped
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    command:
+      - start-dev
+      - --import-realm
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docker/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
 
   vault:
     image: hashicorp/vault:1.21

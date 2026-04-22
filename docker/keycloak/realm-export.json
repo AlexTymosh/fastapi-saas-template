@@ -1,0 +1,76 @@
+{
+  "id": "fastapi-saas",
+  "realm": "fastapi-saas",
+  "enabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "superadmin"
+      },
+      {
+        "name": "member"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "fastapi-backend",
+      "name": "fastapi-backend",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "protocolMappers": [
+        {
+          "name": "aud-fastapi-backend",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "fastapi-backend",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "api-user",
+      "enabled": true,
+      "email": "api-user@example.com",
+      "emailVerified": true,
+      "firstName": "Api",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "api-user-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "member"
+      ]
+    }
+  ]
+}

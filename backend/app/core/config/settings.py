@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,6 +68,33 @@ class SecuritySettings(BaseModel):
     keycloak_client_secret: str | None = None
 
 
+class AuthSettings(BaseModel):
+    enabled: bool = False
+    issuer_url: str | None = None
+    audience: str | None = None
+    jwks_url: str | None = None
+    algorithms: list[str] = Field(default_factory=lambda: ["RS256"])
+    leeway_seconds: int = 30
+    discovery_cache_ttl_seconds: int = 300
+    jwks_cache_ttl_seconds: int = 300
+
+    @field_validator("algorithms", mode="before")
+    @classmethod
+    def _parse_algorithms(cls, value: object) -> list[str]:
+        if value is None:
+            return ["RS256"]
+
+        if isinstance(value, str):
+            parsed = [item.strip() for item in value.split(",") if item.strip()]
+            return parsed or ["RS256"]
+
+        if isinstance(value, list):
+            parsed = [str(item).strip() for item in value if str(item).strip()]
+            return parsed or ["RS256"]
+
+        raise TypeError("AUTH__ALGORITHMS must be a comma-separated string or list")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -86,6 +113,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
 
 
 @lru_cache(maxsize=1)
