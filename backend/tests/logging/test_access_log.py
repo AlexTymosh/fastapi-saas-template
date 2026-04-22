@@ -95,3 +95,44 @@ def test_access_log_middleware_logs_failed_request(monkeypatch) -> None:
     assert record["status_code"] == 500
     assert "duration_ms" in record
     assert record["request_id"] == "req-500"
+
+
+def test_access_log_does_not_leak_invite_token_from_request_body(monkeypatch) -> None:
+    stream = io.StringIO()
+    fake_token = "invite-secret-token-123"
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("LOGGING__LEVEL", "INFO")
+
+    with patch("sys.stdout", stream):
+        app = create_app()
+        router = APIRouter()
+
+        @router.post("/api/v1/invites/accept")
+        async def accept_invite_for_logging_test(
+            payload: dict[str, str],
+        ) -> dict[str, str]:
+            return {"token_length": str(len(payload.get("token", "")))}
+
+        app.include_router(router)
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/invites/accept",
+            headers={"X-Request-ID": "req-invite-logging"},
+            json={"token": fake_token},
+        )
+
+    assert response.status_code == 200
+
+    output = stream.getvalue()
+    records = _parse_json_lines(output)
+    access_logs = [r for r in records if r.get("event") == "request_completed"]
+    assert access_logs, f"request_completed log was not emitted. Output: {output}"
+
+    record = access_logs[-1]
+    assert record["method"] == "POST"
+    assert record["path"] == "/api/v1/invites/accept"
+    assert record["request_id"] == "req-invite-logging"
+
+    assert fake_token not in output
+    assert fake_token not in record["path"]

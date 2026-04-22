@@ -92,6 +92,7 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
     assert "/api/v1/organisations/{organisation_id}/memberships" in paths
     assert "/api/v1/organisations/{organisation_id}/invites" in paths
     assert "/api/v1/invites/accept" in paths
+    assert "/api/v1/invites/{token}/accept" not in paths
 
     invite_create = paths["/api/v1/organisations/{organisation_id}/invites"]["post"]
     invite_accept = paths["/api/v1/invites/accept"]["post"]
@@ -106,3 +107,12 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
         "schema"
     ]
     assert accept_request["$ref"].endswith("/AcceptInviteRequest")
+
+
+def test_old_path_based_invite_accept_route_is_not_available(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.post("/api/v1/invites/some-token/accept")
+
+    assert response.status_code == 404

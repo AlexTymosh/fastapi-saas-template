@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.invites.models.invite import InviteStatus
 from app.memberships.models.membership import MembershipRole
@@ -40,7 +40,7 @@ class InviteCreateResponse(BaseModel):
 
 
 class AcceptInviteRequest(BaseModel):
-    token: str
+    token: str = Field(max_length=2048)
 
     @field_validator("token")
     @classmethod
