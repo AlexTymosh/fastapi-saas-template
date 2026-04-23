@@ -38,4 +38,11 @@ For organisation-scoped foundation endpoints, this branch now applies a single a
 
 This policy is applied to organisation read/membership-list flows and organisation-scoped invite creation.
 
+## Membership contract scope
+
+- Current domain contract is single-active-membership per user.
+- A user can have one active organisation membership, or none.
+- Multiple active organisations per user are intentionally out of scope for this stage.
+- The active/inactive model keeps the implementation extensible for future policy changes without changing the current contract.
+
 To keep invite API tests realistic without exposing raw tokens in the public API contract, invite creation now calls a token delivery port (`InviteTokenSink`). The production default sink is a no-op placeholder for out-of-band delivery, while tests override the sink with an in-memory capture implementation to retrieve tokens for acceptance tests.

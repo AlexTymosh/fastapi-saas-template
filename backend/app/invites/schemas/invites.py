@@ -13,14 +13,6 @@ class CreateInviteRequest(BaseModel):
     email: EmailStr
     role: MembershipRole = MembershipRole.MEMBER
 
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, value: MembershipRole) -> MembershipRole:
-        if value == MembershipRole.OWNER:
-            msg = "Owner role cannot be assigned via invite"
-            raise ValueError(msg)
-        return value
-
 
 class InviteResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

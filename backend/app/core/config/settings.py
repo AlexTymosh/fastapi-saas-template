@@ -77,17 +77,17 @@ class AuthSettings(BaseModel):
     audience: str | None = None
     client_id: str | None = None
     jwks_url: str | None = None
-    algorithms: str = "RS256"
+    algorithm: str = "RS256"
     leeway_seconds: int = 30
     discovery_cache_ttl_seconds: int = 300
     jwks_cache_ttl_seconds: int = 300
 
-    @field_validator("algorithms")
+    @field_validator("algorithm")
     @classmethod
-    def validate_algorithms(cls, value: str) -> str:
+    def validate_algorithm(cls, value: str) -> str:
         normalized = value.strip().upper()
         if normalized != "RS256":
-            raise ValueError("AUTH__ALGORITHMS supports only RS256")
+            raise ValueError("AUTH__ALGORITHM supports only RS256")
         return "RS256"
 
 

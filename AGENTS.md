@@ -72,11 +72,21 @@ Collection (envelope), example:
 
 Errors (RFC-style):
 {
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
+  "type": "problem:validation-error",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/users",
+  "error_code": "validation_error",
+  "request_id": "request-id",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email",
+      "pointer": "/body/email",
+      "code": "value_error"
+    }
+  ]
 }
 
 ## Code Patterns (MANDATORY)
@@ -198,6 +208,7 @@ class ItemRepository:
 - UUID PKs (ORM level)
 - Access DB via repositories only
 - Do not expose ORM models directly as API responses
+- Single active membership per user (single active organisation contract)
 
 ## Auth / AuthZ
 - JWT (Keycloak direction)
@@ -234,9 +245,8 @@ Rules:
 - Cover API behavior via integration tests
 
 ## Tooling
-- Black (format)
-- isort (imports)
 - Ruff (lint)
+- ruff-format (format)
 - pytest
 - pre-commit
 

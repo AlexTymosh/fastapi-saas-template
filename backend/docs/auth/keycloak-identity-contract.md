@@ -39,8 +39,9 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
    - `users.external_auth_id` is required and unique.
    - `users.email` is mutable profile data and not a uniqueness boundary.
    - Domain links (for example memberships/onboarding state) attach to the local user projection, not directly to JWT claim values.
-   - A local user may have **at most one** membership row. Membership is the only organisation link for the user projection.
-   - Creating a second membership for the same user is forbidden by project policy and backed by a database uniqueness constraint on `memberships.user_id`.
+   - A local user may have **at most one active** membership at a time. Membership is the only organisation link for the user projection.
+   - Multiple active organisations for one user are not supported in the current contract.
+   - Creating a second active membership for the same user is forbidden by project policy and backed by a database uniqueness constraint on active `memberships.user_id`.
 
 7. **Failure behavior**
    - If `sub` is missing/invalid, authentication or identity mapping must fail.

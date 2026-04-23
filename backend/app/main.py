@@ -68,7 +68,14 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root():
-        return RedirectResponse(url=settings.api.scalar_path)
+        if settings.api.docs_enabled:
+            return RedirectResponse(url=settings.api.scalar_path)
+        return {
+            "name": settings.app.name,
+            "version": settings.app.version,
+            "environment": settings.app.environment,
+            "docs_enabled": settings.api.docs_enabled,
+        }
 
     return app
 

@@ -98,7 +98,7 @@ python -m pip install --upgrade pip
 4.  Install dependencies
 
 ``` bash
-pip install -r requirements-dev.txt
+pip install -e "backend[dev]"
 ```
 
 5.  Install project (editable mode)
@@ -118,13 +118,11 @@ before each commit.
 
 ------------------------------------------------------------------------
 
-### Update dependencies
+### Dependency management
 
-``` bash
-pip-compile pyproject.toml -o requirements.txt
-pip-compile pyproject.toml --extra dev -o requirements-dev.txt
-```  
-**If you change dependencies in pyproject.toml, regenerate the lock files**
+- Project metadata and tooling configuration are managed in `backend/pyproject.toml`.
+- Development dependencies are defined as optional dependencies (`[project.optional-dependencies].dev`).
+- Install development tooling with `pip install -e "backend[dev]"`.
 
 ## Quick Start
 The template is designed to be run via Docker Compose.
@@ -176,15 +174,29 @@ Example:
 ```
 
 #### 3. Error Response
-- RFC 9457 is used without extensions, example:
+- RFC 9457 style Problem Details with project-specific extensions is used.
+- Current extensions:
+  - `error_code`
+  - `request_id`
+  - `errors`
 
 ```json
 {
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
+  "type": "problem:validation-error",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/organisations",
+  "error_code": "validation_error",
+  "request_id": "7cb7537a-c8a8-40f7-bf8a-628fd0221f69",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email address",
+      "pointer": "/body/email",
+      "code": "value_error"
+    }
+  ]
 }
 ```
 
@@ -285,8 +297,9 @@ Fields: user_id, organisation_id, role: owner | admin | member
 - Fields: id, organisation_id, email, role, token, expires_at, created_at
 
 Rules:
-A user may belong to no organizations.
-A user may belong to one or multiple organizations.
+A user may belong to no organisations.
+A user may have only one active organisation membership at a time.
+Multiple active organisations per user are not supported in the current contract.
 Membership is determined via Membership.
 The organization creator automatically becomes owner (Membership role=owner).
 Only Membership participants have access to the organization.
@@ -332,8 +345,8 @@ The project follows a consistent Python code style.
 
 - snake_case for Python code
 - plural resource names in API
-- Code formatting is enforced with **Black**
-- Import ordering is enforced with **isort**
+- Linting is enforced with **Ruff**
+- Formatting is enforced with **ruff-format**
 - Code should remain compatible with **PEP 8** where not overridden by the formatter
 - Type hints are recommended for public interfaces and core business logic
 - Style checks should be automated in development and CI
@@ -372,9 +385,8 @@ They protect against breaking changes in API structure.
 
 
 ## Documentation
-API documentation is generated automatically from OpenAPI schema
-and exposed via Scalar UI.
+API documentation is generated automatically from OpenAPI schema.
 
 Available at:
-- `/docs` — interactive API documentation
-
+- `/openapi.json` — OpenAPI schema
+- `/scalar` — Scalar UI

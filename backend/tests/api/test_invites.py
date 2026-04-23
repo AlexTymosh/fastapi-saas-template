@@ -406,7 +406,7 @@ def test_create_invite_rejects_owner_role(
             f"/api/v1/organisations/{org_id}/invites",
             json={"email": "invitee-owner@example.com", "role": "owner"},
         )
-    assert response.status_code == 422
+    assert response.status_code == 403
 
 
 def test_create_invite_returns_404_for_missing_organisation(
