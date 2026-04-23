@@ -278,7 +278,7 @@ For the primary key, UUID generated at the ORM level is used.
 1. User model.
 System user, identified via an external authentication provider.
 Can exist without being linked to any organisation.
-Fields: id (uuid), external_id (sub), email (cache, optional), created_at.
+Fields: id (uuid), external_auth_id (sub), email (cache, optional), created_at.
 
 2. Organisation model.
 A user without an existing organisation membership can create an organization during onboarding.
