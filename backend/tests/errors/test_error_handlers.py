@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.errors import ConflictError, NotFoundError
 from app.main import create_app
@@ -24,6 +25,10 @@ def build_test_client(*, raise_server_exceptions: bool = True) -> TestClient:
     @router.get("/test/validation/{item_id}")
     async def test_validation(item_id: int):
         return {"item_id": item_id}
+
+    @router.get("/test/teapot")
+    async def test_teapot():
+        raise StarletteHTTPException(status_code=418, detail="Short and stout.")
 
     app.include_router(router)
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)
@@ -117,5 +122,41 @@ def test_route_not_found_problem_details() -> None:
     assert body["detail"] == "The requested resource was not found."
     assert body["error_code"] == "not_found"
     assert body["instance"] == "/missing-route"
+    assert "request_id" in body
+    assert response.headers["x-request-id"] == body["request_id"]
+
+
+def test_method_not_allowed_problem_details() -> None:
+    client = build_test_client()
+    response = client.post("/test/not-found")
+
+    assert response.status_code == 405
+    assert response.headers["content-type"].startswith("application/problem+json")
+
+    body = response.json()
+    assert body["type"] == "problem:method-not-allowed"
+    assert body["title"] == "Method Not Allowed"
+    assert body["status"] == 405
+    assert body["detail"] == "Method Not Allowed"
+    assert body["error_code"] == "method_not_allowed"
+    assert body["instance"] == "/test/not-found"
+    assert "request_id" in body
+    assert response.headers["x-request-id"] == body["request_id"]
+
+
+def test_generic_http_exception_uses_problem_shape() -> None:
+    client = build_test_client()
+    response = client.get("/test/teapot")
+
+    assert response.status_code == 418
+    assert response.headers["content-type"].startswith("application/problem+json")
+
+    body = response.json()
+    assert body["type"] == "problem:im-a-teapot"
+    assert body["title"] == "I'm a Teapot"
+    assert body["status"] == 418
+    assert body["detail"] == "Short and stout."
+    assert body["error_code"] == "im_a_teapot"
+    assert body["instance"] == "/test/teapot"
     assert "request_id" in body
     assert response.headers["x-request-id"] == body["request_id"]
