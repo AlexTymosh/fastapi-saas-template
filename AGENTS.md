@@ -71,13 +71,13 @@ Collection (envelope), example:
   }
 }
 
-Errors (RFC 9457 Problem Details style, with project extensions):
+Errors (RFC 9457 Problem Details style with project extensions):
 {
   "type": "problem:validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/users",
   "error_code": "validation_error",
   "request_id": "9cb7f50b8c7a4b6b",
   "errors": [
@@ -85,7 +85,7 @@ Errors (RFC 9457 Problem Details style, with project extensions):
       "name": "email",
       "reason": "value is not a valid email address",
       "pointer": "/body/email",
-      "code": "value_error"
+      "code": "value_error.email"
     }
   ]
 }
@@ -163,12 +163,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={
-            "type": "https://api.example.com/problems/internal-error",
+            "type": "problem:internal-error",
             "title": "Internal Server Error",
             "status": 500,
             "detail": "An unexpected error occurred.",
             "instance": request.url.path,
             "error_code": "internal_error",
+            "request_id": "<request-id-if-available>",
         },
         media_type="application/problem+json",
     )
