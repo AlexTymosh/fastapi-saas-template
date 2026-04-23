@@ -409,6 +409,49 @@ def test_create_invite_rejects_owner_role(
     assert response.status_code == 422
 
 
+def test_create_invite_returns_single_resource_contract(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client, _ = authenticated_client_factory(
+        identity=_identity_for("kc-owner-contract", "owner-contract@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    _override_token_sink(owner_client)
+    invite_email = "contract-invitee@example.com"
+    invite_role = "member"
+
+    with owner_client as client:
+        create_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Invite Contract Org", "slug": "invite-contract-org"},
+        )
+        assert create_org.status_code == 201
+        organisation_id = create_org.json()["id"]
+
+        response = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": invite_email, "role": invite_role},
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "invite" not in body
+    assert "id" in body
+    assert "email" in body
+    assert "organisation_id" in body
+    assert "role" in body
+    assert "status" in body
+    assert "expires_at" in body
+    assert "created_at" in body
+    assert "updated_at" in body
+    assert body["email"] == invite_email
+    assert body["organisation_id"] == organisation_id
+    assert body["role"] == invite_role
+    assert body["status"] == "pending"
+
+
 def test_create_invite_returns_404_for_missing_organisation(
     authenticated_client_factory,
     migrated_database_url: str,
