@@ -70,13 +70,23 @@ Collection (envelope), example:
   }
 }
 
-Errors (RFC-style):
+Errors (RFC 9457 Problem Details style with project extensions):
 {
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
+  "type": "problem:validation-error",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/users",
+  "error_code": "validation_error",
+  "request_id": "req_123456",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email address",
+      "pointer": "/body/email",
+      "code": "value_error"
+    }
+  ]
 }
 
 ## Code Patterns (MANDATORY)
@@ -152,7 +162,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={
-            "type": "https://api.example.com/problems/internal-error",
+            "type": "problem:internal-error",
             "title": "Internal Server Error",
             "status": 500,
             "detail": "An unexpected error occurred.",
@@ -165,7 +175,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 ##### Requirements
 - All API error responses MUST use application/problem+json
-- Error responses MUST follow the ProblemDetails schema
+- Error responses MUST follow the RFC 9457 Problem Details schema with project extensions
 - HTTP status codes MUST match the error type
 - Validation errors SHOULD include field-level details in errors
 - Internal details MUST NOT be exposed
@@ -234,9 +244,8 @@ Rules:
 - Cover API behavior via integration tests
 
 ## Tooling
-- Black (format)
-- isort (imports)
 - Ruff (lint)
+- ruff format (format)
 - pytest
 - pre-commit
 

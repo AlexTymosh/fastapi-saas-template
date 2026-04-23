@@ -95,9 +95,10 @@ Activate (Windows PowerShell):
 python -m pip install --upgrade pip
 ```
 
-4.  Install dependencies
+4.  Install dependencies (from `backend/`, where `pyproject.toml` and lock files live)
 
 ``` bash
+cd backend
 pip install -r requirements-dev.txt
 ```
 
@@ -121,9 +122,10 @@ before each commit.
 ### Update dependencies
 
 ``` bash
+cd backend
 pip-compile pyproject.toml -o requirements.txt
 pip-compile pyproject.toml --extra dev -o requirements-dev.txt
-```  
+```
 **If you change dependencies in pyproject.toml, regenerate the lock files**
 
 ## Quick Start
@@ -176,15 +178,25 @@ Example:
 ```
 
 #### 3. Error Response
-- RFC 9457 is used without extensions, example:
+- RFC 9457 Problem Details style with project extensions (`error_code`, `request_id`, `errors`), example:
 
 ```json
 {
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
+  "type": "problem:validation-error",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/users",
+  "error_code": "validation_error",
+  "request_id": "req_123456",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email address",
+      "pointer": "/body/email",
+      "code": "value_error"
+    }
+  ]
 }
 ```
 
@@ -332,8 +344,8 @@ The project follows a consistent Python code style.
 
 - snake_case for Python code
 - plural resource names in API
-- Code formatting is enforced with **Black**
-- Import ordering is enforced with **isort**
+- Code formatting is enforced with **ruff format**
+- Linting (including import ordering rules) is enforced with **Ruff**
 - Code should remain compatible with **PEP 8** where not overridden by the formatter
 - Type hints are recommended for public interfaces and core business logic
 - Style checks should be automated in development and CI
@@ -377,4 +389,3 @@ and exposed via Scalar UI.
 
 Available at:
 - `/docs` — interactive API documentation
-
