@@ -265,11 +265,11 @@ For the primary key, UUID generated at the ORM level is used.
 ### Models:
 1. User model.
 System user, identified via an external authentication provider.
-Can exist without being linked to organization(s).
+Can exist without being linked to any organization.
 Fields: id (uuid), external_id (sub), email (cache, optional), created_at.
 
 2. Organisation model.
-Any user can create an organization.
+A user without an existing organisation membership can create an organization during onboarding.
 The creator automatically becomes the owner.
 If a user does not belong to any organization, they are an independent system user.
 Fields: user_id, organisation_id, role: owner | admin | member
@@ -286,11 +286,12 @@ Fields: user_id, organisation_id, role: owner | admin | member
 
 Rules:
 A user may belong to no organizations.
-A user may belong to one or multiple organizations.
-Membership is determined via Membership.
+A user may belong to exactly one organization at a time.
+Membership is determined via a single active Membership record per user.
 The organization creator automatically becomes owner (Membership role=owner).
 Only Membership participants have access to the organization.
 Access to an organization is provided through invitation or by owner/admin addition.
+Moving a user between organizations is a transfer/reassignment operation, not multi-organization membership.
 
 Business rules are defined and adjusted according to future tasks.
 
@@ -377,4 +378,3 @@ and exposed via Scalar UI.
 
 Available at:
 - `/docs` — interactive API documentation
-
