@@ -95,19 +95,13 @@ Activate (Windows PowerShell):
 python -m pip install --upgrade pip
 ```
 
-4.  Install dependencies
+4.  Install the backend package with development extras
 
 ``` bash
-pip install -r requirements-dev.txt
+pip install -e "backend[dev]"
 ```
 
-5.  Install project (editable mode)
-
-``` bash
-pip install -e .
-```
-
-6.  Setup pre-commit hooks
+5.  Setup pre-commit hooks
 
 ``` bash
 pre-commit install
@@ -118,13 +112,9 @@ before each commit.
 
 ------------------------------------------------------------------------
 
-### Update dependencies
-
-``` bash
-pip-compile pyproject.toml -o requirements.txt
-pip-compile pyproject.toml --extra dev -o requirements-dev.txt
-```  
-**If you change dependencies in pyproject.toml, regenerate the lock files**
+Dependency and tooling configuration is defined in `backend/pyproject.toml`.
+Development tools are declared as optional dependencies under
+`[project.optional-dependencies].dev`.
 
 ## Quick Start
 The template is designed to be run via Docker Compose.
@@ -176,15 +166,30 @@ Example:
 ```
 
 #### 3. Error Response
-- RFC 9457 is used without extensions, example:
+- RFC 9457 Problem Details style is used with project-specific extensions:
+  - `error_code`
+  - `request_id`
+  - `errors`
+  
+Example:
 
 ```json
 {
-  "type": "https://api.example.com/errors/validation-error",
+  "type": "problem:validation-error",
   "title": "Validation Error",
   "status": 400,
   "detail": "Email is invalid",
-  "instance": "/users"
+  "instance": "/users",
+  "error_code": "validation_error",
+  "request_id": "9cb7f50b8c7a4b6b",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email address",
+      "pointer": "/body/email",
+      "code": "value_error"
+    }
+  ]
 }
 ```
 
@@ -285,12 +290,14 @@ Fields: user_id, organisation_id, role: owner | admin | member
 - Fields: id, organisation_id, email, role, token, expires_at, created_at
 
 Rules:
-A user may belong to no organizations.
-A user may belong to one or multiple organizations.
+A user may belong to no organisation.
+A user may have only one active organisation membership at a time.
+Multiple active organisations per user are not currently supported.
 Membership is determined via Membership.
-The organization creator automatically becomes owner (Membership role=owner).
-Only Membership participants have access to the organization.
-Access to an organization is provided through invitation or by owner/admin addition.
+Historical membership rows can remain for transfer history, but only one is active.
+The organisation creator automatically becomes owner (Membership role=owner).
+Only Membership participants have access to the organisation.
+Access to an organisation is provided through invitation or by owner/admin addition.
 
 Business rules are defined and adjusted according to future tasks.
 
@@ -332,8 +339,8 @@ The project follows a consistent Python code style.
 
 - snake_case for Python code
 - plural resource names in API
-- Code formatting is enforced with **Black**
-- Import ordering is enforced with **isort**
+- Linting is enforced with **Ruff**
+- Formatting is enforced with **ruff format**
 - Code should remain compatible with **PEP 8** where not overridden by the formatter
 - Type hints are recommended for public interfaces and core business logic
 - Style checks should be automated in development and CI
@@ -376,5 +383,5 @@ API documentation is generated automatically from OpenAPI schema
 and exposed via Scalar UI.
 
 Available at:
-- `/docs` — interactive API documentation
-
+- `/openapi.json` — OpenAPI schema
+- `/scalar` — Scalar UI

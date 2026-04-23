@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from scalar_fastapi import get_scalar_api_reference
-from starlette.responses import RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse
 
 from app.api.master_router import build_master_router
 from app.core.config.settings import get_settings
@@ -68,7 +68,15 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root():
-        return RedirectResponse(url=settings.api.scalar_path)
+        if settings.api.docs_enabled:
+            return RedirectResponse(url=settings.api.scalar_path)
+        return JSONResponse(
+            {
+                "name": settings.app.name,
+                "version": settings.app.version,
+                "status": "ok",
+            }
+        )
 
     return app
 

@@ -133,10 +133,10 @@ AUTH__ENABLED=true
 AUTH__ISSUER_URL=http://keycloak.local:8080/realms/fastapi-saas
 AUTH__AUDIENCE=fastapi-api
 AUTH__CLIENT_ID=fastapi-web
-AUTH__ALGORITHMS=RS256
+AUTH__ALGORITHM=RS256
 ```
 
-`AUTH__ALGORITHMS` intentionally supports only `RS256`.
+`AUTH__ALGORITHM` intentionally supports only `RS256`.
 `AUTH__*` is the authoritative runtime JWT configuration block.
 `SECURITY__KEYCLOAK_CLIENT_SECRET` remains optional for non-runtime confidential-client integrations.
 

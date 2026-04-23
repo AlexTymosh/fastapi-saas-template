@@ -11,6 +11,12 @@ This branch is a **foundation step** for organisation membership and invitation 
 - Soft-delete organisation baseline (`deleted_at`).
 - Superadmin bootstrap support for platform-level operational access.
 
+## Current membership contract
+
+- One user can have only one active organisation membership at a time.
+- Multiple active organisations per user are not currently supported.
+- The active/inactive design keeps the model extensible for future policy changes.
+
 ## Not fully implemented yet
 
 The following capabilities are intentionally out of scope for this foundation and remain future work:

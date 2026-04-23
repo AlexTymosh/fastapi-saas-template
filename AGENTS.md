@@ -46,6 +46,7 @@ backend/app/<domain>/
 - Dependency Injection (Depends), no hidden globals
 - Use async only for DB / external calls
 - Pure CPU logic MUST be sync
+- API documentation endpoints: OpenAPI `/openapi.json`, Scalar UI `/scalar`
 
 ### API Responses
 Single resource (clean REST), example:
@@ -70,13 +71,23 @@ Collection (envelope), example:
   }
 }
 
-Errors (RFC-style):
+Errors (RFC 9457 Problem Details style, with project extensions):
 {
-  "type": "https://api.example.com/errors/validation-error",
+  "type": "problem:validation-error",
   "title": "Validation Error",
   "status": 400,
   "detail": "Email is invalid",
-  "instance": "/users"
+  "instance": "/users",
+  "error_code": "validation_error",
+  "request_id": "9cb7f50b8c7a4b6b",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email address",
+      "pointer": "/body/email",
+      "code": "value_error"
+    }
+  ]
 }
 
 ## Code Patterns (MANDATORY)
@@ -198,6 +209,10 @@ class ItemRepository:
 - UUID PKs (ORM level)
 - Access DB via repositories only
 - Do not expose ORM models directly as API responses
+- Membership contract in the current template is single-active-membership:
+  one user can have only one active organisation membership at a time
+  (history can exist as inactive rows)
+- Multiple active organisations per user are not supported yet
 
 ## Auth / AuthZ
 - JWT (Keycloak direction)
@@ -234,9 +249,8 @@ Rules:
 - Cover API behavior via integration tests
 
 ## Tooling
-- Black (format)
-- isort (imports)
 - Ruff (lint)
+- ruff format (formatting)
 - pytest
 - pre-commit
 

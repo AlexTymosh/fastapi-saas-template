@@ -43,7 +43,7 @@ class JwtValidator:
         if not issuer:
             raise UnauthorizedError(detail="Token issuer is not configured")
 
-        allowed_algorithms = {self.auth_settings.algorithms}
+        allowed_algorithms = {self.auth_settings.algorithm}
 
         try:
             header = jwt.get_unverified_header(token)
@@ -195,7 +195,7 @@ def _validator_signature(settings: Settings) -> tuple[object, ...]:
         settings.auth.issuer_url,
         settings.auth.audience,
         settings.auth.jwks_url,
-        settings.auth.algorithms,
+        settings.auth.algorithm,
         settings.auth.leeway_seconds,
         settings.auth.discovery_cache_ttl_seconds,
         settings.auth.jwks_cache_ttl_seconds,

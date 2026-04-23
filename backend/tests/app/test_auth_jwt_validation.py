@@ -48,7 +48,7 @@ def _build_validator(fetcher: Callable[[str], dict[str, object]]) -> JwtValidato
             enabled=True,
             issuer_url=ISSUER,
             audience="fastapi-api",
-            algorithms="RS256",
+            algorithm="RS256",
             leeway_seconds=0,
         ),
         fetch_json=fetcher,
