@@ -10,7 +10,7 @@ from app.core.auth import AuthenticatedPrincipal, require_authenticated_principa
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
 from app.memberships.schemas.memberships import (
-    MembershipListResponse,
+    MembershipCollectionResponse,
     MembershipResponse,
 )
 from app.organisations.schemas.organisations import (
@@ -122,7 +122,7 @@ async def delete_organisation(
 
 @router.get(
     "/{organisation_id}/memberships",
-    response_model=MembershipListResponse,
+    response_model=MembershipCollectionResponse,
     responses=COMMON_ERROR_RESPONSES,
     name="list_organisation_memberships",
 )
@@ -130,13 +130,13 @@ async def list_organisation_memberships(
     organisation_id: UUID,
     identity: PrincipalDep,
     db_session: DbSessionDep,
-) -> MembershipListResponse:
+) -> MembershipCollectionResponse:
     access_service = OrganisationAccessService(db_session)
     memberships = await access_service.list_memberships_for_member_organisation(
         identity=identity,
         organisation_id=organisation_id,
     )
 
-    return MembershipListResponse(
+    return MembershipCollectionResponse(
         data=[MembershipResponse.model_validate(item) for item in memberships]
     )

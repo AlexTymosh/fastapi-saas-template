@@ -35,10 +35,6 @@ class InviteResponse(BaseModel):
     updated_at: datetime
 
 
-class InviteCreateResponse(BaseModel):
-    invite: InviteResponse
-
-
 class AcceptInviteRequest(BaseModel):
     token: str = Field(max_length=4096)
 
