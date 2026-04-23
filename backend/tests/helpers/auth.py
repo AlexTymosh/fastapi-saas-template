@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from fastapi.testclient import TestClient
+
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import UnauthorizedError
 
@@ -19,3 +23,9 @@ class FakeAuthProvider:
         if self._identity is None:
             raise UnauthorizedError(detail="Authentication required")
         return self._identity
+
+
+@dataclass(frozen=True)
+class AuthenticatedClientBundle:
+    client: TestClient
+    auth_provider: FakeAuthProvider
