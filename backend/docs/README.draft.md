@@ -176,15 +176,27 @@ Example:
 ```
 
 #### 3. Error Response
-- RFC 9457 is used without extensions, example:
+The API uses RFC 9457-style Problem Details (`application/problem+json`) as the standard error format for application and business errors.
+Note: Operational endpoints such as health/readiness may return endpoint-specific status payloads instead of Problem Details.
 
+Example:
 ```json
 {
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
+  "type": "problem:validation-error",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/invites/accept",
+  "error_code": "validation_error",
+  "request_id": "req-123",
+  "errors": [
+    {
+      "name": "token",
+      "reason": "Field required",
+      "pointer": "/body/token",
+      "code": "missing"
+    }
+  ]
 }
 ```
 
@@ -265,13 +277,13 @@ For the primary key, UUID generated at the ORM level is used.
 ### Models:
 1. User model.
 System user, identified via an external authentication provider.
-Can exist without being linked to organization(s).
+Can exist without being linked to any organisation.
 Fields: id (uuid), external_id (sub), email (cache, optional), created_at.
 
 2. Organisation model.
-Any user can create an organization.
+A user without an existing organisation membership can create an organization during onboarding.
 The creator automatically becomes the owner.
-If a user does not belong to any organization, they are an independent system user.
+If a user does not belong to any organisation, they are an independent system user.
 Fields: user_id, organisation_id, role: owner | admin | member
 - created_at
 
@@ -286,11 +298,12 @@ Fields: user_id, organisation_id, role: owner | admin | member
 
 Rules:
 A user may belong to no organizations.
-A user may belong to one or multiple organizations.
-Membership is determined via Membership.
+A user may belong to exactly one organization at a time.
+Membership is determined via a single active Membership record per user.
 The organization creator automatically becomes owner (Membership role=owner).
 Only Membership participants have access to the organization.
 Access to an organization is provided through invitation or by owner/admin addition.
+Moving a user between organizations is a transfer/reassignment operation, not multi-organization membership.
 
 Business rules are defined and adjusted according to future tasks.
 
@@ -374,7 +387,3 @@ They protect against breaking changes in API structure.
 ## Documentation
 API documentation is generated automatically from OpenAPI schema
 and exposed via Scalar UI.
-
-Available at:
-- `/docs` — interactive API documentation
-

@@ -30,7 +30,7 @@ h11==0.16.0
     # via uvicorn
 httptools==0.7.1
     # via uvicorn
-idna==3.11
+idna==3.12
     # via anyio
 pydantic==2.13.0
     # via

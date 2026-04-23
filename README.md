@@ -308,7 +308,7 @@ docker compose down -v
 
 For technical details, project goals, and the current roadmap:
 
-👉 **[README.draft.md](./README.draft.md)**
+👉 **[README.draft.md](backend/docs/README.draft.md)**
 
 ---
 

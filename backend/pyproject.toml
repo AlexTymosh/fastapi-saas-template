@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "fastapi-saas-template"
 version = "0.1.0"
 description = "FastAPI SaaS backend template (modular monolith, GDPR-aware)"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 readme = "README.md"
 
 dependencies = [
@@ -40,7 +40,7 @@ include = ["app*"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
