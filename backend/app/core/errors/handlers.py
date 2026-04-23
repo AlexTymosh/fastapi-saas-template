@@ -13,6 +13,25 @@ from app.core.errors.exceptions import AppError
 from app.core.errors.problem import InvalidParam, ProblemDetails
 
 
+_HTTP_PROBLEM_MAPPING: dict[int, tuple[str, str, str]] = {
+    HTTPStatus.BAD_REQUEST: ("problem:bad-request", "Bad Request", str(ErrorCode.BAD_REQUEST)),
+    HTTPStatus.UNAUTHORIZED: ("problem:unauthorized", "Unauthorized", str(ErrorCode.UNAUTHORIZED)),
+    HTTPStatus.FORBIDDEN: ("problem:forbidden", "Forbidden", str(ErrorCode.FORBIDDEN)),
+    HTTPStatus.NOT_FOUND: ("problem:not-found", "Resource not found", str(ErrorCode.NOT_FOUND)),
+    HTTPStatus.METHOD_NOT_ALLOWED: (
+        "problem:method-not-allowed",
+        "Method Not Allowed",
+        str(ErrorCode.METHOD_NOT_ALLOWED),
+    ),
+    HTTPStatus.CONFLICT: ("problem:conflict", "Conflict", str(ErrorCode.CONFLICT)),
+    HTTPStatus.UNPROCESSABLE_ENTITY: (
+        "problem:validation-error",
+        "Request validation failed",
+        str(ErrorCode.VALIDATION_ERROR),
+    ),
+}
+
+
 def _build_instance(request: Request) -> str:
     return request.url.path
 
@@ -68,6 +87,36 @@ def _validation_errors_to_invalid_params(
         )
 
     return result
+
+
+def _build_http_exception_problem(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> ProblemDetails:
+    fallback_status = HTTPStatus.INTERNAL_SERVER_ERROR
+    status_code = exc.status_code if exc.status_code in HTTPStatus._value2member_map_ else fallback_status
+    status = HTTPStatus(status_code)
+
+    mapped = _HTTP_PROBLEM_MAPPING.get(status)
+    if mapped:
+        problem_type, title, error_code = mapped
+    else:
+        slug = status.phrase.lower().replace(" ", "-")
+        problem_type = f"problem:{slug}"
+        title = status.phrase
+        error_code = slug.replace("-", "_")
+
+    detail = exc.detail if isinstance(exc.detail, str) else title
+
+    return ProblemDetails(
+        type=problem_type,
+        title=title,
+        status=status,
+        detail=detail,
+        instance=_build_instance(request),
+        error_code=error_code,
+        request_id=_get_request_id(request),
+    )
 
 
 def register_exception_handlers(
@@ -134,16 +183,7 @@ def register_exception_handlers(
                 request_id_header_name=request_id_header_name,
             )
 
-        detail = exc.detail if isinstance(exc.detail, str) else "HTTP error"
-
-        problem = ProblemDetails(
-            type="about:blank",
-            title=detail,
-            status=exc.status_code,
-            detail=detail,
-            instance=_build_instance(request),
-            request_id=_get_request_id(request),
-        )
+        problem = _build_http_exception_problem(request, exc)
         return _problem_response(
             problem,
             request_id_header_name=request_id_header_name,
