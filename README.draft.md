@@ -95,10 +95,18 @@ Activate (Windows PowerShell):
 python -m pip install --upgrade pip
 ```
 
-4.  Install the backend package with development extras
+4.  Install dependencies from the backend package (`pyproject.toml` is in `backend/`)
 
 ``` bash
+# run from repository root
 pip install -e "backend[dev]"
+```
+
+Alternative (equivalent):
+
+``` bash
+cd backend
+pip install -e ".[dev]"
 ```
 
 5.  Setup pre-commit hooks
@@ -166,7 +174,7 @@ Example:
 ```
 
 #### 3. Error Response
-- RFC 9457 Problem Details style is used with project-specific extensions:
+- RFC 9457 Problem Details style with project extensions is used:
   - `error_code`
   - `request_id`
   - `errors`
@@ -176,10 +184,10 @@ Example:
 ```json
 {
   "type": "problem:validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/users",
   "error_code": "validation_error",
   "request_id": "9cb7f50b8c7a4b6b",
   "errors": [
