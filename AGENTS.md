@@ -70,13 +70,22 @@ Collection (envelope), example:
   }
 }
 
-Errors (RFC-style):
+Errors (RFC 9457 Problem Details style with project extensions):
 {
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
+  "type": "problem:validation-error",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/users",
+  "error_code": "validation_error",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email address",
+      "pointer": "/body/email",
+      "code": "value_error.email"
+    }
+  ]
 }
 
 ## Code Patterns (MANDATORY)
@@ -152,7 +161,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={
-            "type": "https://api.example.com/problems/internal-error",
+            "type": "problem:internal-error",
             "title": "Internal Server Error",
             "status": 500,
             "detail": "An unexpected error occurred.",
@@ -236,7 +245,7 @@ Rules:
 ## Tooling
 - Black (format)
 - isort (imports)
-- Ruff (lint)
+- Ruff (lint) + ruff format
 - pytest
 - pre-commit
 

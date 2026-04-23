@@ -95,16 +95,16 @@ Activate (Windows PowerShell):
 python -m pip install --upgrade pip
 ```
 
-4.  Install dependencies
+4.  Install backend dependencies
 
 ``` bash
-pip install -r requirements-dev.txt
+pip install -r backend/requirements-dev.txt
 ```
 
-5.  Install project (editable mode)
+5.  Install backend package (editable mode)
 
 ``` bash
-pip install -e .
+pip install -e ./backend
 ```
 
 6.  Setup pre-commit hooks
@@ -121,10 +121,10 @@ before each commit.
 ### Update dependencies
 
 ``` bash
-pip-compile pyproject.toml -o requirements.txt
-pip-compile pyproject.toml --extra dev -o requirements-dev.txt
+pip-compile backend/pyproject.toml -o backend/requirements.txt
+pip-compile backend/pyproject.toml --extra dev -o backend/requirements-dev.txt
 ```  
-**If you change dependencies in pyproject.toml, regenerate the lock files**
+**If you change dependencies in `backend/pyproject.toml`, regenerate the lock files.**
 
 ## Quick Start
 The template is designed to be run via Docker Compose.
@@ -176,15 +176,25 @@ Example:
 ```
 
 #### 3. Error Response
-- RFC 9457 is used without extensions, example:
+- RFC 9457 Problem Details style with project extensions is used, example (validation error):
 
 ```json
 {
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
+  "type": "problem:validation-error",
+  "title": "Request validation failed",
+  "status": 422,
+  "detail": "One or more request fields are invalid.",
+  "instance": "/api/v1/users",
+  "error_code": "validation_error",
+  "request_id": "f4c7f6a7-4aa4-4c5f-9bfa-7b95a35d1e7e",
+  "errors": [
+    {
+      "name": "email",
+      "reason": "value is not a valid email address",
+      "pointer": "/body/email",
+      "code": "value_error.email"
+    }
+  ]
 }
 ```
 
