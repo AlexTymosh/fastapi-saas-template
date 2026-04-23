@@ -32,11 +32,11 @@ def test_authenticated_provider_override_resolves_principal(
     authenticated_client_factory,
     migrated_database_url: str,
 ) -> None:
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=_principal(),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         response = client.get("/api/v1/users/me")
 

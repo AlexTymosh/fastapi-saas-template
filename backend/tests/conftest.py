@@ -10,7 +10,7 @@ from app.core.db import dispose_engine
 from app.main import create_app
 from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
-from tests.helpers.auth import FakeAuthProvider
+from tests.helpers.auth import AuthenticatedClientBundle, FakeAuthProvider
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +54,7 @@ def authenticated_client_factory(monkeypatch):
         identity: AuthenticatedPrincipal,
         database_url: str | None = None,
         redis_url: str | None = None,
-    ) -> tuple[TestClient, FakeAuthProvider]:
+    ) -> AuthenticatedClientBundle:
         if database_url is None:
             monkeypatch.delenv("DATABASE__URL", raising=False)
         else:
@@ -72,7 +72,10 @@ def authenticated_client_factory(monkeypatch):
         app.dependency_overrides[get_authenticated_principal] = (
             test_auth_provider.get_authenticated_principal
         )
-        return TestClient(app), test_auth_provider
+        return AuthenticatedClientBundle(
+            client=TestClient(app),
+            auth_provider=test_auth_provider,
+        )
 
     return _build
 

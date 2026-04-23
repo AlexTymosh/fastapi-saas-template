@@ -99,7 +99,7 @@ def test_protected_endpoints_return_401_without_auth(client_factory) -> None:
 def test_authenticated_client_uses_explicit_test_auth_provider(
     authenticated_client_factory, migrated_database_url: str
 ) -> None:
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=_identity_for(
             external_auth_id="kc-explicit-auth-user",
             email="explicit@example.com",
@@ -108,7 +108,7 @@ def test_authenticated_client_uses_explicit_test_auth_provider(
         ),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         response = client.get("/api/v1/users/me")
         assert response.status_code == 200
@@ -120,11 +120,11 @@ def test_users_me_persists_projection_across_request_boundaries(
     migrated_database_url: str,
     migrated_session_factory,
 ) -> None:
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=_identity(),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         first = client.get("/api/v1/users/me")
         assert first.status_code == 200
@@ -138,11 +138,11 @@ def test_users_me_persists_projection_across_request_boundaries(
     persisted_after_first = run_async(_fetch_user())
     first_updated_at = persisted_after_first.updated_at
 
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=_identity(),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
@@ -253,11 +253,11 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
     authenticated_client_factory,
     migrated_database_url: str,
 ) -> None:
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=_identity(),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         response = client.post(
             "/api/v1/organisations",
@@ -544,11 +544,11 @@ def test_create_organisation_rejects_second_creation_for_same_user(
         external_auth_id="kc-single-org-user",
         email="single-org@example.com",
     )
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=identity,
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         first = client.post(
             "/api/v1/organisations",
@@ -569,14 +569,14 @@ def test_users_me_membership_is_null_when_user_has_no_organisation(
     authenticated_client_factory,
     migrated_database_url: str,
 ) -> None:
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=_identity_for(
             external_auth_id="kc-no-org-user",
             email="no-org@example.com",
         ),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         response = client.get("/api/v1/users/me")
 
@@ -590,11 +590,11 @@ def _provision_user_via_api(
     migrated_database_url: str,
     identity: AuthenticatedPrincipal,
 ) -> None:
-    test_client, _ = authenticated_client_factory(
+    test_client = authenticated_client_factory(
         identity=identity,
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with test_client as client:
         response = client.get("/api/v1/users/me")
     assert response.status_code == 200
@@ -634,11 +634,11 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
         external_auth_id="kc-role-owner",
         email="owner-role@example.com",
     )
-    owner_client, _ = authenticated_client_factory(
+    owner_client = authenticated_client_factory(
         identity=owner_identity,
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with owner_client as client:
         create_response = client.post(
             "/api/v1/organisations",
@@ -693,29 +693,29 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
         role=MembershipRole.MEMBER,
     )
 
-    admin_client, _ = authenticated_client_factory(
+    admin_client = authenticated_client_factory(
         identity=admin_identity,
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with admin_client as client:
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert response.status_code == 200
 
-    member_client, _ = authenticated_client_factory(
+    member_client = authenticated_client_factory(
         identity=member_identity,
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with member_client as client:
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert response.status_code == 403
 
-    outsider_client, _ = authenticated_client_factory(
+    outsider_client = authenticated_client_factory(
         identity=outsider_identity,
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with outsider_client as client:
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert response.status_code == 403
@@ -726,7 +726,7 @@ def test_superadmin_created_organisation_has_no_memberships(
     migrated_database_url: str,
     migrated_session_factory,
 ) -> None:
-    superadmin_client, _ = authenticated_client_factory(
+    superadmin_client = authenticated_client_factory(
         identity=_identity_for(
             external_auth_id="kc-super-create-org",
             email="super-create-org@example.com",
@@ -734,7 +734,7 @@ def test_superadmin_created_organisation_has_no_memberships(
         ),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with superadmin_client as client:
         response = client.post(
             "/api/v1/organisations",
@@ -766,14 +766,14 @@ def test_owner_can_update_slug_and_soft_delete_organisation(
     authenticated_client_factory,
     migrated_database_url: str,
 ) -> None:
-    owner_client, _ = authenticated_client_factory(
+    owner_client = authenticated_client_factory(
         identity=_identity_for(
             external_auth_id="kc-owner-mutate-org",
             email="owner-mutate-org@example.com",
         ),
         database_url=migrated_database_url,
         redis_url=None,
-    )
+    ).client
     with owner_client as client:
         create_response = client.post(
             "/api/v1/organisations",
