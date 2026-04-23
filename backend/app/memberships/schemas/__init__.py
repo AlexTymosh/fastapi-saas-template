@@ -1,6 +1,6 @@
 from app.memberships.schemas.memberships import (
-    MembershipListResponse,
+    MembershipCollectionResponse,
     MembershipResponse,
 )
 
-__all__ = ["MembershipListResponse", "MembershipResponse"]
+__all__ = ["MembershipCollectionResponse", "MembershipResponse"]

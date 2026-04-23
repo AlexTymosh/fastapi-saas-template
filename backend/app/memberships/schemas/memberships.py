@@ -20,5 +20,5 @@ class MembershipResponse(BaseModel):
     updated_at: datetime
 
 
-class MembershipListResponse(BaseModel):
+class MembershipCollectionResponse(BaseModel):
     data: list[MembershipResponse]

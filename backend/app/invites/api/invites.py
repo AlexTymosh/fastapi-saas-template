@@ -13,7 +13,6 @@ from app.invites.schemas.invites import (
     AcceptInviteRequest,
     AcceptInviteResponse,
     CreateInviteRequest,
-    InviteCreateResponse,
     InviteResponse,
 )
 from app.invites.services.delivery import InviteTokenSink, get_invite_token_sink
@@ -31,7 +30,7 @@ InviteTokenSinkDep = Annotated[InviteTokenSink, Depends(get_invite_token_sink)]
 
 @router.post(
     "/organisations/{organisation_id}/invites",
-    response_model=InviteCreateResponse,
+    response_model=InviteResponse,
     status_code=status.HTTP_201_CREATED,
     responses=WRITE_ERROR_RESPONSES,
     name="create_organisation_invite",
@@ -42,7 +41,7 @@ async def create_invite(
     identity: PrincipalDep,
     db_session: DbSessionDep,
     token_sink: InviteTokenSinkDep,
-) -> InviteCreateResponse:
+) -> InviteResponse:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session, token_sink=token_sink)
     invite = await invite_service.create_invite(
@@ -52,8 +51,7 @@ async def create_invite(
         email=payload.email,
         actor_is_superadmin=identity.is_superadmin(),
     )
-    invite_payload = InviteResponse.model_validate(invite)
-    return InviteCreateResponse(invite=invite_payload)
+    return InviteResponse.model_validate(invite)
 
 
 @router.post(
