@@ -8,10 +8,11 @@ from starlette.requests import Request
 
 import app.core.auth_jwt as auth_jwt_module
 from app.core.auth import JwtValidator, get_authenticated_principal
-from app.core.config.settings import AuthSettings, get_settings
+from app.core.config.settings import AuthSettings
 from app.core.errors.exceptions import UnauthorizedError
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.jwt import generate_rsa_jwk, issue_access_token
+from tests.helpers.settings import reset_settings_cache
 
 ISSUER = "http://localhost:8080/realms/fastapi-saas"
 JWKS_URL = "http://mock-idp/jwks"
@@ -227,7 +228,7 @@ def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
     monkeypatch.setattr(auth_jwt_module, "_fetch_json_url", _fetch)
     monkeypatch.setattr(auth_jwt_module, "_jwt_validator", None)
     monkeypatch.setattr(auth_jwt_module, "_jwt_validator_signature", None)
-    get_settings.cache_clear()
+    reset_settings_cache()
 
     token = issue_access_token(
         private_key=private_key,
@@ -249,7 +250,7 @@ def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
     assert principal is not None
     assert principal.platform_roles == ["org-admin"]
 
-    get_settings.cache_clear()
+    reset_settings_cache()
 
 
 def test_jwt_validation_retries_once_after_kid_miss_and_succeeds() -> None:
