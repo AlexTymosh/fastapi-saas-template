@@ -106,3 +106,40 @@ def test_configure_logging_does_not_duplicate_root_handlers() -> None:
         if handler.get_name() == "app_root_structlog_handler"
     ]
     assert len(app_handlers) == 1
+
+
+def test_configure_logging_is_idempotent_for_handlers_and_output() -> None:
+    stream = io.StringIO()
+
+    with patch("sys.stdout", stream):
+        configure_logging(
+            log_level="INFO",
+            log_json=True,
+            service_name="test-service",
+            environment="test",
+            version="0.1.0",
+        )
+        configure_logging(
+            log_level="INFO",
+            log_json=True,
+            service_name="test-service",
+            environment="test",
+            version="0.1.0",
+        )
+
+        root_logger = logging.getLogger()
+        app_handlers = [
+            handler
+            for handler in root_logger.handlers
+            if handler.get_name() == "app_root_structlog_handler"
+        ]
+        assert len(app_handlers) == 1
+
+        log = get_logger("test.logger")
+        log.info("idempotent_event")
+
+    output_lines = [line for line in stream.getvalue().splitlines() if line.strip()]
+    assert len(output_lines) == 1
+
+    record = json.loads(output_lines[0])
+    assert record["event"] == "idempotent_event"
