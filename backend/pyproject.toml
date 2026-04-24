@@ -32,6 +32,7 @@ dev = [
     "pre-commit>=4.5,<5.0",
     "httpx>=0.28,<1.0",
     "aiosqlite>=0.21,<1.0",
+    "testcontainers[postgresql,redis]>=4.13,<5.0",
 ]
 
 [tool.setuptools.packages.find]
