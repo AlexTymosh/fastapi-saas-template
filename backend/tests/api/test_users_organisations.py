@@ -218,14 +218,14 @@ def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) 
         assert first.status_code == 200
         first_payload = first.json()
 
-    async def _fetch_user_by_external_id(external_auth_id: str) -> User:
+    async def _fetch_user_by_external_auth_id(external_auth_id: str) -> User:
         async with session_factory() as session:
             result = await session.execute(
                 select(User).where(User.external_auth_id == external_auth_id)
             )
             return result.scalar_one()
 
-    persisted_after_first = run_async(_fetch_user_by_external_id("kc-user-1"))
+    persisted_after_first = run_async(_fetch_user_by_external_auth_id("kc-user-1"))
 
     with TestClient(app) as client:
         auth_provider.set_identity(
@@ -241,7 +241,7 @@ def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) 
         assert second.status_code == 200
         second_payload = second.json()
 
-    persisted_after_second = run_async(_fetch_user_by_external_id("kc-user-1"))
+    persisted_after_second = run_async(_fetch_user_by_external_auth_id("kc-user-1"))
 
     assert first_payload["id"] == second_payload["id"]
     assert persisted_after_first.id == persisted_after_second.id

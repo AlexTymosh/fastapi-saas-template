@@ -75,10 +75,10 @@ services:
     container_name: fastapi_keycloak
     restart: unless-stopped
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-      KC_HOSTNAME: keycloak.local
-      KC_HOSTNAME_STRICT: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8080
+      KC_HEALTH_ENABLED: "true"
     command:
       - start-dev
       - --import-realm
@@ -93,8 +93,10 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "curl -fsS http://127.0.0.1:8080/realms/fastapi-saas/.well-known/openid-configuration > /dev/null",
+          "CMD",
+          "bash",
+          "-c",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&3; grep 'HTTP/1.0 200' <&3",
         ]
       interval: 10s
       timeout: 5s
