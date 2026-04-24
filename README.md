@@ -230,6 +230,7 @@ docker compose up -d
 ```powershell
 $env:TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:5432/app"
 $env:TEST_REDIS_URL="redis://localhost:6379/0"
+$env:ENABLE_EXTERNAL_MIGRATION_DB_TEST="1"
 ```
 
 ### 3. Run integration tests
@@ -243,6 +244,7 @@ If you later run tests in the same terminal without integration variables, remov
 ```powershell
 Remove-Item Env:TEST_DATABASE_URL -ErrorAction SilentlyContinue
 Remove-Item Env:TEST_REDIS_URL -ErrorAction SilentlyContinue
+Remove-Item Env:ENABLE_EXTERNAL_MIGRATION_DB_TEST
 ```
 
 ---

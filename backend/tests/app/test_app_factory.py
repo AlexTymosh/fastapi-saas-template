@@ -34,6 +34,34 @@ def test_create_app_uses_configured_request_id_header(monkeypatch) -> None:
     reset_settings_cache()
 
 
+def test_create_app_uses_custom_request_id_header_end_to_end(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_CONTEXT__HEADER_NAME", "X-Correlation-ID")
+    reset_settings_cache()
+
+    app = create_app()
+    client = TestClient(app)
+
+    success_response = client.get("/api/v1/health/live")
+
+    assert success_response.status_code == 200
+    assert "x-correlation-id" in success_response.headers
+    assert success_response.headers["x-correlation-id"] != ""
+    assert "x-request-id" not in success_response.headers
+
+    error_response = client.get("/missing-route")
+
+    assert error_response.status_code == 404
+    assert error_response.headers["content-type"].startswith("application/problem+json")
+    assert "x-correlation-id" in error_response.headers
+    assert "x-request-id" not in error_response.headers
+
+    problem_body = error_response.json()
+    assert "request_id" in problem_body
+    assert error_response.headers["x-correlation-id"] == problem_body["request_id"]
+
+    reset_settings_cache()
+
+
 def test_create_app_is_deterministic_across_repeated_env_changes(monkeypatch) -> None:
     monkeypatch.setenv("API__V1_PREFIX", "/api/first-v1")
     reset_settings_cache()
