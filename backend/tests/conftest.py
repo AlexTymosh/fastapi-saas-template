@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.config.settings import Settings
@@ -104,3 +106,27 @@ def migrated_session_factory(migrated_database_url: str):
     )
     yield session_factory
     run_async(engine.dispose())
+
+
+@pytest.fixture(scope="session")
+def postgres_integration_url() -> str:
+    """
+    Start an ephemeral PostgreSQL instance for integration tests.
+    """
+    try:
+        with PostgresContainer("postgres:16-alpine", driver="psycopg") as postgres:
+            yield postgres.get_connection_url()
+    except Exception as exc:  # pragma: no cover - depends on local Docker runtime.
+        pytest.skip(f"PostgreSQL test container is unavailable: {exc}")
+
+
+@pytest.fixture(scope="session")
+def redis_integration_url() -> str:
+    """
+    Start an ephemeral Redis instance for integration tests.
+    """
+    try:
+        with RedisContainer("redis:7-alpine") as redis:
+            yield redis.get_connection_url()
+    except Exception as exc:  # pragma: no cover - depends on local Docker runtime.
+        pytest.skip(f"Redis test container is unavailable: {exc}")
