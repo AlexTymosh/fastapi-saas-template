@@ -62,21 +62,24 @@ async def check_redis(timeout: float | None = None) -> bool:
 async def get_readiness_status() -> HealthReadyResponse:
     settings = get_settings()
     tasks: dict[str, asyncio.Task[bool]] = {}
+    checks: dict[str, bool] = {}
 
     if _is_configured(settings.database.url):
         tasks["postgresql"] = asyncio.create_task(check_postgresql())
+    else:
+        checks["postgresql"] = False
 
     if _is_configured(settings.redis.url):
         tasks["redis"] = asyncio.create_task(check_redis())
 
-    checks = {name: await task for name, task in tasks.items()}
+    checks.update({name: await task for name, task in tasks.items()})
 
     services = {
         name: ServiceStatus.OK if ok else ServiceStatus.UNAVAILABLE
         for name, ok in checks.items()
     }
 
-    all_ok = all(checks.values()) if checks else True
+    all_ok = all(checks.values())
     result = HealthReadyResponse(
         status=ServiceStatus.OK if all_ok else ServiceStatus.UNAVAILABLE,
         services=services,
