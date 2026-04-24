@@ -44,8 +44,10 @@ def _is_safe_test_database_url(database_url: str) -> bool:
 
 
 @pytest.mark.integration
-def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path}/migrations.db"
+def test_alembic_upgrade_head_check_and_downgrade_base(
+    postgres_integration_url: str,
+) -> None:
+    database_url = postgres_integration_url
 
     env = os.environ.copy()
     env["DATABASE__URL"] = database_url
@@ -53,7 +55,7 @@ def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
     upgrade = _run_alembic("upgrade", "head", env=env)
     assert upgrade.returncode == 0, upgrade.stdout + "\n" + upgrade.stderr
 
-    engine = sa.create_engine(f"sqlite:///{tmp_path}/migrations.db")
+    engine = sa.create_engine(database_url)
     with engine.connect() as connection:
         inspector = sa.inspect(connection)
         unique_constraints = {
@@ -69,9 +71,8 @@ def test_alembic_upgrade_head_check_and_downgrade_base(tmp_path) -> None:
     assert "uq_users_email" not in unique_constraints
     assert "uq_memberships_user_id_active" in membership_indexes
     assert "expires_at" in invite_columns
-    # SQLite reflection does not consistently expose Enum check constraints across
-    # SQLAlchemy/Alembic versions, so this migration contract intentionally asserts
-    # only stable cross-database guarantees.
+    # PostgreSQL reflection differs slightly across SQLAlchemy/Alembic versions.
+    # This migration contract asserts only stable guarantees.
 
     check = _run_alembic("check", env=env)
     assert check.returncode == 0, check.stdout + "\n" + check.stderr

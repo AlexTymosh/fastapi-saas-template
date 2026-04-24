@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 from app.core.db import dispose_engine, ping_database
@@ -8,12 +6,8 @@ from tests.helpers.settings import reset_settings_cache
 
 
 @pytest.mark.integration
-def test_ping_database_round_trip(monkeypatch) -> None:
-    database_url = os.getenv("TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("TEST_DATABASE_URL is not set")
-
-    monkeypatch.setenv("DATABASE__URL", database_url)
+def test_ping_database_round_trip(monkeypatch, postgres_integration_url: str) -> None:
+    monkeypatch.setenv("DATABASE__URL", postgres_integration_url)
     reset_settings_cache()
 
     try:
