@@ -5,22 +5,23 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
-from app.core.config.settings import Settings, get_settings
+from app.core.config.settings import Settings
 from app.core.db import dispose_engine
 from app.main import create_app
 from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import AuthenticatedClientBundle, FakeAuthProvider
+from tests.helpers.settings import reset_settings_cache
 
 
 @pytest.fixture(autouse=True)
 def reset_runtime_state(monkeypatch, tmp_path):
     monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env.test"))
 
-    get_settings.cache_clear()
+    reset_settings_cache()
     yield
     run_async(dispose_engine())
-    get_settings.cache_clear()
+    reset_settings_cache()
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def client_factory(monkeypatch):
         else:
             monkeypatch.setenv("REDIS__URL", redis_url)
 
-        get_settings.cache_clear()
+        reset_settings_cache()
         app = create_app()
         return TestClient(app)
 
@@ -65,7 +66,7 @@ def authenticated_client_factory(monkeypatch):
         else:
             monkeypatch.setenv("REDIS__URL", redis_url)
 
-        get_settings.cache_clear()
+        reset_settings_cache()
         test_auth_provider = FakeAuthProvider()
         test_auth_provider.set_identity(identity)
         app = create_app()
