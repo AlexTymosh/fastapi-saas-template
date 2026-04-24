@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.config.settings import Settings
@@ -12,6 +16,25 @@ from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import AuthenticatedClientBundle, FakeAuthProvider
 from tests.helpers.settings import reset_settings_cache
+
+
+@pytest.fixture(scope="session")
+def integration_postgres_url() -> Iterator[str]:
+    """
+    Start an ephemeral PostgreSQL service for integration tests.
+    """
+    with PostgresContainer("postgres:16-alpine") as postgres:
+        database_url = postgres.get_connection_url(driver="psycopg")
+        yield database_url
+
+
+@pytest.fixture(scope="session")
+def integration_redis_url() -> Iterator[str]:
+    """
+    Start an ephemeral Redis service for integration tests.
+    """
+    with RedisContainer("redis:7-alpine") as redis:
+        yield redis.get_connection_url()
 
 
 @pytest.fixture(autouse=True)

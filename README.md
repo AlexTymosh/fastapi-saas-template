@@ -217,34 +217,22 @@ curl http://localhost:8000/api/v1/health/ready
 
 ## 🔬 Run integration tests (optional)
 
-Before an important commit, you can run the integration test suite against real PostgreSQL and Redis services.
+Before an important commit, you can run the integration test suite against ephemeral PostgreSQL and Redis services managed by Testcontainers.
 
-### 1. Start the services
+### 1. Ensure Docker is running
 
-```bash
-docker compose up -d
-```
-
-### 2. Set test environment variables in PowerShell
-
-```powershell
-$env:TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:5432/app"
-$env:TEST_REDIS_URL="redis://localhost:6379/0"
-$env:ENABLE_EXTERNAL_MIGRATION_DB_TEST="1"
-```
-
-### 3. Run integration tests
+### 2. Run integration tests
 
 ```bash
 pytest -q -m integration -rs
 ```
 
-If you later run tests in the same terminal without integration variables, remove them first:
+Optional: run the additional external migration smoke test against your own local test database:
 
 ```powershell
-Remove-Item Env:TEST_DATABASE_URL -ErrorAction SilentlyContinue
-Remove-Item Env:TEST_REDIS_URL -ErrorAction SilentlyContinue
-Remove-Item Env:ENABLE_EXTERNAL_MIGRATION_DB_TEST
+$env:TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:5432/app_test"
+$env:ENABLE_EXTERNAL_MIGRATION_DB_TEST="1"
+pytest -q backend/tests/db/test_migrations.py::test_alembic_upgrade_head_and_check_with_external_database
 ```
 
 ---
