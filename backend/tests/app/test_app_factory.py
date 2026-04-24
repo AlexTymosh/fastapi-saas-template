@@ -45,3 +45,28 @@ def test_create_app_accepts_explicit_settings_injection() -> None:
     response = client.get("/api/injected-v1/health/live")
 
     assert response.status_code == 200
+
+
+def test_create_app_repeated_instantiation_respects_cache_reset(monkeypatch) -> None:
+    monkeypatch.setenv("API__V1_PREFIX", "/api/first-v1")
+    reset_settings_cache()
+    first_app = create_app()
+    first_client = TestClient(first_app)
+
+    first_response = first_client.get("/api/first-v1/health/live")
+    assert first_response.status_code == 200
+
+    monkeypatch.setenv("API__V1_PREFIX", "/api/second-v1")
+    reset_settings_cache()
+    second_app = create_app()
+    second_client = TestClient(second_app)
+
+    second_response = second_client.get("/api/second-v1/health/live")
+    assert second_response.status_code == 200
+
+    first_app_after_change = first_client.get("/api/first-v1/health/live")
+    assert first_app_after_change.status_code == 200
+    assert first_client.get("/api/second-v1/health/live").status_code == 404
+    assert second_client.get("/api/first-v1/health/live").status_code == 404
+
+    reset_settings_cache()
