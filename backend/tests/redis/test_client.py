@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 from app.core.redis import close_redis, ping_redis
@@ -8,12 +6,8 @@ from tests.helpers.settings import reset_settings_cache
 
 
 @pytest.mark.integration
-def test_ping_redis_round_trip(monkeypatch) -> None:
-    redis_url = os.getenv("TEST_REDIS_URL")
-    if not redis_url:
-        pytest.skip("TEST_REDIS_URL is not set")
-
-    monkeypatch.setenv("REDIS__URL", redis_url)
+def test_ping_redis_round_trip(monkeypatch, redis_integration_url: str) -> None:
+    monkeypatch.setenv("REDIS__URL", redis_integration_url)
     reset_settings_cache()
 
     async def scenario() -> None:
