@@ -107,3 +107,21 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
         "schema"
     ]
     assert accept_request["$ref"].endswith("/AcceptInviteRequest")
+
+
+def test_openapi_membership_collection_response_has_envelope(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    schemas = spec["components"]["schemas"]
+    membership_collection = schemas["MembershipCollectionResponse"]
+    properties = membership_collection["properties"]
+
+    assert "data" in properties
+    assert "meta" in properties
+    assert "links" in properties
+    assert set(membership_collection["required"]) == {"data", "meta", "links"}

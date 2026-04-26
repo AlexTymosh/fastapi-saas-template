@@ -21,4 +21,12 @@ class MembershipResponse(BaseModel):
 
 
 class MembershipCollectionResponse(BaseModel):
+    class Meta(BaseModel):
+        total: int
+
+    class Links(BaseModel):
+        model_config = ConfigDict(extra="allow")
+
     data: list[MembershipResponse]
+    meta: Meta
+    links: Links

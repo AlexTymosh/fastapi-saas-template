@@ -132,11 +132,17 @@ async def list_organisation_memberships(
     db_session: DbSessionDep,
 ) -> MembershipCollectionResponse:
     access_service = OrganisationAccessService(db_session)
-    memberships = await access_service.list_memberships_for_member_organisation(
-        identity=identity,
-        organisation_id=organisation_id,
+    organisation_memberships = (
+        await access_service.list_memberships_for_member_organisation(
+            identity=identity,
+            organisation_id=organisation_id,
+        )
     )
 
     return MembershipCollectionResponse(
-        data=[MembershipResponse.model_validate(item) for item in memberships]
+        data=[
+            MembershipResponse.model_validate(item) for item in organisation_memberships
+        ],
+        meta=MembershipCollectionResponse.Meta(total=len(organisation_memberships)),
+        links=MembershipCollectionResponse.Links(),
     )
