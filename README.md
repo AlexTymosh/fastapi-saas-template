@@ -8,7 +8,9 @@ This project is currently in the **active development** and architectural design
 
 ### 1. Requirements
 
-- Docker Desktop (with Docker Compose v2)
+- Docker Desktop with Docker Compose v2
+  - Required for local development via `docker compose`
+  - Required for integration tests because the test suite uses Testcontainers to start temporary PostgreSQL and Redis containers
 - Git
 
 ---
@@ -214,10 +216,81 @@ curl http://localhost:8000/api/v1/health/ready
 
 ---
 
+## 1. Updated `### 1. Requirements` section
+
+```markdown
+### 1. Requirements
+
+- Docker Desktop with Docker Compose v2
+  - Required for local development via `docker compose`
+  - Required for integration tests because the test suite uses Testcontainers to start temporary PostgreSQL and Redis containers
+- Git
+```
+
+---
+
+## 2. Updated `## 🔬 Run integration tests (optional)` section
+
 
 ## 🔬 Run integration tests (optional)
 
-Before an important commit, you can run the integration test suite against real PostgreSQL and Redis services.
+Integration tests use **Testcontainers**.
+
+You do **not** need to install PostgreSQL or Redis locally, and you do **not** need to start the application stack with `docker compose up` before running the main integration test suite.
+
+The only required external dependency is a running Docker daemon.
+
+### Requirements
+
+- Docker Desktop / Docker Engine must be installed
+- Docker must be running before tests start
+- Python dependencies must be installed with the `dev` extra
+
+Example:
+
+```bash
+cd backend
+pip install -e ".[dev]"
+```
+
+### Run integration tests
+
+```bash
+pytest -q -m integration -rs
+```
+
+During the test run, Testcontainers starts temporary containers for:
+
+- PostgreSQL
+- Redis
+
+These containers are created for the tests and removed afterwards.
+
+### Optional external database migration test
+
+Most integration tests do not require manually configured database URLs.
+
+There is one optional external database migration test that can be enabled manually if you want to validate migrations against an already running local test database.
+
+PowerShell example:
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:5432/app"
+$env:ENABLE_EXTERNAL_MIGRATION_DB_TEST="1"
+pytest -q -m integration -rs
+```
+
+Clean up environment variables afterwards:
+
+```powershell
+Remove-Item Env:TEST_DATABASE_URL -ErrorAction SilentlyContinue
+Remove-Item Env:ENABLE_EXTERNAL_MIGRATION_DB_TEST -ErrorAction SilentlyContinue
+```
+
+> [!NOTE]
+> `TEST_REDIS_URL` is no longer required for the main Redis integration tests. Redis is started automatically by Testcontainers.
+
+
 
 ### 1. Start the services
 
