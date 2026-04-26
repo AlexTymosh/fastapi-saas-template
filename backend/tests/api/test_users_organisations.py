@@ -11,6 +11,7 @@ from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.db import Base, get_db_session
 from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
+from app.organisations.models.organisation import Organisation
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import FakeAuthProvider
@@ -819,3 +820,91 @@ def test_owner_can_update_slug_and_soft_delete_organisation(
 
         get_response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert get_response.status_code == 404
+
+
+def test_update_organisation_slug_invalid_payload_returns_validation_problem(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-owner-invalid-slug",
+            email="owner-invalid-slug@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_client = owner_client_bundle.client
+    with owner_client as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Invalid Slug Org", "slug": "invalid-slug-org"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        patch_response = client.patch(
+            f"/api/v1/organisations/{organisation_id}/slug",
+            json={"slug": "Not Valid!"},
+        )
+        assert patch_response.status_code == 422
+        assert patch_response.headers["content-type"].startswith(
+            "application/problem+json"
+        )
+
+
+def test_soft_deleted_organisation_slug_is_released_for_reuse(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    first_owner_client_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-owner-reusable-slug-1",
+            email="owner-reusable-slug-1@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    first_owner_client = first_owner_client_bundle.client
+    with first_owner_client as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Reusable Slug Org 1", "slug": "reusable-org"},
+        )
+        assert create_response.status_code == 201
+        first_organisation_id = UUID(create_response.json()["id"])
+
+        delete_response = client.delete(
+            f"/api/v1/organisations/{first_organisation_id}"
+        )
+        assert delete_response.status_code == 204
+
+    async def _fetch_soft_deleted_org(org_id: UUID) -> Organisation:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(Organisation).where(Organisation.id == org_id)
+            )
+            return result.scalar_one()
+
+    soft_deleted_org = run_async(_fetch_soft_deleted_org(first_organisation_id))
+    assert soft_deleted_org.deleted_at is not None
+    assert soft_deleted_org.slug != "reusable-org"
+    assert soft_deleted_org.slug == f"deleted-{soft_deleted_org.id}-reusable-org"
+
+    second_owner_client_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-owner-reusable-slug-2",
+            email="owner-reusable-slug-2@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    second_owner_client = second_owner_client_bundle.client
+    with second_owner_client as client:
+        recreate_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Reusable Slug Org 2", "slug": "reusable-org"},
+        )
+        assert recreate_response.status_code == 201
+        assert recreate_response.json()["slug"] == "reusable-org"
