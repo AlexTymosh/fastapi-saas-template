@@ -61,3 +61,17 @@ class ConflictError(AppError):
     title = "Conflict"
     error_code = ErrorCode.CONFLICT
     type = "problem:conflict"
+
+
+class TooManyRequestsError(AppError):
+    status_code = HTTPStatus.TOO_MANY_REQUESTS
+    title = "Too Many Requests"
+    error_code = ErrorCode.RATE_LIMITED
+    type = "problem:rate-limited"
+
+
+class RateLimiterUnavailableError(AppError):
+    status_code = HTTPStatus.SERVICE_UNAVAILABLE
+    title = "Service Unavailable"
+    error_code = ErrorCode.RATE_LIMITER_UNAVAILABLE
+    type = "problem:rate-limiter-unavailable"

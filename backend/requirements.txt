@@ -40,6 +40,8 @@ h11==0.16.0
     # via uvicorn
 hiredis==3.3.1
     # via redis
+limits[async-redis]==5.8.0
+    # via fastapi-saas-template (pyproject.toml)
 httptools==0.7.1
     # via uvicorn
 hvac==2.4.0

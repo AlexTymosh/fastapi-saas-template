@@ -61,6 +61,18 @@ class RedisSettings(BaseModel):
     healthcheck_timeout: float = 0.5
 
 
+class RateLimitingSettings(BaseModel):
+    enabled: bool = True
+    backend: Literal["redis"] = "redis"
+    redis_prefix: str = "rate-limit"
+    trust_proxy_headers: bool = False
+    default_limit: int = 60
+    default_window_seconds: int = 60
+    default_fail_open: bool = True
+    sensitive_fail_open: bool = False
+    storage_timeout_seconds: float = 1.0
+
+
 class SecuritySettings(BaseModel):
     """
     Security settings that are unrelated to runtime JWT validation.
@@ -108,6 +120,7 @@ class Settings(BaseSettings):
     vault: VaultSettings = Field(default_factory=VaultSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
+    rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
 

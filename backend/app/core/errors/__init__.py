@@ -4,6 +4,8 @@ from app.core.errors.exceptions import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    RateLimiterUnavailableError,
+    TooManyRequestsError,
     UnauthorizedError,
 )
 from app.core.errors.handlers import register_exception_handlers
@@ -14,6 +16,8 @@ __all__ = [
     "ConflictError",
     "ForbiddenError",
     "NotFoundError",
+    "TooManyRequestsError",
+    "RateLimiterUnavailableError",
     "UnauthorizedError",
     "register_exception_handlers",
 ]

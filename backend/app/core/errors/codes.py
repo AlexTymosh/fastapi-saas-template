@@ -10,3 +10,5 @@ class ErrorCode(StrEnum):
     CONFLICT = "conflict"
     VALIDATION_ERROR = "validation_error"
     INTERNAL_ERROR = "internal_error"
+    RATE_LIMITED = "rate_limited"
+    RATE_LIMITER_UNAVAILABLE = "rate_limiter_unavailable"

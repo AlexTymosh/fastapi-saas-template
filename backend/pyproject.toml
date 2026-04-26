@@ -23,6 +23,7 @@ dependencies = [
     "alembic>=1.18,<2.0",
     "psycopg[binary]>=3.1,<4.0",
     "redis[hiredis]>=5.0,<6.0",
+    "limits[async-redis]>=5.8,<6.0",
 ]
 
 [project.optional-dependencies]

@@ -59,6 +59,8 @@ h11==0.16.0
     #   uvicorn
 hiredis==3.3.1
     # via redis
+limits[async-redis]==5.8.0
+    # via fastapi-saas-template (pyproject.toml)
 httpcore==1.0.9
     # via httpx
 httptools==0.7.1
