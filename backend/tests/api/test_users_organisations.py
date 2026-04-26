@@ -11,6 +11,7 @@ from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.db import Base, get_db_session
 from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
+from app.organisations.models.organisation import Organisation
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import FakeAuthProvider
@@ -819,3 +820,86 @@ def test_owner_can_update_slug_and_soft_delete_organisation(
 
         get_response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert get_response.status_code == 404
+
+
+def test_patch_organisation_slug_invalid_value_returns_validation_problem(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_client_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-owner-invalid-slug",
+            email="owner-invalid-slug@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_client = owner_client_bundle.client
+    with owner_client as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Slug Validation Org", "slug": "slug-validation-org"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        patch_response = client.patch(
+            f"/api/v1/organisations/{organisation_id}/slug",
+            json={"slug": "Not Valid!"},
+        )
+        assert patch_response.status_code == 422
+        assert patch_response.headers["content-type"].startswith(
+            "application/problem+json"
+        )
+
+
+def test_slug_can_be_reused_after_soft_delete_and_deleted_slug_is_technical(
+    tmp_path,
+) -> None:
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Reusable Org", "slug": "reusable-org"},
+        )
+        assert create_response.status_code == 201
+        deleted_organisation_id = create_response.json()["id"]
+
+        delete_response = client.delete(
+            f"/api/v1/organisations/{deleted_organisation_id}"
+        )
+        assert delete_response.status_code == 204
+
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-second-owner-reuse",
+                email="second-owner-reuse@example.com",
+            )
+        )
+        recreate_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Reusable Org 2", "slug": "reusable-org"},
+        )
+        assert recreate_response.status_code == 201
+        assert recreate_response.json()["slug"] == "reusable-org"
+        assert recreate_response.json()["id"] != deleted_organisation_id
+
+    async def _fetch_soft_deleted_organisation() -> Organisation:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(Organisation).where(
+                    Organisation.id == UUID(deleted_organisation_id)
+                )
+            )
+            return result.scalar_one()
+
+    deleted_organisation = run_async(_fetch_soft_deleted_organisation())
+    assert deleted_organisation.deleted_at is not None
+    assert deleted_organisation.slug != "reusable-org"
+    assert deleted_organisation.slug.startswith(f"deleted-{deleted_organisation.id}-")
+    assert len(deleted_organisation.slug) <= 255
+
+    run_async(engine.dispose())
