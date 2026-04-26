@@ -4,9 +4,6 @@ import asyncio
 import selectors
 import sys
 from collections.abc import Awaitable
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
 def _loop_factory():
@@ -15,5 +12,5 @@ def _loop_factory():
     return asyncio.new_event_loop()
 
 
-def run_async(awaitable: Awaitable[T]) -> T:
+def run_async[T](awaitable: Awaitable[T]) -> T:
     return asyncio.run(awaitable, loop_factory=_loop_factory)

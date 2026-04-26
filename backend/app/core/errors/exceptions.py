@@ -18,6 +18,7 @@ class AppError(Exception):
         error_code: ErrorCode | None = None,
         type: str | None = None,
         extra: dict | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.detail = detail
         self.status_code = int(status_code or self.status_code)
@@ -25,6 +26,7 @@ class AppError(Exception):
         self.error_code = error_code or self.error_code
         self.type = type or self.type
         self.extra = extra or {}
+        self.headers = headers or {}
         super().__init__(detail or self.title)
 
 
@@ -61,3 +63,17 @@ class ConflictError(AppError):
     title = "Conflict"
     error_code = ErrorCode.CONFLICT
     type = "problem:conflict"
+
+
+class TooManyRequestsError(AppError):
+    status_code = HTTPStatus.TOO_MANY_REQUESTS
+    title = "Too Many Requests"
+    error_code = ErrorCode.RATE_LIMITED
+    type = "problem:rate-limited"
+
+
+class RateLimiterUnavailableError(AppError):
+    status_code = HTTPStatus.SERVICE_UNAVAILABLE
+    title = "Service Unavailable"
+    error_code = ErrorCode.RATE_LIMITER_UNAVAILABLE
+    type = "problem:rate-limiter-unavailable"

@@ -26,3 +26,8 @@ WRITE_ERROR_RESPONSES = {
     **COMMON_ERROR_RESPONSES,
     409: problem_response("Conflict"),
 }
+
+RATE_LIMIT_ERROR_RESPONSES = {
+    429: problem_response("Too Many Requests"),
+    503: problem_response("Rate Limiter Unavailable"),
+}
