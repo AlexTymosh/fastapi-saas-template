@@ -8,7 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
-from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
+from app.core.errors.openapi import (
+    COMMON_ERROR_RESPONSES,
+    RATE_LIMIT_ERROR_RESPONSES,
+    WRITE_ERROR_RESPONSES,
+)
+from app.core.rate_limit import (
+    INVITE_ACCEPT_POLICY,
+    INVITE_CREATE_POLICY,
+    rate_limit_dependency,
+)
 from app.invites.schemas.invites import (
     AcceptInviteRequest,
     AcceptInviteResponse,
@@ -32,7 +41,7 @@ InviteTokenSinkDep = Annotated[InviteTokenSink, Depends(get_invite_token_sink)]
     "/organisations/{organisation_id}/invites",
     response_model=InviteResponse,
     status_code=status.HTTP_201_CREATED,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="create_organisation_invite",
 )
 async def create_invite(
@@ -41,6 +50,7 @@ async def create_invite(
     identity: PrincipalDep,
     db_session: DbSessionDep,
     token_sink: InviteTokenSinkDep,
+    _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
 ) -> InviteResponse:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session, token_sink=token_sink)
@@ -57,13 +67,14 @@ async def create_invite(
 @router.post(
     "/invites/accept",
     response_model=AcceptInviteResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="accept_invite",
 )
 async def accept_invite(
     payload: AcceptInviteRequest,
     identity: PrincipalDep,
     db_session: DbSessionDep,
+    _: Annotated[None, Depends(rate_limit_dependency(INVITE_ACCEPT_POLICY))],
 ) -> AcceptInviteResponse:
     invite_service = InviteService(db_session)
     membership = await invite_service.accept_invite(

@@ -75,6 +75,10 @@ def test_openapi_health_ready_documents_503_problem_response(monkeypatch) -> Non
     schema_ref = content["application/problem+json"]["schema"]["$ref"]
     assert schema_ref.endswith("/ProblemDetails")
 
+    health_live = spec["paths"]["/api/v1/health/live"]["get"]
+    assert "429" not in health_live["responses"]
+    assert "429" not in ready_get["responses"]
+
 
 def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) -> None:
     app = _build_app(monkeypatch, docs_enabled="true")
@@ -99,9 +103,17 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
 
     create_problem = invite_create["responses"]["403"]["content"]
     assert "application/problem+json" in create_problem
+    assert "429" in invite_create["responses"]
+    assert "503" in invite_create["responses"]
+    assert "application/problem+json" in invite_create["responses"]["429"]["content"]
+    assert "application/problem+json" in invite_create["responses"]["503"]["content"]
 
     accept_problem = invite_accept["responses"]["404"]["content"]
     assert "application/problem+json" in accept_problem
+    assert "429" in invite_accept["responses"]
+    assert "503" in invite_accept["responses"]
+    assert "application/problem+json" in invite_accept["responses"]["429"]["content"]
+    assert "application/problem+json" in invite_accept["responses"]["503"]["content"]
 
     accept_request = invite_accept["requestBody"]["content"]["application/json"][
         "schema"

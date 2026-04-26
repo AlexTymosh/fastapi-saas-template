@@ -11,16 +11,20 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware.access_log import AccessLogMiddleware
 from app.core.middleware.request_context import RequestContextMiddleware
+from app.core.rate_limit import init_rate_limiter, shutdown_rate_limiter
 from app.core.redis import close_redis
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log = get_logger(__name__)
+    settings = get_settings()
+    await init_rate_limiter(app, settings)
     log.info("app_started")
     try:
         yield
     finally:
+        await shutdown_rate_limiter(app)
         await close_redis()
         await dispose_engine()
         log.info("app_stopped")

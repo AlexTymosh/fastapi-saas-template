@@ -75,12 +75,15 @@ def _problem_response(
     problem: ProblemDetails,
     *,
     request_id_header_name: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     request_id = get_request_id() or problem.request_id
 
     headers: dict[str, str] = {}
     if request_id:
         headers[request_id_header_name] = request_id
+    if extra_headers:
+        headers.update(extra_headers)
 
     return JSONResponse(
         status_code=problem.status,
@@ -169,6 +172,7 @@ def register_exception_handlers(
         return _problem_response(
             problem,
             request_id_header_name=request_id_header_name,
+            extra_headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)

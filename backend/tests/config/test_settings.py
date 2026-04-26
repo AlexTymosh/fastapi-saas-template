@@ -67,3 +67,20 @@ def test_legacy_security_keycloak_env_vars_are_ignored_for_runtime_auth(
     assert not hasattr(settings.security, "keycloak_client_id")
 
     reset_settings_cache()
+
+
+def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "custom-prefix")
+    monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("RATE_LIMITING__STORAGE_TIMEOUT_SECONDS", "2.5")
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.rate_limiting.enabled is False
+    assert settings.rate_limiting.redis_prefix == "custom-prefix"
+    assert settings.rate_limiting.trust_proxy_headers is True
+    assert settings.rate_limiting.storage_timeout_seconds == 2.5
+
+    reset_settings_cache()

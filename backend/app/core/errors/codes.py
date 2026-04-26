@@ -9,4 +9,6 @@ class ErrorCode(StrEnum):
     METHOD_NOT_ALLOWED = "method_not_allowed"
     CONFLICT = "conflict"
     VALIDATION_ERROR = "validation_error"
+    RATE_LIMITED = "rate_limited"
+    RATE_LIMITER_UNAVAILABLE = "rate_limiter_unavailable"
     INTERNAL_ERROR = "internal_error"
