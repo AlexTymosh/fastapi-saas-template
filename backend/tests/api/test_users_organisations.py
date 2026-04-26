@@ -278,9 +278,16 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
         assert payload["membership"]["organisation_id"] == organisation_id
         assert payload["membership"]["role"] == MembershipRole.OWNER.value
 
-        memberships = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
-        assert memberships.status_code == 200
-        assert memberships.json()["data"][0]["role"] == MembershipRole.OWNER.value
+        memberships_response = client.get(
+            f"/api/v1/organisations/{organisation_id}/memberships"
+        )
+        assert memberships_response.status_code == 200
+        memberships_payload = memberships_response.json()
+        assert "data" in memberships_payload
+        assert "meta" in memberships_payload
+        assert "links" in memberships_payload
+        assert memberships_payload["meta"]["total"] == len(memberships_payload["data"])
+        assert memberships_payload["data"][0]["role"] == MembershipRole.OWNER.value
 
 
 def test_admin_and_owner_roles_exist_in_enum() -> None:
@@ -500,7 +507,12 @@ def test_list_memberships_returns_200_for_owner(tmp_path) -> None:
 
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
         assert response.status_code == 200
-        assert len(response.json()["data"]) == 1
+        payload = response.json()
+        assert "data" in payload
+        assert "meta" in payload
+        assert "links" in payload
+        assert payload["meta"]["total"] == len(payload["data"])
+        assert len(payload["data"]) == 1
 
     async def _membership_role() -> str:
         async with session_factory() as session:

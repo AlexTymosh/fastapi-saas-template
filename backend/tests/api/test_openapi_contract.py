@@ -107,3 +107,34 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
         "schema"
     ]
     assert accept_request["$ref"].endswith("/AcceptInviteRequest")
+
+
+def test_openapi_membership_collection_response_has_data_meta_links(
+    monkeypatch,
+) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    memberships_path = "/api/v1/organisations/{organisation_id}/memberships"
+    list_memberships = spec["paths"][memberships_path]["get"]
+    schema_ref = list_memberships["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]["$ref"]
+    assert schema_ref.endswith("/MembershipCollectionResponse")
+
+    response_schema = spec["components"]["schemas"]["MembershipCollectionResponse"]
+    assert set(response_schema["required"]) == {"data", "meta", "links"}
+    properties = response_schema["properties"]
+    assert "data" in properties
+    assert "meta" in properties
+    assert "links" in properties
+
+    meta_schema_ref = properties["meta"]["$ref"]
+    assert meta_schema_ref.endswith("/MembershipCollectionMeta")
+
+    meta_schema = spec["components"]["schemas"]["MembershipCollectionMeta"]
+    assert "total" in meta_schema["properties"]
