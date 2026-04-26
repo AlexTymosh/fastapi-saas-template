@@ -194,3 +194,34 @@ def test_health_ready_returns_503_when_one_configured_dependency_is_unavailable(
             "redis": "unavailable",
         },
     }
+
+
+def test_health_endpoints_are_not_rate_limited(monkeypatch, client_factory) -> None:
+    class BlockingLimiter:
+        async def hit(self, item, key: str) -> bool:
+            return False
+
+        async def get_window_stats(self, item, key: str):
+            raise AssertionError("health endpoints must not use limiter")
+
+    async def _setup(app, settings) -> None:
+        runtime_type = type("Runtime", (), {"limiter": BlockingLimiter()})
+        app.state.rate_limit_runtime = runtime_type()
+
+    async def _teardown(app) -> None:
+        app.state.rate_limit_runtime = None
+
+    monkeypatch.setattr("app.main.setup_rate_limiter", _setup)
+    monkeypatch.setattr("app.main.teardown_rate_limiter", _teardown)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("REDIS__URL", "redis://placeholder:6379/0")
+
+    with client_factory(
+        database_url=None,
+        redis_url="redis://placeholder:6379/0",
+    ) as client:
+        live_response = client.get("/api/v1/health/live")
+        ready_response = client.get("/api/v1/health/ready")
+
+    assert live_response.status_code == 200
+    assert ready_response.status_code in {200, 503}

@@ -138,3 +138,38 @@ def test_openapi_membership_collection_response_has_data_meta_links(
 
     meta_schema = spec["components"]["schemas"]["MembershipCollectionMeta"]
     assert "total" in meta_schema["properties"]
+
+
+def test_openapi_protected_invite_endpoints_document_429_and_503(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    invite_create = spec["paths"]["/api/v1/organisations/{organisation_id}/invites"][
+        "post"
+    ]
+    invite_accept = spec["paths"]["/api/v1/invites/accept"]["post"]
+
+    for operation in (invite_create, invite_accept):
+        assert "429" in operation["responses"]
+        assert "503" in operation["responses"]
+        assert "application/problem+json" in operation["responses"]["429"]["content"]
+        assert "application/problem+json" in operation["responses"]["503"]["content"]
+
+
+def test_openapi_health_endpoints_do_not_document_429(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    health_live = spec["paths"]["/api/v1/health/live"]["get"]
+    health_ready = spec["paths"]["/api/v1/health/ready"]["get"]
+
+    assert "429" not in health_live["responses"]
+    assert "429" not in health_ready["responses"]

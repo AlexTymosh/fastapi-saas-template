@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from hashlib import sha256
+from types import SimpleNamespace
 from uuid import UUID
 
+import httpx
+import pytest
+from fastapi import Depends
+from limits import RateLimitItemPerMinute
 from sqlalchemy import select
 
 from app.core.auth import AuthenticatedPrincipal
+from app.core.rate_limit.dependencies import rate_limit_dependency
+from app.core.rate_limit.policies import RateLimitPolicy
 from app.invites.services.delivery import get_invite_token_sink
+from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -524,3 +534,239 @@ def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_acc
 
     assert response.status_code == 403
     assert owner_sink._tokens_by_email == {}
+
+
+class _WindowStats:
+    def __init__(self, reset_time: float) -> None:
+        self.reset_time = reset_time
+
+
+class _FakeLimiter:
+    def __init__(self, *, blocked_after: dict[str, int] | None = None) -> None:
+        self._blocked_after = blocked_after or {}
+        self._hits: dict[str, int] = {}
+
+    async def hit(self, item, key: str) -> bool:
+        count = self._hits.get(key, 0) + 1
+        self._hits[key] = count
+        threshold = self._blocked_after.get(key, self._blocked_after.get("*", 1000000))
+        return count <= threshold
+
+    async def get_window_stats(self, item, key: str):
+        return _WindowStats(reset_time=time.time() + 120)
+
+
+class _FailingLimiter:
+    async def hit(self, item, key: str) -> bool:
+        raise TimeoutError("backend timeout")
+
+    async def get_window_stats(self, item, key: str):
+        return _WindowStats(reset_time=time.time() + 60)
+
+
+def _patch_rate_limiter_runtime(monkeypatch, runtime) -> None:
+    async def _setup(app, settings) -> None:
+        app.state.rate_limit_runtime = runtime
+
+    async def _teardown(app) -> None:
+        app.state.rate_limit_runtime = None
+
+    monkeypatch.setattr("app.main.setup_rate_limiter", _setup)
+    monkeypatch.setattr("app.main.teardown_rate_limiter", _teardown)
+
+
+def test_invite_accept_rate_limited_returns_429_problem_details(
+    monkeypatch,
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("REDIS__URL", "redis://placeholder:6379/0")
+
+    limiter = _FakeLimiter(blocked_after={"*": 0})
+    _patch_rate_limiter_runtime(
+        monkeypatch,
+        SimpleNamespace(limiter=limiter, storage=None, strategy_name="moving-window"),
+    )
+
+    bundle = authenticated_client_factory(
+        identity=_identity_for("kc-ratelimit", "ratelimit@example.com"),
+        database_url=migrated_database_url,
+        redis_url="redis://placeholder:6379/0",
+    )
+
+    with bundle.client as client:
+        response = client.post("/api/v1/invites/accept", json={"token": "x"})
+
+    assert response.status_code == 429
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "rate_limited"
+    assert response.headers["retry-after"].isdigit()
+    assert response.headers["access-control-expose-headers"] == "Retry-After"
+
+
+def test_invite_sensitive_policy_returns_503_when_limiter_unavailable(
+    monkeypatch,
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("REDIS__URL", "redis://placeholder:6379/0")
+
+    runtime = SimpleNamespace(
+        limiter=_FailingLimiter(),
+        storage=None,
+        strategy_name="moving-window",
+    )
+    _patch_rate_limiter_runtime(monkeypatch, runtime)
+
+    bundle = authenticated_client_factory(
+        identity=_identity_for("kc-ratelimit-2", "ratelimit2@example.com"),
+        database_url=migrated_database_url,
+        redis_url="redis://placeholder:6379/0",
+    )
+
+    with bundle.client as client:
+        response = client.post("/api/v1/invites/accept", json={"token": "x"})
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "rate_limiter_unavailable"
+
+
+def test_rate_limiter_fail_open_allows_request_and_logs_warning(
+    monkeypatch,
+    caplog,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+
+    policy = RateLimitPolicy(
+        name="test_fail_open",
+        limit=RateLimitItemPerMinute(1),
+        fail_open=True,
+    )
+    dependency = rate_limit_dependency(policy)
+
+    app = create_app()
+    app.state.rate_limit_runtime = SimpleNamespace(
+        limiter=_FailingLimiter(),
+        storage=None,
+        strategy_name="moving-window",
+    )
+
+    @app.get("/test/fail-open", dependencies=[Depends(dependency)])
+    async def _route():
+        return {"ok": True}
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        response = client.get("/test/fail-open")
+
+    assert response.status_code == 200
+    assert any(
+        "rate_limiter_unavailable_fail_open" in rec.message for rec in caplog.records
+    )
+
+
+@pytest.mark.integration
+def test_invite_accept_rate_limit_with_real_redis_concurrency(
+    monkeypatch,
+    redis_integration_url: str,
+    migrated_database_url: str,
+) -> None:
+    from app.core.auth import get_authenticated_principal
+    from app.core.auth_claims import AuthenticatedPrincipal
+    from app.core.rate_limit.policies import INVITE_ACCEPT_POLICY
+
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("REDIS__URL", redis_integration_url)
+    monkeypatch.setenv("DATABASE__URL", migrated_database_url)
+    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "rl-int-test")
+
+    app = create_app()
+
+    async def _principal_override():
+        return AuthenticatedPrincipal(
+            external_auth_id="kc-concurrent",
+            email="concurrent@example.com",
+            email_verified=True,
+            platform_roles=[],
+        )
+
+    app.dependency_overrides[get_authenticated_principal] = _principal_override
+
+    async def _scenario() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            requests = [
+                client.post("/api/v1/invites/accept", json={"token": "missing-token"})
+                for _ in range(INVITE_ACCEPT_POLICY.limit.amount + 2)
+            ]
+            responses = await asyncio.gather(*requests)
+
+        status_codes = [item.status_code for item in responses]
+        assert status_codes.count(429) >= 2
+
+    from tests.helpers.asyncio_runner import run_async
+
+    try:
+        run_async(_scenario())
+    finally:
+        from app.core.redis import close_redis
+
+        run_async(close_redis())
+
+
+def test_rate_limiting_disabled_does_not_require_runtime(
+    monkeypatch,
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+
+    bundle = authenticated_client_factory(
+        identity=_identity_for("kc-no-limit", "nolimit@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with bundle.client as client:
+        response = client.post("/api/v1/invites/accept", json={"token": "x"})
+
+    assert response.status_code != 503
+
+
+def test_invite_endpoints_use_separate_rate_limit_namespaces(
+    monkeypatch,
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("REDIS__URL", "redis://placeholder:6379/0")
+
+    limiter = _FakeLimiter(blocked_after={"*": 100})
+    _patch_rate_limiter_runtime(
+        monkeypatch,
+        SimpleNamespace(limiter=limiter, storage=None, strategy_name="moving-window"),
+    )
+
+    bundle = authenticated_client_factory(
+        identity=_identity_for("kc-key-scope", "scope@example.com"),
+        database_url=migrated_database_url,
+        redis_url="redis://placeholder:6379/0",
+    )
+
+    with bundle.client as client:
+        client.post("/api/v1/invites/accept", json={"token": "x"})
+        client.post(
+            "/api/v1/organisations/00000000-0000-0000-0000-000000000001/invites",
+            json={"email": "invitee@example.com", "role": "member"},
+        )
+
+    keys = list(limiter._hits.keys())
+    assert any(":invite_accept:" in key for key in keys)
+    assert any(":invite_create:" in key for key in keys)

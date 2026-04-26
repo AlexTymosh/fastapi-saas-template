@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 from app.core.context import get_request_id
 from app.core.errors.codes import ErrorCode
-from app.core.errors.exceptions import AppError
+from app.core.errors.exceptions import AppError, TooManyRequestsError
 from app.core.errors.problem import InvalidParam, ProblemDetails
 
 _HTTP_PROBLEM_MAPPING: dict[int, tuple[str, str, str]] = {
@@ -75,12 +75,15 @@ def _problem_response(
     problem: ProblemDetails,
     *,
     request_id_header_name: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     request_id = get_request_id() or problem.request_id
 
     headers: dict[str, str] = {}
     if request_id:
         headers[request_id_header_name] = request_id
+    if extra_headers:
+        headers.update(extra_headers)
 
     return JSONResponse(
         status_code=problem.status,
@@ -166,9 +169,16 @@ def register_exception_handlers(
             request_id=_get_request_id(request),
             **exc.extra,
         )
+        extra_headers: dict[str, str] = {}
+        if isinstance(exc, TooManyRequestsError):
+            retry_after = int(exc.extra.get("retry_after", 1))
+            extra_headers["Retry-After"] = str(max(1, retry_after))
+            extra_headers["Access-Control-Expose-Headers"] = "Retry-After"
+
         return _problem_response(
             problem,
             request_id_header_name=request_id_header_name,
+            extra_headers=extra_headers or None,
         )
 
     @app.exception_handler(RequestValidationError)
