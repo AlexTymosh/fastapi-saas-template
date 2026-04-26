@@ -22,6 +22,7 @@ from testcontainers.postgres import PostgresContainer
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.config.settings import Settings
 from app.core.db import dispose_engine
+from app.core.redis import close_redis
 from app.main import create_app
 from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
@@ -35,6 +36,7 @@ def reset_runtime_state(monkeypatch, tmp_path):
 
     reset_settings_cache()
     yield
+    run_async(close_redis())
     run_async(dispose_engine())
     reset_settings_cache()
 
