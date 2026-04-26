@@ -9,6 +9,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 
+def normalize_organisation_slug(value: str) -> str:
+    slug = value.strip().lower()
+    if not slug:
+        msg = "Organisation slug cannot be blank"
+        raise ValueError(msg)
+    if not _SLUG_PATTERN.fullmatch(slug):
+        msg = "Slug must contain only lowercase letters, digits, and hyphens"
+        raise ValueError(msg)
+    return slug
+
+
 class CreateOrganisationRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=255)
@@ -25,18 +36,16 @@ class CreateOrganisationRequest(BaseModel):
     @field_validator("slug")
     @classmethod
     def normalize_slug(cls, value: str) -> str:
-        slug = value.strip().lower()
-        if not slug:
-            msg = "Organisation slug cannot be blank"
-            raise ValueError(msg)
-        if not _SLUG_PATTERN.fullmatch(slug):
-            msg = "Slug must contain only lowercase letters, digits, and hyphens"
-            raise ValueError(msg)
-        return slug
+        return normalize_organisation_slug(value)
 
 
 class UpdateOrganisationSlugRequest(BaseModel):
     slug: str = Field(min_length=1, max_length=255)
+
+    @field_validator("slug")
+    @classmethod
+    def normalize_slug(cls, value: str) -> str:
+        return normalize_organisation_slug(value)
 
 
 class OrganisationResponse(BaseModel):

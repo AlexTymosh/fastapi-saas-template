@@ -43,7 +43,16 @@ class OrganisationRepository:
         return organisation
 
     async def soft_delete(self, organisation: Organisation) -> Organisation:
+        organisation.slug = self._build_deleted_slug(organisation)
         organisation.deleted_at = datetime.now(UTC)
         await self.session.flush()
         await self.session.refresh(organisation)
         return organisation
+
+    @staticmethod
+    def _build_deleted_slug(organisation: Organisation) -> str:
+        prefix = f"deleted-{organisation.id}-"
+        max_slug_length = 255
+        max_suffix_length = max_slug_length - len(prefix)
+        preserved_suffix = organisation.slug[: max(0, max_suffix_length)]
+        return f"{prefix}{preserved_suffix}"
