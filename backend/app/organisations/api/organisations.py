@@ -10,6 +10,7 @@ from app.core.auth import AuthenticatedPrincipal, require_authenticated_principa
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
 from app.memberships.schemas.memberships import (
+    MembershipCollectionMeta,
     MembershipCollectionResponse,
     MembershipResponse,
 )
@@ -138,5 +139,7 @@ async def list_organisation_memberships(
     )
 
     return MembershipCollectionResponse(
-        data=[MembershipResponse.model_validate(item) for item in memberships]
+        data=[MembershipResponse.model_validate(item) for item in memberships],
+        meta=MembershipCollectionMeta(total=len(memberships)),
+        links={},
     )

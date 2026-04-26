@@ -20,5 +20,11 @@ class MembershipResponse(BaseModel):
     updated_at: datetime
 
 
+class MembershipCollectionMeta(BaseModel):
+    total: int
+
+
 class MembershipCollectionResponse(BaseModel):
     data: list[MembershipResponse]
+    meta: MembershipCollectionMeta
+    links: dict[str, str]
