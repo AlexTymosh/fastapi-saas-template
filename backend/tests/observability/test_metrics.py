@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 from limits import RateLimitItemPerMinute
@@ -166,6 +167,29 @@ def test_metrics_helpers_emit_only_low_cardinality_attributes(monkeypatch) -> No
     for _, attributes in duration_histogram.calls:
         assert set(attributes).issubset(metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
         assert set(attributes).isdisjoint(forbidden_keys)
+
+
+@pytest.mark.parametrize("result", ["allowed", "blocked", "backend_error", "fail_open"])
+def test_record_rate_limit_check_duration_supports_all_results(
+    monkeypatch, result: str
+) -> None:
+    duration_histogram = _FakeHistogram()
+    monkeypatch.setattr(metrics, "rate_limit_check_duration", duration_histogram)
+
+    metrics.record_rate_limit_check_duration(
+        policy_name="invite_create",
+        result=result,
+        identifier_kind="user",
+        duration_seconds=0.02,
+    )
+
+    assert len(duration_histogram.calls) == 1
+    recorded_duration, attributes = duration_histogram.calls[0]
+    assert isinstance(recorded_duration, float)
+    assert recorded_duration >= 0
+    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_POLICY] == "invite_create"
+    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_RESULT] == result
+    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND] == "user"
 
 
 def test_get_route_template_returns_route_path() -> None:
