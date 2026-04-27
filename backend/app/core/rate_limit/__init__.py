@@ -5,11 +5,17 @@ from app.core.rate_limit.policies import (
     INVITE_CREATE_POLICY,
     RateLimitPolicy,
 )
+from app.core.rate_limit.registry import (
+    get_rate_limit_policy,
+    iter_rate_limit_policies,
+)
 
 __all__ = [
     "RateLimitPolicy",
     "INVITE_ACCEPT_POLICY",
     "INVITE_CREATE_POLICY",
+    "get_rate_limit_policy",
+    "iter_rate_limit_policies",
     "rate_limit_dependency",
     "init_rate_limiter",
     "shutdown_rate_limiter",
