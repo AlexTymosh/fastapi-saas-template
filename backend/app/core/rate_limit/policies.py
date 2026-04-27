@@ -2,25 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from limits import RateLimitItemPerHour, RateLimitItemPerMinute
+from limits.limits import RateLimitItem
+
 
 @dataclass(frozen=True)
 class RateLimitPolicy:
     name: str
-    limit: int
-    window_seconds: int
+    item: RateLimitItem
     fail_open: bool
 
 
 INVITE_ACCEPT_POLICY = RateLimitPolicy(
     name="invite_accept",
-    limit=5,
-    window_seconds=300,
+    item=RateLimitItemPerMinute(5, multiples=5),
     fail_open=False,
 )
 
 INVITE_CREATE_POLICY = RateLimitPolicy(
     name="invite_create",
-    limit=20,
-    window_seconds=3600,
+    item=RateLimitItemPerHour(20),
     fail_open=False,
 )
