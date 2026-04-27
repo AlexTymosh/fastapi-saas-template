@@ -36,6 +36,26 @@ class _FakeProvider:
             raise RuntimeError("shutdown failed")
 
 
+class _AsyncFakeProvider:
+    def __init__(
+        self, *, raise_force_flush: bool = False, raise_shutdown: bool = False
+    ) -> None:
+        self.force_flush_calls = 0
+        self.shutdown_calls = 0
+        self.raise_force_flush = raise_force_flush
+        self.raise_shutdown = raise_shutdown
+
+    async def force_flush(self) -> None:
+        self.force_flush_calls += 1
+        if self.raise_force_flush:
+            raise RuntimeError("async flush failed")
+
+    async def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        if self.raise_shutdown:
+            raise ValueError("async shutdown failed")
+
+
 @pytest.fixture(autouse=True)
 def _reset_lifecycle_state() -> None:
     lifecycle._initialized_provider = None  # noqa: SLF001
@@ -249,6 +269,44 @@ def test_shutdown_observability_swallows_provider_errors(monkeypatch) -> None:
     assert len(warnings) == 2
     assert warnings[0][0] == "observability_metrics_force_flush_failed"
     assert warnings[1][0] == "observability_metrics_shutdown_failed"
+    assert warnings[0][1] == {"reason": "RuntimeError", "category": "observability"}
+    assert warnings[1][1] == {"reason": "RuntimeError", "category": "observability"}
+
+
+def test_shutdown_observability_awaits_async_provider_operations() -> None:
+    provider = _AsyncFakeProvider()
+    lifecycle._initialized_provider = provider  # noqa: SLF001
+
+    run_async(lifecycle.shutdown_observability())
+
+    assert provider.force_flush_calls == 1
+    assert provider.shutdown_calls == 1
+    assert lifecycle._initialized_provider is None  # noqa: SLF001
+
+
+def test_shutdown_observability_swallows_async_provider_errors(monkeypatch) -> None:
+    provider = _AsyncFakeProvider(raise_force_flush=True, raise_shutdown=True)
+    lifecycle._initialized_provider = provider  # noqa: SLF001
+
+    warnings: list[tuple[str, dict[str, object]]] = []
+
+    class _FakeLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            warnings.append((event_name, kwargs))
+
+    monkeypatch.setattr(lifecycle, "log", _FakeLogger())
+
+    run_async(lifecycle.shutdown_observability())
+
+    assert len(warnings) == 2
+    assert warnings[0][0] == "observability_metrics_force_flush_failed"
+    assert warnings[1][0] == "observability_metrics_shutdown_failed"
+    assert warnings[0][1] == {"reason": "RuntimeError", "category": "observability"}
+    assert warnings[1][1] == {"reason": "ValueError", "category": "observability"}
+
+    warnings_as_text = str(warnings)
+    assert "async flush failed" not in warnings_as_text
+    assert "async shutdown failed" not in warnings_as_text
 
 
 def test_repeated_init_and_shutdown_do_not_leak_state(monkeypatch) -> None:
