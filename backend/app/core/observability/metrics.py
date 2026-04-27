@@ -53,9 +53,48 @@ ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     }
 )
 
+HTTP_REQUESTS_TOTAL = meter.create_counter(
+    "http.server.requests.total",
+    unit="{request}",
+    description="Total number of HTTP server requests.",
+)
 
-def _validate_attribute_keys(attributes: dict[str, str]) -> None:
-    invalid_keys = set(attributes).difference(ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
+HTTP_ERRORS_TOTAL = meter.create_counter(
+    "http.server.errors.total",
+    unit="{error}",
+    description="Total number of HTTP server error responses.",
+)
+
+HTTP_REQUEST_DURATION = meter.create_histogram(
+    "http.server.request.duration",
+    unit="s",
+    description="Duration of HTTP server requests.",
+)
+
+HTTP_ATTRIBUTE_METHOD: Final = "http.request.method"
+HTTP_ATTRIBUTE_ROUTE: Final = "http.route"
+HTTP_ATTRIBUTE_STATUS_CODE: Final = "http.response.status_code"
+
+ALLOWED_HTTP_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        HTTP_ATTRIBUTE_METHOD,
+        HTTP_ATTRIBUTE_ROUTE,
+        HTTP_ATTRIBUTE_STATUS_CODE,
+    }
+)
+
+ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        *ALLOWED_HTTP_ATTRIBUTE_KEYS,
+        RATE_LIMIT_ATTRIBUTE_ERROR_TYPE,
+    }
+)
+
+
+def _validate_attribute_keys(
+    attributes: dict[str, str | int], allowed_keys: frozenset[str]
+) -> None:
+    invalid_keys = set(attributes).difference(allowed_keys)
     if invalid_keys:
         keys = ", ".join(sorted(invalid_keys))
         raise ValueError(f"Unsupported metric attribute keys: {keys}")
@@ -81,7 +120,7 @@ def record_rate_limit_decision(
         RATE_LIMIT_ATTRIBUTE_RESULT: result,
         RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
     }
-    _validate_attribute_keys(attributes)
+    _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
     rate_limit_requests_total.add(1, attributes=attributes)
 
 
@@ -96,7 +135,7 @@ def record_rate_limit_backend_error(
         RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
         RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
     }
-    _validate_attribute_keys(attributes)
+    _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
     rate_limit_backend_errors_total.add(1, attributes=attributes)
 
 
@@ -113,8 +152,56 @@ def record_rate_limit_check_duration(
         RATE_LIMIT_ATTRIBUTE_RESULT: result,
         RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
     }
-    _validate_attribute_keys(attributes)
+    _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
     rate_limit_check_duration.record(duration_seconds, attributes=attributes)
+
+
+def record_http_request(
+    *,
+    method: str,
+    route: str,
+    status_code: int,
+) -> None:
+    attributes = {
+        HTTP_ATTRIBUTE_METHOD: method,
+        HTTP_ATTRIBUTE_ROUTE: route,
+        HTTP_ATTRIBUTE_STATUS_CODE: status_code,
+    }
+    _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
+    HTTP_REQUESTS_TOTAL.add(1, attributes=attributes)
+
+
+def record_http_error(
+    *,
+    method: str,
+    route: str,
+    status_code: int,
+    error_type: str,
+) -> None:
+    attributes = {
+        HTTP_ATTRIBUTE_METHOD: method,
+        HTTP_ATTRIBUTE_ROUTE: route,
+        HTTP_ATTRIBUTE_STATUS_CODE: status_code,
+        RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
+    }
+    _validate_attribute_keys(attributes, ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS)
+    HTTP_ERRORS_TOTAL.add(1, attributes=attributes)
+
+
+def record_http_request_duration(
+    *,
+    method: str,
+    route: str,
+    status_code: int,
+    duration_seconds: float,
+) -> None:
+    attributes = {
+        HTTP_ATTRIBUTE_METHOD: method,
+        HTTP_ATTRIBUTE_ROUTE: route,
+        HTTP_ATTRIBUTE_STATUS_CODE: status_code,
+    }
+    _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
+    HTTP_REQUEST_DURATION.record(duration_seconds, attributes=attributes)
 
 
 def get_route_template(request: Request) -> str:
