@@ -68,12 +68,25 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
         ],
     ) -> None:
         settings = get_settings()
-        runtime = _runtime_from_request(request)
 
         if not settings.rate_limiting.enabled:
             return
 
+        started_at = time.perf_counter()
+        runtime = _runtime_from_request(request)
+
         if runtime is None or runtime.limiter is None:
+            record_rate_limit_backend_error(
+                policy_name=policy.name,
+                identifier_kind="unknown",
+                error_type="RuntimeUnavailable",
+            )
+            _record_rate_limit_outcome(
+                policy_name=policy.name,
+                result="runtime_unavailable",
+                identifier_kind="unknown",
+                started_at=started_at,
+            )
             raise RateLimiterUnavailableError(
                 detail="Rate limiter is unavailable.",
             )
@@ -88,7 +101,6 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
             f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
         )
         item = policy.item
-        started_at = time.perf_counter()
 
         try:
             allowed = await _await_with_timeout(

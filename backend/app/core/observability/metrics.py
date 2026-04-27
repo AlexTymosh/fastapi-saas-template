@@ -62,6 +62,7 @@ RATE_LIMIT_RESULT_ALLOWED: Final = "allowed"
 RATE_LIMIT_RESULT_BLOCKED: Final = "blocked"
 RATE_LIMIT_RESULT_BACKEND_ERROR: Final = "backend_error"
 RATE_LIMIT_RESULT_FAIL_OPEN: Final = "fail_open"
+RATE_LIMIT_RESULT_RUNTIME_UNAVAILABLE: Final = "runtime_unavailable"
 
 ALLOWED_RATE_LIMIT_RESULTS: Final[frozenset[str]] = frozenset(
     {
@@ -69,6 +70,7 @@ ALLOWED_RATE_LIMIT_RESULTS: Final[frozenset[str]] = frozenset(
         RATE_LIMIT_RESULT_BLOCKED,
         RATE_LIMIT_RESULT_BACKEND_ERROR,
         RATE_LIMIT_RESULT_FAIL_OPEN,
+        RATE_LIMIT_RESULT_RUNTIME_UNAVAILABLE,
     }
 )
 

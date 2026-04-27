@@ -4,6 +4,7 @@
 
 - The project uses OpenTelemetry API instrumentation by default.
 - OpenTelemetry Metrics SDK initialization is optional and controlled by settings.
+- OTLP HTTP exporter lifecycle is supported when SDK is enabled.
 - No `/metrics` endpoint is exposed.
 - Prometheus and Grafana are not connected at this phase.
 
@@ -27,6 +28,10 @@ Allowed result values:
 - `blocked`
 - `backend_error`
 - `fail_open`
+- `runtime_unavailable`
+
+`runtime_unavailable` means rate limiting was enabled, but the application did not
+have an initialized limiter runtime or limiter instance.
 
 ## Low-cardinality rules
 
@@ -71,9 +76,13 @@ If the route template is unavailable, use `"unknown"`.
 Next phase:
 
 - initialize OpenTelemetry SDK
-- add exporter
-- expose or export metrics for Prometheus-compatible collection
-- prepare Grafana dashboard
+- add OTLP HTTP exporter support lifecycle
+
+Not in the current phase:
+
+- no Prometheus/Grafana integration
+- no `/metrics` endpoint
+- no OTel Collector profile
 
 ## OpenTelemetry SDK and exporter
 
