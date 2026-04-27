@@ -2,9 +2,8 @@
 
 ## Current phase
 
-- The project currently uses `opentelemetry-api` only.
-- No OpenTelemetry SDK is initialized yet.
-- No exporter is configured yet.
+- The project uses OpenTelemetry API instrumentation by default.
+- OpenTelemetry Metrics SDK initialization is optional and controlled by settings.
 - No `/metrics` endpoint is exposed.
 - Prometheus and Grafana are not connected at this phase.
 
@@ -107,6 +106,12 @@ Current limitations:
 - no tracing
 - no logs exporter
 - no database/Redis auto-instrumentation
+
+Implementation notes:
+
+- `http.server.request.duration` is configured with explicit histogram buckets during SDK initialization.
+- OpenTelemetry global `MeterProvider` is process-wide and set-once.
+- Tests should use monkeypatch/fakes for lifecycle assertions and must not reset private OpenTelemetry globals.
 
 ## HTTP RED metrics foundation
 

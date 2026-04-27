@@ -4,7 +4,7 @@
 #
 #    pip-compile --extra=dev --output-file=requirements-dev.txt pyproject.toml
 #
-aiosqlite==0.21.0
+aiosqlite==0.22.1
     # via fastapi-saas-template (pyproject.toml)
 alembic==1.18.4
     # via fastapi-saas-template (pyproject.toml)
@@ -17,7 +17,11 @@ anyio==4.13.0
     #   httpx
     #   starlette
     #   watchfiles
-certifi==2026.2.25
+async-timeout==5.0.1
+    # via coredis
+beartype==0.22.9
+    # via coredis
+certifi==2026.4.22
     # via
     #   httpcore
     #   httpx
@@ -28,15 +32,24 @@ cfgv==3.5.0
     # via pre-commit
 charset-normalizer==3.4.7
     # via requests
-click==8.3.2
+click==8.3.3
     # via uvicorn
 colorama==0.4.6
     # via
     #   click
     #   pytest
     #   uvicorn
+coredis==5.7.0
+    # via limits
 cryptography==47.0.0
     # via pyjwt
+deprecated==1.3.1
+    # via
+    #   coredis
+    #   limits
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-semantic-conventions
 distlib==0.4.0
     # via virtualenv
 dnspython==2.8.0
@@ -45,13 +58,15 @@ docker==7.1.0
     # via testcontainers
 email-validator==2.3.0
     # via fastapi-saas-template (pyproject.toml)
-fastapi==0.135.3
+fastapi==0.136.1
     # via fastapi-saas-template (pyproject.toml)
-filelock==3.25.2
+filelock==3.29.0
     # via
     #   python-discovery
     #   virtualenv
-greenlet==3.4.0
+googleapis-common-protos==1.74.0
+    # via opentelemetry-exporter-otlp-proto-http
+greenlet==3.5.0
     # via sqlalchemy
 h11==0.16.0
     # via
@@ -67,56 +82,77 @@ httpx==0.28.1
     # via fastapi-saas-template (pyproject.toml)
 hvac==2.4.0
     # via fastapi-saas-template (pyproject.toml)
-identify==2.6.18
+identify==2.6.19
     # via pre-commit
-idna==3.12
+idna==3.13
     # via
     #   anyio
     #   email-validator
     #   httpx
     #   requests
-limits[async-redis]==5.8.0
-    # via fastapi-saas-template (pyproject.toml)
+importlib-metadata==8.5.0
+    # via opentelemetry-api
 iniconfig==2.3.0
     # via pytest
+limits[async-redis]==5.8.0
+    # via fastapi-saas-template (pyproject.toml)
 mako==1.3.11
     # via alembic
 markupsafe==3.0.3
     # via mako
 nodeenv==1.10.0
     # via pre-commit
-opentelemetry-api==1.28.0
-    # via fastapi-saas-template (pyproject.toml)
-opentelemetry-exporter-otlp-proto-http==1.38.0
-    # via fastapi-saas-template (pyproject.toml)
-opentelemetry-sdk==1.38.0
+opentelemetry-api==1.28.2
     # via
     #   fastapi-saas-template (pyproject.toml)
     #   opentelemetry-exporter-otlp-proto-http
-packaging==26.0
-    # via pytest
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-exporter-otlp-proto-common==1.28.2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.28.2
+    # via fastapi-saas-template (pyproject.toml)
+opentelemetry-proto==1.28.2
+    # via
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.28.2
+    # via
+    #   fastapi-saas-template (pyproject.toml)
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-semantic-conventions==0.49b2
+    # via opentelemetry-sdk
+packaging==25.0
+    # via
+    #   coredis
+    #   limits
+    #   pytest
 platformdirs==4.9.6
     # via
     #   python-discovery
     #   virtualenv
 pluggy==1.6.0
     # via pytest
-pre-commit==4.5.1
+pre-commit==4.6.0
     # via fastapi-saas-template (pyproject.toml)
+protobuf==5.29.6
+    # via
+    #   googleapis-common-protos
+    #   opentelemetry-proto
 psycopg[binary]==3.3.3
     # via fastapi-saas-template (pyproject.toml)
 psycopg-binary==3.3.3
     # via psycopg
 pycparser==3.0
     # via cffi
-pydantic==2.13.0
+pydantic==2.13.3
     # via
     #   fastapi
     #   fastapi-saas-template (pyproject.toml)
     #   pydantic-settings
-pydantic-core==2.46.0
+pydantic-core==2.46.3
     # via pydantic
-pydantic-settings==2.13.1
+pydantic-settings==2.14.0
     # via fastapi-saas-template (pyproject.toml)
 pygments==2.20.0
     # via pytest
@@ -125,6 +161,8 @@ pyjwt[crypto]==2.12.1
     #   fastapi-saas-template (pyproject.toml)
     #   pyjwt
     #   redis
+pympler==1.1
+    # via coredis
 pytest==9.0.3
     # via fastapi-saas-template (pyproject.toml)
 python-discovery==1.2.2
@@ -135,7 +173,9 @@ python-dotenv==1.2.2
     #   testcontainers
     #   uvicorn
 pywin32==311
-    # via docker
+    # via
+    #   docker
+    #   pympler
 pyyaml==6.0.3
     # via
     #   pre-commit
@@ -146,7 +186,8 @@ requests==2.33.1
     # via
     #   docker
     #   hvac
-ruff==0.15.10
+    #   opentelemetry-exporter-otlp-proto-http
+ruff==0.15.12
     # via fastapi-saas-template (pyproject.toml)
 scalar-fastapi==1.8.2
     # via fastapi-saas-template (pyproject.toml)
@@ -162,9 +203,11 @@ testcontainers==4.14.2
     # via fastapi-saas-template (pyproject.toml)
 typing-extensions==4.15.0
     # via
-    #   aiosqlite
     #   alembic
+    #   coredis
     #   fastapi
+    #   limits
+    #   opentelemetry-sdk
     #   pydantic
     #   pydantic-core
     #   sqlalchemy
@@ -182,13 +225,17 @@ urllib3==2.6.3
     #   docker
     #   requests
     #   testcontainers
-uvicorn[standard]==0.44.0
+uvicorn[standard]==0.46.0
     # via fastapi-saas-template (pyproject.toml)
-virtualenv==21.2.3
+virtualenv==21.3.0
     # via pre-commit
 watchfiles==1.1.1
     # via uvicorn
 websockets==16.0
     # via uvicorn
 wrapt==2.1.2
-    # via testcontainers
+    # via
+    #   deprecated
+    #   testcontainers
+zipp==3.23.1
+    # via importlib-metadata

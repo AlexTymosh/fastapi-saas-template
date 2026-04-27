@@ -129,12 +129,13 @@ def test_init_observability_otlp_initializes_sdk_components(monkeypatch) -> None
 
     class _ProviderFactory:
         def __call__(
-            self, *, metric_readers: list[object], resource: object
+            self, *, metric_readers: list[object], resource: object, views: list[object]
         ) -> _FakeProvider:
             provider_construction.append(
                 {
                     "metric_readers": metric_readers,
                     "resource": resource,
+                    "views": views,
                 }
             )
             return _FakeProvider()
@@ -175,6 +176,7 @@ def test_init_observability_otlp_initializes_sdk_components(monkeypatch) -> None
 
     assert resource_calls == ["custom-service"]
     assert len(provider_construction) == 1
+    assert len(provider_construction[0]["views"]) == 1
     assert len(set_meter_provider_calls) == 1
 
 
@@ -335,7 +337,7 @@ def test_repeated_init_and_shutdown_do_not_leak_state(monkeypatch) -> None:
 
     class _ProviderFactory:
         def __call__(
-            self, *, metric_readers: list[object], resource: object
+            self, *, metric_readers: list[object], resource: object, views: list[object]
         ) -> _FakeProvider:
             provider = _FakeProvider()
             providers.append(provider)
@@ -352,3 +354,109 @@ def test_repeated_init_and_shutdown_do_not_leak_state(monkeypatch) -> None:
     assert len(providers) == 1
     assert providers[0].force_flush_calls == 1
     assert providers[0].shutdown_calls == 1
+
+
+def test_init_observability_configures_http_duration_histogram_view(
+    monkeypatch,
+) -> None:
+    settings = Settings.model_validate(
+        {
+            "observability": {
+                "metrics_enabled": True,
+                "exporter": "otlp",
+                "otlp_endpoint": "http://otel-collector:4318/v1/metrics",
+            }
+        }
+    )
+    provider_construction: list[dict[str, object]] = []
+
+    class _FakeView:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class _FakeExplicitBucketHistogramAggregation:
+        def __init__(self, boundaries: tuple[float, ...]) -> None:
+            self.boundaries = boundaries
+
+    class _ProviderFactory:
+        def __call__(
+            self, *, metric_readers: list[object], resource: object, views: list[object]
+        ) -> _FakeProvider:
+            provider_construction.append(
+                {
+                    "metric_readers": metric_readers,
+                    "resource": resource,
+                    "views": views,
+                }
+            )
+            return _FakeProvider()
+
+    monkeypatch.setattr(
+        lifecycle, "_load_otlp_metric_exporter", lambda: _FactoryCallRecorder()
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_load_periodic_exporting_metric_reader",
+        lambda: _FactoryCallRecorder(),
+    )
+    monkeypatch.setattr(lifecycle, "_load_meter_provider", lambda: _ProviderFactory())
+    monkeypatch.setattr(
+        lifecycle,
+        "_load_metric_views",
+        lambda: (_FakeView, _FakeExplicitBucketHistogramAggregation),
+    )
+    monkeypatch.setattr(lifecycle, "_build_resource", lambda service_name: {})
+    monkeypatch.setattr(lifecycle.metrics, "set_meter_provider", lambda provider: None)
+
+    run_async(lifecycle.init_observability(settings))
+
+    assert len(provider_construction) == 1
+    views = provider_construction[0]["views"]
+    assert isinstance(views, list)
+    assert len(views) == 1
+    view = views[0]
+    assert isinstance(view, _FakeView)
+    assert view.kwargs["instrument_name"] == "http.server.request.duration"
+    aggregation = view.kwargs["aggregation"]
+    assert isinstance(aggregation, _FakeExplicitBucketHistogramAggregation)
+    assert aggregation.boundaries == lifecycle.HTTP_SERVER_DURATION_BUCKETS
+
+
+def test_init_observability_sets_global_meter_provider_only_once(monkeypatch) -> None:
+    settings = Settings.model_validate(
+        {
+            "observability": {
+                "metrics_enabled": True,
+                "exporter": "otlp",
+                "otlp_endpoint": "http://otel-collector:4318/v1/metrics",
+            }
+        }
+    )
+    set_meter_provider_calls: list[object] = []
+
+    class _ProviderFactory:
+        def __call__(
+            self, *, metric_readers: list[object], resource: object, views: list[object]
+        ) -> _FakeProvider:
+            return _FakeProvider()
+
+    monkeypatch.setattr(
+        lifecycle, "_load_otlp_metric_exporter", lambda: _FactoryCallRecorder()
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_load_periodic_exporting_metric_reader",
+        lambda: _FactoryCallRecorder(),
+    )
+    monkeypatch.setattr(lifecycle, "_load_meter_provider", lambda: _ProviderFactory())
+    monkeypatch.setattr(lifecycle, "_build_resource", lambda service_name: {})
+    monkeypatch.setattr(
+        lifecycle.metrics,
+        "set_meter_provider",
+        lambda provider: set_meter_provider_calls.append(provider),
+    )
+
+    run_async(lifecycle.init_observability(settings))
+    run_async(lifecycle.init_observability(settings))
+
+    assert len(set_meter_provider_calls) == 1

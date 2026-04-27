@@ -10,6 +10,22 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 _initialized_provider: Any | None = None
+HTTP_SERVER_DURATION_BUCKETS: tuple[float, ...] = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    2.5,
+    5.0,
+    7.5,
+    10.0,
+)
 
 
 def _build_service_name(settings: Settings) -> str:
@@ -30,6 +46,15 @@ def _load_meter_provider() -> type[Any]:
     return MeterProvider
 
 
+def _load_metric_views() -> tuple[type[Any], type[Any]]:
+    from opentelemetry.sdk.metrics.view import (
+        ExplicitBucketHistogramAggregation,
+        View,
+    )
+
+    return View, ExplicitBucketHistogramAggregation
+
+
 def _load_periodic_exporting_metric_reader() -> type[Any]:
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
@@ -45,6 +70,9 @@ def _build_resource(service_name: str) -> Any:
 async def init_observability(settings: Settings) -> None:
     global _initialized_provider
 
+    # OpenTelemetry meter provider is process-wide and set-once.
+    # This module uses _initialized_provider as a local guard; tests should
+    # monkeypatch metrics.set_meter_provider instead of resetting private internals.
     if _initialized_provider is not None:
         return
 
@@ -67,6 +95,7 @@ async def init_observability(settings: Settings) -> None:
     otlp_metric_exporter = _load_otlp_metric_exporter()
     periodic_reader_cls = _load_periodic_exporting_metric_reader()
     meter_provider_cls = _load_meter_provider()
+    view_cls, explicit_histogram_aggregation_cls = _load_metric_views()
 
     exporter = otlp_metric_exporter(
         endpoint=endpoint,
@@ -78,7 +107,17 @@ async def init_observability(settings: Settings) -> None:
         export_timeout_millis=settings.observability.export_timeout_millis,
     )
     resource = _build_resource(_build_service_name(settings))
-    provider = meter_provider_cls(metric_readers=[reader], resource=resource)
+    http_duration_view = view_cls(
+        instrument_name="http.server.request.duration",
+        aggregation=explicit_histogram_aggregation_cls(
+            boundaries=HTTP_SERVER_DURATION_BUCKETS
+        ),
+    )
+    provider = meter_provider_cls(
+        metric_readers=[reader],
+        resource=resource,
+        views=[http_duration_view],
+    )
 
     metrics.set_meter_provider(provider)
     _initialized_provider = provider
