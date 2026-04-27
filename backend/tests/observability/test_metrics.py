@@ -53,6 +53,18 @@ class _FakeHistogram:
         self.calls.append((value, attributes))
 
 
+class RaisingCounter:
+    def add(self, value: int, attributes: dict[str, str | int] | None = None) -> None:
+        raise RuntimeError("metrics backend down")
+
+
+class RaisingHistogram:
+    def record(
+        self, value: float, attributes: dict[str, str | int] | None = None
+    ) -> None:
+        raise RuntimeError("metrics backend down")
+
+
 async def _principal() -> AuthenticatedPrincipal:
     return AuthenticatedPrincipal(
         external_auth_id="user-a",
@@ -241,6 +253,104 @@ def test_record_http_request_rejects_unsupported_keys() -> None:
             },
             metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS,
         )
+
+
+def test_record_http_request_does_not_raise_on_counter_failure(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", RaisingCounter())
+
+    metrics.record_http_request(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=200,
+    )
+
+
+def test_record_http_error_does_not_raise_on_counter_failure(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "HTTP_ERRORS_TOTAL", RaisingCounter())
+
+    metrics.record_http_error(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=500,
+        error_type="RuntimeError",
+    )
+
+
+def test_record_http_request_duration_does_not_raise_on_histogram_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(metrics, "HTTP_REQUEST_DURATION", RaisingHistogram())
+
+    metrics.record_http_request_duration(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=200,
+        duration_seconds=0.01,
+    )
+
+
+def test_record_rate_limit_decision_does_not_raise_on_counter_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(metrics, "rate_limit_requests_total", RaisingCounter())
+
+    metrics.record_rate_limit_decision(
+        policy_name="invite_create",
+        result="allowed",
+        identifier_kind="user",
+    )
+
+
+def test_record_rate_limit_backend_error_does_not_raise_on_counter_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(metrics, "rate_limit_backend_errors_total", RaisingCounter())
+
+    metrics.record_rate_limit_backend_error(
+        policy_name="invite_create",
+        identifier_kind="user",
+        error_type="RuntimeError",
+    )
+
+
+def test_record_rate_limit_check_duration_does_not_raise_on_histogram_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(metrics, "rate_limit_check_duration", RaisingHistogram())
+
+    metrics.record_rate_limit_check_duration(
+        policy_name="invite_create",
+        result="allowed",
+        identifier_kind="user",
+        duration_seconds=0.01,
+    )
+
+
+def test_safe_record_metric_logs_only_low_cardinality_fields(monkeypatch) -> None:
+    logged: dict[str, object] = {}
+
+    class _FakeLog:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            logged["event_name"] = event_name
+            logged.update(kwargs)
+
+    def _raise_runtime_error() -> None:
+        raise RuntimeError("metrics backend down")
+
+    monkeypatch.setattr(metrics, "log", _FakeLog())
+
+    metrics._safe_record_metric(  # noqa: SLF001
+        _raise_runtime_error,
+        metric_name="http.server.requests.total",
+        event="http_request",
+    )
+
+    assert logged["event_name"] == "metrics_recording_failed"
+    assert logged["metric_name"] == "http.server.requests.total"
+    assert logged["event"] == "http_request"
+    assert logged["reason"] == "RuntimeError"
+    assert logged["category"] == "observability"
+    assert "metrics backend down" not in str(logged)
 
 
 @pytest.mark.parametrize("result", ["allowed", "blocked", "backend_error", "fail_open"])

@@ -269,3 +269,74 @@ def test_4xx_response_does_not_record_error(monkeypatch) -> None:
     assert len(request_calls.calls) == 1
     assert len(duration_calls.calls) == 1
     assert len(error_calls.calls) == 0
+
+
+def test_success_response_is_preserved_when_request_metric_fails(monkeypatch) -> None:
+    def raising_recorder(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        raising_recorder,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/success")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": "true"}
+
+
+def test_success_response_is_preserved_when_duration_metric_fails(monkeypatch) -> None:
+    def raising_recorder(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request_duration",
+        raising_recorder,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/success")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": "true"}
+
+
+def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
+    def raising_recorder(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_error",
+        raising_recorder,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/error-response")
+
+    assert response.status_code == 500
+    assert response.text == "boom"
+
+
+def test_original_exception_is_reraised_when_metrics_fail(monkeypatch) -> None:
+    def raising_recorder(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        raising_recorder,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request_duration",
+        raising_recorder,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_error",
+        raising_recorder,
+    )
+
+    client = TestClient(_build_app())
+
+    with pytest.raises(RuntimeError, match="boom"):
+        client.get("/api/v1/test/exception")
