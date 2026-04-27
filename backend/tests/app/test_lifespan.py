@@ -2,6 +2,7 @@ import io
 import json
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -47,3 +48,33 @@ def test_lifespan_logs_startup_and_shutdown(monkeypatch) -> None:
 
     assert "app_started" in events
     assert "app_stopped" in events
+
+
+def test_lifespan_does_not_require_redis_when_rate_limiting_disabled(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.delenv("REDIS__URL", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+
+
+def test_lifespan_fails_fast_when_rate_limiting_enabled_without_redis(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.delenv("REDIS__URL", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with pytest.raises(
+        RuntimeError,
+        match="REDIS__URL is required when RATE_LIMITING__ENABLED=true",
+    ):
+        with TestClient(app):
+            pass

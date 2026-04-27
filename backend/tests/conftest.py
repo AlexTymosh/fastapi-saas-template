@@ -33,6 +33,7 @@ from tests.helpers.settings import reset_settings_cache
 @pytest.fixture(autouse=True)
 def reset_runtime_state(monkeypatch, tmp_path):
     monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env.test"))
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
 
     reset_settings_cache()
     yield
@@ -47,6 +48,7 @@ def client_factory(monkeypatch):
         *,
         database_url: str | None = None,
         redis_url: str | None = None,
+        rate_limiting_enabled: bool = False,
     ) -> TestClient:
         if database_url is None:
             monkeypatch.delenv("DATABASE__URL", raising=False)
@@ -57,6 +59,10 @@ def client_factory(monkeypatch):
             monkeypatch.delenv("REDIS__URL", raising=False)
         else:
             monkeypatch.setenv("REDIS__URL", redis_url)
+        monkeypatch.setenv(
+            "RATE_LIMITING__ENABLED",
+            "true" if rate_limiting_enabled else "false",
+        )
 
         reset_settings_cache()
         app = create_app()
@@ -72,6 +78,7 @@ def authenticated_client_factory(monkeypatch):
         identity: AuthenticatedPrincipal,
         database_url: str | None = None,
         redis_url: str | None = None,
+        rate_limiting_enabled: bool = False,
     ) -> AuthenticatedClientBundle:
         if database_url is None:
             monkeypatch.delenv("DATABASE__URL", raising=False)
@@ -82,6 +89,10 @@ def authenticated_client_factory(monkeypatch):
             monkeypatch.delenv("REDIS__URL", raising=False)
         else:
             monkeypatch.setenv("REDIS__URL", redis_url)
+        monkeypatch.setenv(
+            "RATE_LIMITING__ENABLED",
+            "true" if rate_limiting_enabled else "false",
+        )
 
         reset_settings_cache()
         test_auth_provider = FakeAuthProvider()
