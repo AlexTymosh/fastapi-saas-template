@@ -49,6 +49,8 @@ idna==3.12
     #   anyio
     #   email-validator
     #   requests
+limits[async-redis]==5.8.0
+    # via fastapi-saas-template (pyproject.toml)
 mako==1.3.11
     # via alembic
 markupsafe==3.0.3

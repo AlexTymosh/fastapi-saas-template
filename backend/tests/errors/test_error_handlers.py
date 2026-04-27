@@ -2,7 +2,12 @@ from fastapi import APIRouter
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import (
+    ConflictError,
+    NotFoundError,
+    RateLimiterUnavailableError,
+    TooManyRequestsError,
+)
 from app.main import create_app
 
 
@@ -29,6 +34,20 @@ def build_test_client(*, raise_server_exceptions: bool = True) -> TestClient:
     @router.get("/test/teapot")
     async def test_teapot():
         raise StarletteHTTPException(status_code=418, detail="Short and stout.")
+
+    @router.get("/test/rate-limited")
+    async def test_rate_limited():
+        raise TooManyRequestsError(
+            detail="Too many requests.",
+            headers={
+                "Retry-After": "120",
+                "Access-Control-Expose-Headers": "Retry-After",
+            },
+        )
+
+    @router.get("/test/rate-limiter-unavailable")
+    async def test_rate_limiter_unavailable():
+        raise RateLimiterUnavailableError(detail="Rate limiter is unavailable.")
 
     app.include_router(router)
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)
@@ -160,3 +179,31 @@ def test_generic_http_exception_uses_problem_shape() -> None:
     assert body["instance"] == "/test/teapot"
     assert "request_id" in body
     assert response.headers["x-request-id"] == body["request_id"]
+
+
+def test_rate_limited_problem_details_include_retry_headers() -> None:
+    client = build_test_client()
+    response = client.get("/test/rate-limited")
+
+    assert response.status_code == 429
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.headers["retry-after"] == "120"
+    assert response.headers["access-control-expose-headers"] == "Retry-After"
+
+    body = response.json()
+    assert body["type"] == "problem:rate-limited"
+    assert body["status"] == 429
+    assert body["error_code"] == "rate_limited"
+
+
+def test_rate_limiter_unavailable_problem_details() -> None:
+    client = build_test_client()
+    response = client.get("/test/rate-limiter-unavailable")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+
+    body = response.json()
+    assert body["type"] == "problem:rate-limiter-unavailable"
+    assert body["status"] == 503
+    assert body["error_code"] == "rate_limiter_unavailable"

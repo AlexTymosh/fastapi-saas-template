@@ -91,6 +91,18 @@ class AuthSettings(BaseModel):
         return "RS256"
 
 
+class RateLimitingSettings(BaseModel):
+    enabled: bool = False
+    backend: Literal["redis"] = "redis"
+    redis_prefix: str = "rate-limit"
+    trust_proxy_headers: bool = False
+    default_limit: int = 60
+    default_window_seconds: int = 60
+    default_fail_open: bool = True
+    sensitive_fail_open: bool = False
+    storage_timeout_seconds: float = 1.0
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -110,6 +122,7 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
 
 
 @lru_cache(maxsize=1)

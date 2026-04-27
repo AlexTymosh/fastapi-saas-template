@@ -24,9 +24,7 @@ class InviteStatus(StrEnum):
 
 class Invite(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "invites"
-    __table_args__ = (
-        Index("ix_invites_token_hash", "token_hash", unique=True),
-    )
+    __table_args__ = (Index("ix_invites_token_hash", "token_hash", unique=True),)
 
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     organisation_id: Mapped[UUID] = mapped_column(
