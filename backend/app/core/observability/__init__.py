@@ -1,3 +1,7 @@
+from app.core.observability.lifecycle import (
+    init_observability,
+    shutdown_observability,
+)
 from app.core.observability.metrics import (
     ALLOWED_HTTP_ATTRIBUTE_KEYS,
     ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS,
@@ -17,6 +21,8 @@ __all__ = [
     "ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS",
     "ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS",
     "HttpMetricsMiddleware",
+    "init_observability",
+    "shutdown_observability",
     "get_route_template",
     "record_http_error",
     "record_http_request",

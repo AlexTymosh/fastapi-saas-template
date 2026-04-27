@@ -78,3 +78,57 @@ def test_lifespan_fails_fast_when_rate_limiting_enabled_without_redis(
     ):
         with TestClient(app):
             pass
+
+
+def test_lifespan_fails_fast_when_otlp_exporter_enabled_without_endpoint(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OBSERVABILITY__METRICS_ENABLED", "true")
+    monkeypatch.setenv("OBSERVABILITY__EXPORTER", "otlp")
+    monkeypatch.delenv("OBSERVABILITY__OTLP_ENDPOINT", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with pytest.raises(
+        RuntimeError,
+        match="OBSERVABILITY__OTLP_ENDPOINT is required",
+    ):
+        with TestClient(app):
+            pass
+
+
+def test_lifespan_starts_when_observability_enabled_with_none_exporter(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OBSERVABILITY__METRICS_ENABLED", "true")
+    monkeypatch.setenv("OBSERVABILITY__EXPORTER", "none")
+    monkeypatch.delenv("OBSERVABILITY__OTLP_ENDPOINT", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+
+
+def test_lifespan_initializes_rate_limiter_with_default_observability_settings(
+    monkeypatch,
+) -> None:
+    calls: list[bool] = []
+
+    async def _fake_init_rate_limiter(app, settings) -> None:
+        calls.append(settings.rate_limiting.enabled)
+
+    monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
+    monkeypatch.delenv("OBSERVABILITY__METRICS_ENABLED", raising=False)
+    monkeypatch.delenv("OBSERVABILITY__EXPORTER", raising=False)
+    monkeypatch.delenv("OBSERVABILITY__OTLP_ENDPOINT", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+    assert calls == [False]

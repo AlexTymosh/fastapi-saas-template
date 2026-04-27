@@ -103,6 +103,27 @@ class RateLimitingSettings(BaseModel):
     storage_timeout_seconds: float = 1.0
 
 
+class ObservabilitySettings(BaseModel):
+    metrics_enabled: bool = False
+    exporter: Literal["none", "otlp"] = "none"
+    otlp_endpoint: str | None = None
+    service_name: str | None = None
+    otlp_timeout_seconds: float = 2.0
+    export_interval_millis: int = 60_000
+    export_timeout_millis: int = 2_000
+
+    @field_validator(
+        "otlp_timeout_seconds",
+        "export_interval_millis",
+        "export_timeout_millis",
+    )
+    @classmethod
+    def validate_positive_number(cls, value: float | int) -> float | int:
+        if value <= 0:
+            raise ValueError("Observability timing values must be positive")
+        return value
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -123,6 +144,7 @@ class Settings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
 
 @lru_cache(maxsize=1)
