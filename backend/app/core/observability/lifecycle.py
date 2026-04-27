@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from inspect import isawaitable
 from typing import Any
 
 from opentelemetry import metrics
@@ -97,20 +98,29 @@ async def shutdown_observability() -> None:
     if provider is None:
         return
 
-    try:
-        provider.force_flush()
-    except Exception as exc:
-        log.warning(
-            "observability_metrics_force_flush_failed",
-            reason=exc.__class__.__name__,
-            category="observability",
-        )
+    await _run_provider_operation(
+        provider=provider,
+        operation_name="force_flush",
+        failure_event_name="observability_metrics_force_flush_failed",
+    )
+    await _run_provider_operation(
+        provider=provider,
+        operation_name="shutdown",
+        failure_event_name="observability_metrics_shutdown_failed",
+    )
 
+
+async def _run_provider_operation(
+    *, provider: object, operation_name: str, failure_event_name: str
+) -> None:
+    operation = getattr(provider, operation_name)
     try:
-        provider.shutdown()
+        result = operation()
+        if isawaitable(result):
+            await result
     except Exception as exc:
         log.warning(
-            "observability_metrics_shutdown_failed",
+            failure_event_name,
             reason=exc.__class__.__name__,
             category="observability",
         )
