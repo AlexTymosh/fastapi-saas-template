@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Final
 
 from fastapi import Request
 from opentelemetry import metrics
 
+from app.core.logging import get_logger
+
 meter = metrics.get_meter("fastapi_saas_template")
+log = get_logger(__name__)
 
 rate_limit_requests_total = meter.create_counter(
     "rate_limit.requests.total",
@@ -91,6 +95,33 @@ ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 
+def _log_metrics_failure(*, metric_name: str, event: str, reason: str) -> None:
+    log.warning(
+        "metrics_recording_failed",
+        metric_name=metric_name,
+        event=event,
+        reason=reason,
+        category="observability",
+    )
+
+
+def _safe_record_metric(
+    operation: Callable[..., None],
+    *args: object,
+    metric_name: str,
+    event: str,
+    **kwargs: object,
+) -> None:
+    try:
+        operation(*args, **kwargs)
+    except Exception as exc:
+        _log_metrics_failure(
+            metric_name=metric_name,
+            event=event,
+            reason=exc.__class__.__name__,
+        )
+
+
 def _validate_attribute_keys(
     attributes: dict[str, str | int], allowed_keys: frozenset[str]
 ) -> None:
@@ -114,14 +145,29 @@ def record_rate_limit_decision(
     result: str,
     identifier_kind: str,
 ) -> None:
-    _validate_result(result)
-    attributes = {
-        RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
-        RATE_LIMIT_ATTRIBUTE_RESULT: result,
-        RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
-    }
-    _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
-    rate_limit_requests_total.add(1, attributes=attributes)
+    try:
+        _validate_result(result)
+        attributes = {
+            RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
+            RATE_LIMIT_ATTRIBUTE_RESULT: result,
+            RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
+        }
+        _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
+    except Exception as exc:
+        _log_metrics_failure(
+            metric_name="rate_limit.requests.total",
+            event="rate_limit_decision",
+            reason=exc.__class__.__name__,
+        )
+        return
+
+    _safe_record_metric(
+        rate_limit_requests_total.add,
+        1,
+        attributes=attributes,
+        metric_name="rate_limit.requests.total",
+        event="rate_limit_decision",
+    )
 
 
 def record_rate_limit_backend_error(
@@ -135,8 +181,22 @@ def record_rate_limit_backend_error(
         RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
         RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
     }
-    _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
-    rate_limit_backend_errors_total.add(1, attributes=attributes)
+    try:
+        _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
+    except Exception as exc:
+        _log_metrics_failure(
+            metric_name="rate_limit.backend_errors.total",
+            event="rate_limit_backend_error",
+            reason=exc.__class__.__name__,
+        )
+        return
+    _safe_record_metric(
+        rate_limit_backend_errors_total.add,
+        1,
+        attributes=attributes,
+        metric_name="rate_limit.backend_errors.total",
+        event="rate_limit_backend_error",
+    )
 
 
 def record_rate_limit_check_duration(
@@ -146,14 +206,29 @@ def record_rate_limit_check_duration(
     identifier_kind: str,
     duration_seconds: float,
 ) -> None:
-    _validate_result(result)
-    attributes = {
-        RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
-        RATE_LIMIT_ATTRIBUTE_RESULT: result,
-        RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
-    }
-    _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
-    rate_limit_check_duration.record(duration_seconds, attributes=attributes)
+    try:
+        _validate_result(result)
+        attributes = {
+            RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
+            RATE_LIMIT_ATTRIBUTE_RESULT: result,
+            RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
+        }
+        _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
+    except Exception as exc:
+        _log_metrics_failure(
+            metric_name="rate_limit.check.duration",
+            event="rate_limit_check_duration",
+            reason=exc.__class__.__name__,
+        )
+        return
+
+    _safe_record_metric(
+        rate_limit_check_duration.record,
+        duration_seconds,
+        attributes=attributes,
+        metric_name="rate_limit.check.duration",
+        event="rate_limit_check_duration",
+    )
 
 
 def record_http_request(
@@ -167,8 +242,23 @@ def record_http_request(
         HTTP_ATTRIBUTE_ROUTE: route,
         HTTP_ATTRIBUTE_STATUS_CODE: status_code,
     }
-    _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
-    HTTP_REQUESTS_TOTAL.add(1, attributes=attributes)
+    try:
+        _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
+    except Exception as exc:
+        _log_metrics_failure(
+            metric_name="http.server.requests.total",
+            event="http_request",
+            reason=exc.__class__.__name__,
+        )
+        return
+
+    _safe_record_metric(
+        HTTP_REQUESTS_TOTAL.add,
+        1,
+        attributes=attributes,
+        metric_name="http.server.requests.total",
+        event="http_request",
+    )
 
 
 def record_http_error(
@@ -184,8 +274,22 @@ def record_http_error(
         HTTP_ATTRIBUTE_STATUS_CODE: status_code,
         RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
     }
-    _validate_attribute_keys(attributes, ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS)
-    HTTP_ERRORS_TOTAL.add(1, attributes=attributes)
+    try:
+        _validate_attribute_keys(attributes, ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS)
+    except Exception as exc:
+        _log_metrics_failure(
+            metric_name="http.server.errors.total",
+            event="http_error",
+            reason=exc.__class__.__name__,
+        )
+        return
+    _safe_record_metric(
+        HTTP_ERRORS_TOTAL.add,
+        1,
+        attributes=attributes,
+        metric_name="http.server.errors.total",
+        event="http_error",
+    )
 
 
 def record_http_request_duration(
@@ -200,8 +304,22 @@ def record_http_request_duration(
         HTTP_ATTRIBUTE_ROUTE: route,
         HTTP_ATTRIBUTE_STATUS_CODE: status_code,
     }
-    _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
-    HTTP_REQUEST_DURATION.record(duration_seconds, attributes=attributes)
+    try:
+        _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
+    except Exception as exc:
+        _log_metrics_failure(
+            metric_name="http.server.request.duration",
+            event="http_request_duration",
+            reason=exc.__class__.__name__,
+        )
+        return
+    _safe_record_metric(
+        HTTP_REQUEST_DURATION.record,
+        duration_seconds,
+        attributes=attributes,
+        metric_name="http.server.request.duration",
+        event="http_request_duration",
+    )
 
 
 def get_route_template(request: Request) -> str:

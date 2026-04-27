@@ -103,3 +103,26 @@ Error rule:
 
 - 5xx responses are counted as errors;
 - 4xx responses are not counted as server errors.
+
+## Runtime safety
+
+Observability must not change API behavior.
+
+Metric recording failures are swallowed and logged as low-cardinality observability warnings.
+The API response, status code, response body, and exception behavior remain unchanged.
+
+Metrics failure logs must not include:
+
+- user id
+- email
+- organisation id
+- request id
+- trace id
+- raw path
+- raw URL
+- IP address
+- token
+- Redis key
+- identifier value
+- hashed identifier value
+- exception message
