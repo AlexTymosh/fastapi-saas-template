@@ -37,6 +37,19 @@ PrincipalDep = Annotated[
 InviteTokenSinkDep = Annotated[InviteTokenSink, Depends(get_invite_token_sink)]
 
 
+async def get_authenticated_db_session(
+    _: PrincipalDep,
+    db_session: DbSessionDep,
+) -> AsyncSession:
+    return db_session
+
+
+AuthenticatedDbSessionDep = Annotated[
+    AsyncSession,
+    Depends(get_authenticated_db_session),
+]
+
+
 @router.post(
     "/organisations/{organisation_id}/invites",
     response_model=InviteResponse,
@@ -48,7 +61,7 @@ async def create_invite(
     organisation_id: UUID,
     payload: CreateInviteRequest,
     identity: PrincipalDep,
-    db_session: DbSessionDep,
+    db_session: AuthenticatedDbSessionDep,
     token_sink: InviteTokenSinkDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
 ) -> InviteResponse:
@@ -73,7 +86,7 @@ async def create_invite(
 async def accept_invite(
     payload: AcceptInviteRequest,
     identity: PrincipalDep,
-    db_session: DbSessionDep,
+    db_session: AuthenticatedDbSessionDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_ACCEPT_POLICY))],
 ) -> AcceptInviteResponse:
     invite_service = InviteService(db_session)

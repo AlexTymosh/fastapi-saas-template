@@ -33,6 +33,7 @@ from tests.helpers.settings import reset_settings_cache
 @pytest.fixture(autouse=True)
 def reset_runtime_state(monkeypatch, tmp_path):
     monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env.test"))
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
 
     reset_settings_cache()
     yield

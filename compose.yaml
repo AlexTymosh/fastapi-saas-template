@@ -10,6 +10,7 @@ services:
     environment:
       APP__ENVIRONMENT: local
       LOGGING__AS_JSON: "true"
+      RATE_LIMITING__ENABLED: "false"
 
       DATABASE__URL: postgresql+psycopg://app:app@postgres:5432/app
       TEST_DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/app
