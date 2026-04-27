@@ -3,9 +3,11 @@ from __future__ import annotations
 import pytest
 from limits import RateLimitItemPerMinute
 
+from app.core.config.settings import RateLimitingSettings
 from app.core.rate_limit.policies import RateLimitPolicy
 from app.core.rate_limit.registry import (
     build_policy_registry,
+    create_explicit_default_policy,
     get_rate_limit_policy,
     iter_rate_limit_policies,
 )
@@ -54,6 +56,29 @@ def test_duplicate_policy_names_are_rejected() -> None:
 def test_unknown_policy_name_raises_clear_error() -> None:
     with pytest.raises(ValueError, match="Unknown rate limit policy: missing"):
         get_rate_limit_policy("missing")
+
+
+def test_explicit_default_policy_factory_uses_configured_values() -> None:
+    settings = RateLimitingSettings(
+        default_limit=77,
+        default_window_seconds=123,
+        default_fail_open=False,
+    )
+
+    default_policy = create_explicit_default_policy(settings)
+
+    assert default_policy.name == "default"
+    assert default_policy.item.amount == 77
+    assert default_policy.item.get_expiry() == 123
+    assert default_policy.fail_open is False
+
+
+def test_explicit_default_policy_is_not_auto_registered() -> None:
+    names = {policy.name for policy in iter_rate_limit_policies()}
+    assert "default" not in names
+
+    with pytest.raises(ValueError, match="Unknown rate limit policy: default"):
+        get_rate_limit_policy("default")
 
 
 def test_invite_policy_semantics_are_unchanged() -> None:

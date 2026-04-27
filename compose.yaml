@@ -142,6 +142,19 @@ services:
     entrypoint: ["sh", "/init.sh"]
     restart: "no"
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.99.0
+    container_name: fastapi_otel_collector
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - "--set=receivers.otlp.protocols.http.endpoint=0.0.0.0:4318"
+      - "--set=exporters.debug.verbosity=normal"
+      - "--set=service.pipelines.metrics.receivers=[otlp]"
+      - "--set=service.pipelines.metrics.exporters=[debug]"
+    ports:
+      - "4318:4318"
+
 volumes:
   postgres_data:
   redis_data:

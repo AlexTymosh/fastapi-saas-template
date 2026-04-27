@@ -53,6 +53,7 @@ def test_lifespan_logs_startup_and_shutdown(monkeypatch) -> None:
 def test_lifespan_does_not_require_redis_when_rate_limiting_disabled(
     monkeypatch,
 ) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "local")
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
     monkeypatch.delenv("REDIS__URL", raising=False)
     reset_settings_cache()
@@ -67,6 +68,7 @@ def test_lifespan_does_not_require_redis_when_rate_limiting_disabled(
 def test_lifespan_fails_fast_when_rate_limiting_enabled_without_redis(
     monkeypatch,
 ) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "local")
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
     monkeypatch.delenv("REDIS__URL", raising=False)
     reset_settings_cache()
@@ -78,6 +80,74 @@ def test_lifespan_fails_fast_when_rate_limiting_enabled_without_redis(
     ):
         with TestClient(app):
             pass
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_lifespan_fails_fast_when_rate_limiting_disabled_in_secure_environment(
+    monkeypatch,
+    environment: str,
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", environment)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ALLOW_DISABLED_IN_PROD", "false")
+    reset_settings_cache()
+
+    app = create_app()
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "RATE_LIMITING__ENABLED=false is not allowed in staging/prod unless "
+            "RATE_LIMITING__ALLOW_DISABLED_IN_PROD=true"
+        ),
+    ):
+        with TestClient(app):
+            pass
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_lifespan_allows_emergency_bypass_when_rate_limiting_disabled(
+    monkeypatch,
+    environment: str,
+) -> None:
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    monkeypatch.setenv("APP__ENVIRONMENT", environment)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ALLOW_DISABLED_IN_PROD", "true")
+    reset_settings_cache()
+
+    stream = io.StringIO()
+    with patch("sys.stdout", stream):
+        app = create_app()
+        with TestClient(app) as client:
+            response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+    records = _parse_json_lines(stream.getvalue())
+    warning_logs = [
+        record
+        for record in records
+        if record.get("event") == "rate_limiting_disabled_in_secure_environment"
+    ]
+    assert warning_logs
+    assert warning_logs[-1]["environment"] == environment
+    assert warning_logs[-1]["category"] == "security"
+    assert warning_logs[-1]["allow_disabled_in_prod"] is True
+
+
+def test_lifespan_rate_limiting_disabled_is_allowed_in_test_environment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "test")
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ALLOW_DISABLED_IN_PROD", "false")
+    monkeypatch.delenv("REDIS__URL", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
 
 
 def test_lifespan_default_startup_does_not_require_otlp_endpoint(monkeypatch) -> None:

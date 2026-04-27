@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from inspect import isawaitable
 from typing import Any
 
@@ -29,7 +30,11 @@ HTTP_SERVER_DURATION_BUCKETS: tuple[float, ...] = (
 
 
 def _build_service_name(settings: Settings) -> str:
-    return settings.observability.service_name or settings.app.name
+    return (
+        os.getenv("OTEL_SERVICE_NAME")
+        or settings.observability.service_name
+        or settings.app.name
+    )
 
 
 def _load_otlp_metric_exporter() -> type[Any]:

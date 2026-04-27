@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from app.core.config.settings import RateLimitingSettings
 from app.core.rate_limit.policies import (
     INVITE_ACCEPT_POLICY,
     INVITE_CREATE_POLICY,
     RateLimitPolicy,
+    build_default_rate_limit_policy,
 )
 
 
@@ -36,3 +38,9 @@ def get_rate_limit_policy(name: str) -> RateLimitPolicy:
 
 def iter_rate_limit_policies() -> tuple[RateLimitPolicy, ...]:
     return _REGISTERED_POLICIES
+
+
+def create_explicit_default_policy(
+    settings: RateLimitingSettings,
+) -> RateLimitPolicy:
+    return build_default_rate_limit_policy(settings=settings)

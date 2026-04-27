@@ -4,12 +4,20 @@
 
 Rate limiting is implemented for selected sensitive endpoints using Redis-backed `limits`.
 
-## Default behaviour
+## Default behavior
 
-- disabled by default;
-- `RATE_LIMITING__ENABLED=false`;
+- disabled by default (`RATE_LIMITING__ENABLED=false`);
 - Redis is required only when rate limiting is enabled;
-- startup fails fast if rate limiting is enabled and `REDIS__URL` is missing.
+- startup fails fast when rate limiting is enabled and `REDIS__URL` is missing.
+
+## Security behavior for staging/prod
+
+In secure environments (`APP__ENVIRONMENT=staging|prod`):
+
+- `RATE_LIMITING__ENABLED=false` + `RATE_LIMITING__ALLOW_DISABLED_IN_PROD=false` => startup fail-fast.
+- `RATE_LIMITING__ENABLED=false` + `RATE_LIMITING__ALLOW_DISABLED_IN_PROD=true` => startup allowed with explicit security warning log.
+
+`RATE_LIMITING__ALLOW_DISABLED_IN_PROD=true` is an emergency bypass and must be explicit and auditable.
 
 ## Policies
 
@@ -29,10 +37,31 @@ Rate limiting is implemented for selected sensitive endpoints using Redis-backed
 
 - unauthenticated protected requests return 401 before rate-limit checks;
 - authenticated over-limit requests return 429;
-- 429 responses include `Retry-After`;
+- 429 responses use Problem Details and include `Retry-After`;
 - Redis/rate-limiter backend failure under fail-closed policy returns 503;
 - over-limit requests must not execute endpoint body;
 - over-limit requests must not perform DB I/O.
+
+## Explicit default policy factory (no fallback)
+
+The following settings are used only for creating an explicit default policy object:
+
+- `RATE_LIMITING__DEFAULT_LIMIT`
+- `RATE_LIMITING__DEFAULT_WINDOW_SECONDS`
+- `RATE_LIMITING__DEFAULT_FAIL_OPEN`
+
+Important:
+
+- there is no automatic policy fallback;
+- unknown policy names must fail clearly;
+- endpoint authors must explicitly attach a policy.
+
+Example (explicit usage):
+
+```python
+default_policy = create_explicit_default_policy(settings.rate_limiting)
+Depends(rate_limit_dependency(default_policy))
+```
 
 ## Observability
 
@@ -48,18 +77,3 @@ Allowed `rate_limit.result` values:
 - `blocked`
 - `backend_error`
 - `fail_open`
-
-## Acceptance checklist
-
-- [ ] default local/test startup does not require Redis;
-- [ ] rate limiting enabled without Redis fails fast;
-- [ ] invite create is rate limited;
-- [ ] invite accept is rate limited;
-- [ ] 401 happens before limiter for unauthenticated protected requests;
-- [ ] 429 includes Problem Details;
-- [ ] 429 includes `Retry-After`;
-- [ ] 429 does not execute endpoint body;
-- [ ] 429 does not perform DB I/O;
-- [ ] fail-closed backend error returns 503;
-- [ ] rate-limit metrics are recorded;
-- [ ] sensitive endpoint protection is enforced by tests.

@@ -93,6 +93,7 @@ class AuthSettings(BaseModel):
 
 class RateLimitingSettings(BaseModel):
     enabled: bool = False
+    allow_disabled_in_prod: bool = False
     backend: Literal["redis"] = "redis"
     redis_prefix: str = "rate-limit"
     trust_proxy_headers: bool = False

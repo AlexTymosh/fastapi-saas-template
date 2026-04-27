@@ -219,6 +219,47 @@ def test_init_observability_service_name_falls_back_to_app_name(
     assert service_name_calls == ["fallback-app"]
 
 
+def test_init_observability_service_name_prefers_otel_env_variable(
+    monkeypatch,
+) -> None:
+    settings = Settings.model_validate(
+        {
+            "app": {"name": "fallback-app"},
+            "observability": {
+                "metrics_enabled": True,
+                "exporter": "otlp",
+                "otlp_endpoint": "http://otel-collector:4318/v1/metrics",
+                "service_name": "from-settings",
+            },
+        }
+    )
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "from-otel-env")
+
+    monkeypatch.setattr(
+        lifecycle, "_load_otlp_metric_exporter", lambda: _FactoryCallRecorder()
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_load_periodic_exporting_metric_reader",
+        lambda: _FactoryCallRecorder(),
+    )
+    monkeypatch.setattr(
+        lifecycle, "_load_meter_provider", lambda: _FactoryCallRecorder()
+    )
+
+    service_name_calls: list[str] = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_build_resource",
+        lambda service_name: service_name_calls.append(service_name) or {},
+    )
+    monkeypatch.setattr(lifecycle.metrics, "set_meter_provider", lambda provider: None)
+
+    run_async(lifecycle.init_observability(settings))
+
+    assert service_name_calls == ["from-otel-env"]
+
+
 def test_init_observability_fails_fast_without_otlp_endpoint() -> None:
     settings = Settings.model_validate(
         {

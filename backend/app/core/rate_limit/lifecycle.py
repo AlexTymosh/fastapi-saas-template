@@ -48,17 +48,25 @@ async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
     log = get_logger(__name__)
 
     if not settings.rate_limiting.enabled:
+        is_secure_environment = settings.app.environment in {"staging", "prod"}
+        if is_secure_environment and not settings.rate_limiting.allow_disabled_in_prod:
+            raise RuntimeError(
+                "RATE_LIMITING__ENABLED=false is not allowed in staging/prod unless "
+                "RATE_LIMITING__ALLOW_DISABLED_IN_PROD=true"
+            )
+
         app.state.rate_limiter_runtime = RateLimiterRuntime(
             enabled=False,
             storage=None,
             limiter=None,
             strategy_name=None,
         )
-        if settings.app.environment in {"staging", "prod"}:
+        if is_secure_environment:
             log.warning(
-                "rate_limiting_disabled",
+                "rate_limiting_disabled_in_secure_environment",
                 environment=settings.app.environment,
                 category="security",
+                allow_disabled_in_prod=settings.rate_limiting.allow_disabled_in_prod,
             )
         return
 
