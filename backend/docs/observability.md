@@ -20,6 +20,34 @@ Current rate-limit metric names:
 - `rate_limit.backend_errors.total`
 - `rate_limit.check.duration`
 
+## HTTP RED metrics foundation
+
+The project records HTTP RED-style metrics through OpenTelemetry API instruments.
+
+Current HTTP metric names:
+
+- `http.server.requests.total`
+- `http.server.errors.total`
+- `http.server.request.duration`
+
+Current phase:
+
+- no OpenTelemetry SDK is initialized;
+- no exporter is configured;
+- no `/metrics` endpoint is exposed;
+- Prometheus and Grafana are not connected yet.
+
+Route label rule:
+
+- use only route templates from `request.scope.get("route").path`;
+- never use raw URL path;
+- use `"unknown"` when route template is unavailable.
+
+Error rule:
+
+- 5xx responses are counted as errors;
+- 4xx responses are not counted as server errors.
+
 ## Rate-limit metric results
 
 Allowed result values:
@@ -70,12 +98,6 @@ If the route template is unavailable, use `"unknown"`.
 ## Future phases
 
 P1:
-
-- add HTTP RED middleware
-- use route templates only
-- keep labels low-cardinality
-
-P2:
 
 - initialize OpenTelemetry SDK
 - add exporter

@@ -11,6 +11,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware.access_log import AccessLogMiddleware
 from app.core.middleware.request_context import RequestContextMiddleware
+from app.core.observability.middleware import HttpMetricsMiddleware
 from app.core.rate_limit import init_rate_limiter, shutdown_rate_limiter
 from app.core.redis import close_redis
 
@@ -69,6 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resolved_settings.request_context.trust_incoming_request_id
         ),
     )
+    app.add_middleware(HttpMetricsMiddleware)
     app.add_middleware(AccessLogMiddleware)
 
     register_exception_handlers(

@@ -147,6 +147,8 @@ def test_metrics_helpers_emit_only_low_cardinality_attributes(monkeypatch) -> No
         "path",
         "raw_path",
         "url",
+        "query",
+        "query_string",
         "ip",
         "client_ip",
         "token",
@@ -167,6 +169,77 @@ def test_metrics_helpers_emit_only_low_cardinality_attributes(monkeypatch) -> No
     for _, attributes in duration_histogram.calls:
         assert set(attributes).issubset(metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
         assert set(attributes).isdisjoint(forbidden_keys)
+
+
+def test_http_metrics_helpers_emit_allowed_attributes_only(monkeypatch) -> None:
+    requests_counter = _FakeCounter()
+    errors_counter = _FakeCounter()
+    duration_histogram = _FakeHistogram()
+    monkeypatch.setattr(metrics, "http_server_requests_total", requests_counter)
+    monkeypatch.setattr(metrics, "http_server_errors_total", errors_counter)
+    monkeypatch.setattr(metrics, "http_server_request_duration", duration_histogram)
+
+    metrics.record_http_request(
+        method="GET",
+        route="/api/v1/test/items/{item_id}",
+        status_code=200,
+    )
+    metrics.record_http_error(
+        method="GET",
+        route="/api/v1/test/items/{item_id}",
+        status_code=500,
+        error_type="http_5xx",
+    )
+    metrics.record_http_request_duration(
+        method="GET",
+        route="/api/v1/test/items/{item_id}",
+        status_code=200,
+        duration_seconds=0.01,
+    )
+
+    forbidden_keys = {
+        "user_id",
+        "email",
+        "organisation_id",
+        "request_id",
+        "trace_id",
+        "path",
+        "raw_path",
+        "url",
+        "query",
+        "query_string",
+        "ip",
+        "client_ip",
+        "token",
+        "redis_key",
+        "identifier",
+        "identifier_value",
+        "hashed_identifier",
+    }
+
+    for _, attributes in requests_counter.calls:
+        assert set(attributes).issubset(metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS)
+        assert set(attributes).isdisjoint(forbidden_keys)
+
+    for _, attributes in errors_counter.calls:
+        assert set(attributes).issubset(metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS)
+        assert set(attributes).isdisjoint(forbidden_keys)
+
+    for _, attributes in duration_histogram.calls:
+        assert set(attributes).issubset(metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS)
+        assert set(attributes).isdisjoint(forbidden_keys)
+
+
+def test_http_metrics_helpers_reject_unsupported_attributes() -> None:
+    with pytest.raises(ValueError, match="Unsupported HTTP metric attribute keys"):
+        metrics._validate_http_attribute_keys(  # noqa: SLF001
+            {
+                "http.request.method": "GET",
+                "http.route": "/api/v1/test/items/{item_id}",
+                "http.response.status_code": 200,
+                "path": "/api/v1/test/items/123",
+            }
+        )
 
 
 @pytest.mark.parametrize("result", ["allowed", "blocked", "backend_error", "fail_open"])
