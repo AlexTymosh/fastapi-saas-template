@@ -180,6 +180,39 @@ def test_init_observability_otlp_initializes_sdk_components(monkeypatch) -> None
     assert len(set_meter_provider_calls) == 1
 
 
+def test_init_observability_passes_endpoint_without_path_mutation(monkeypatch) -> None:
+    settings = Settings.model_validate(
+        {
+            "observability": {
+                "metrics_enabled": True,
+                "exporter": "otlp",
+                "otlp_endpoint": "http://otel-collector:4318/v1/metrics",
+            }
+        }
+    )
+
+    otlp_exporter = _FactoryCallRecorder()
+    monkeypatch.setattr(lifecycle, "_load_otlp_metric_exporter", lambda: otlp_exporter)
+    monkeypatch.setattr(
+        lifecycle,
+        "_load_periodic_exporting_metric_reader",
+        lambda: _FactoryCallRecorder(),
+    )
+    monkeypatch.setattr(
+        lifecycle, "_load_meter_provider", lambda: _FactoryCallRecorder()
+    )
+    monkeypatch.setattr(lifecycle, "_build_resource", lambda service_name: {})
+    monkeypatch.setattr(lifecycle.metrics, "set_meter_provider", lambda provider: None)
+
+    run_async(lifecycle.init_observability(settings))
+
+    assert len(otlp_exporter.calls) == 1
+    assert (
+        otlp_exporter.calls[0][1]["endpoint"] == "http://otel-collector:4318/v1/metrics"
+    )
+    assert not otlp_exporter.calls[0][1]["endpoint"].endswith("/v1/metrics/v1/metrics")
+
+
 def test_init_observability_service_name_falls_back_to_app_name(
     monkeypatch,
 ) -> None:

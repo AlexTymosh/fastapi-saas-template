@@ -2,60 +2,27 @@
 
 ## Current phase
 
+This phase adds an **optional OpenTelemetry Collector-only verification path** for OTLP HTTP metrics export.
+
+Current status:
+
 - OpenTelemetry API instrumentation exists.
 - Optional OpenTelemetry Metrics SDK lifecycle exists.
 - Optional OTLP HTTP exporter configuration exists.
-- No OTel Collector profile exists yet.
+- Optional OTel Collector profile now exists for manual verification.
 - No `/metrics` endpoint is exposed.
-- Prometheus and Grafana are not connected yet.
+- Prometheus and Grafana are still not connected.
 
-## Current metrics foundation
+## Metrics foundation (unchanged)
 
-The current foundation prepares rate-limit and HTTP metrics through OpenTelemetry API
-instruments. Without an initialized SDK, these instruments behave as no-op implementations
-at runtime. This keeps instrumentation points stable while preserving current runtime behavior.
-
-## OpenTelemetry SDK and exporter
-
-The project can initialize OpenTelemetry Metrics SDK when explicitly enabled.
-
-Default behavior:
+Default behavior remains no-op and safe:
 
 - `OBSERVABILITY__METRICS_ENABLED=false`
 - `OBSERVABILITY__EXPORTER=none`
-- no SDK/exporter is initialized
-- OpenTelemetry API instruments remain no-op
+- no SDK/exporter initialization
+- OpenTelemetry API instruments behave as no-op
 
-OTLP HTTP exporter:
-
-- set `OBSERVABILITY__METRICS_ENABLED=true`
-- set `OBSERVABILITY__EXPORTER=otlp`
-- set `OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4318/v1/metrics`
-
-Tuning:
-
-- `OBSERVABILITY__OTLP_TIMEOUT_SECONDS=2.0`
-- `OBSERVABILITY__EXPORT_INTERVAL_MILLIS=60000`
-- `OBSERVABILITY__EXPORT_TIMEOUT_MILLIS=2000`
-
-Current limitations:
-
-- no `/metrics` endpoint
-- no Prometheus service
-- no Grafana service
-- no tracing
-- no logs exporter
-- no database/Redis auto-instrumentation
-
-Implementation notes:
-
-- `http.server.request.duration` is configured with explicit histogram buckets during SDK initialization.
-- OpenTelemetry global `MeterProvider` is process-wide and set-once.
-- Tests should use monkeypatch/fakes for lifecycle assertions and must not reset private OpenTelemetry globals.
-
-## HTTP RED metrics foundation
-
-The project records HTTP RED-style metrics through OpenTelemetry API instruments.
+When explicitly enabled (`metrics_enabled=true`, `exporter=otlp`), the app exports metrics via OTLP HTTP.
 
 Current HTTP metric names:
 
@@ -63,116 +30,150 @@ Current HTTP metric names:
 - `http.server.errors.total`
 - `http.server.request.duration`
 
-Route label rule:
-
-- use only route templates from `request.scope.get("route").path`;
-- never use raw URL path;
-- use `"unknown"` when route template is unavailable.
-
-Error rule:
-
-- 5xx responses are counted as errors;
-- 4xx responses are not counted as server errors.
-
-## Rate-limit observability outcomes
-
-Rate-limit metrics use `rate_limit.result` to describe the limiter decision or failure mode.
-
-| Result | Meaning | Expected HTTP behaviour | Operational meaning |
-|---|---|---|---|
-| `allowed` | Request passed the limiter | request continues | normal traffic |
-| `blocked` | Request exceeded configured limit | 429 | client/user exceeded policy |
-| `backend_error` | Limiter backend failed and policy failed closed | 503 | Redis/backend unavailable |
-| `fail_open` | Limiter backend failed and policy allowed request | request continues | degraded protection mode |
-| `runtime_unavailable` | Rate limiting is enabled but limiter runtime/limiter is missing | 503 | application lifecycle/configuration issue |
-
 Current rate-limit metric names:
 
 - `rate_limit.requests.total`
 - `rate_limit.backend_errors.total`
 - `rate_limit.check.duration`
 
-Allowed `rate_limit.result` values:
-
-- `allowed`
-- `blocked`
-- `backend_error`
-- `fail_open`
-- `runtime_unavailable`
-
-Allowed labels/attributes:
-
-- `rate_limit.policy`
-- `rate_limit.result`
-- `rate_limit.identifier_kind`
-- `error.type`
-
-Forbidden labels/attributes:
-
-- user id
-- email
-- organisation id
-- request id
-- trace id
-- raw path
-- raw URL
-- IP address
-- token
-- Redis key
-- identifier value
-- hashed identifier value
-
-## Rate-limit dashboard signals
-
-Recommended dashboard panels:
-
-- allowed requests by policy;
-- blocked requests by policy;
-- backend errors by policy and error type;
-- fail-open events by policy;
-- runtime unavailable events;
-- rate-limit check duration p50/p95/p99.
-
-Recommended alert candidates:
-
-- `runtime_unavailable > 0`: critical;
-- `fail_open > 0` on sensitive policies: critical;
-- sustained `backend_error > 0`: warning/critical depending on environment;
-- sudden spike in `blocked`: warning/security investigation;
-- high p95 `rate_limit.check.duration`: warning.
-
-## Metrics recording failure handling
-
-Metric recording is best-effort.
-
-Failures in OpenTelemetry instruments, SDK/exporter integration, or observability helpers
-must not affect API behavior.
-
-The project records an internal self-metric:
+Internal observability failure self-metric:
 
 - `observability.recording_failures.total`
 
-Failure logs are rate-limited in-process to avoid log storms.
+## Optional collector profile
 
-Failure logs must remain low-cardinality and must not include:
+The collector is optional and does not start in the default stack.
 
-- user id
-- email
-- organisation id
-- request id
-- trace id
-- raw path
-- raw URL
-- IP address
-- token
-- Redis key
-- identifier value
-- hashed identifier value
-- exception message
+Start default stack (collector is not started):
 
-## Future phases
+```bash
+docker compose up
+```
 
-- add optional OTel Collector profile for local verification;
-- add Prometheus-compatible collection path;
-- add Grafana dashboards;
-- add alert rules.
+Start collector only through profile:
+
+```bash
+docker compose --profile observability up otel-collector
+```
+
+Collector config is intentionally minimal:
+
+- receiver: OTLP HTTP (`0.0.0.0:4318`)
+- exporter: `debug` with detailed verbosity
+- pipeline: metrics only
+- no traces pipeline
+- no logs pipeline
+- no Prometheus exporter
+
+## OTLP endpoint configuration
+
+### Host app + collector in Docker
+
+Use `localhost` because the app process runs on the host machine:
+
+```bash
+OBSERVABILITY__METRICS_ENABLED=true
+OBSERVABILITY__EXPORTER=otlp
+OBSERVABILITY__OTLP_ENDPOINT=http://localhost:4318/v1/metrics
+```
+
+### App container + collector container in Docker Compose network
+
+Use the compose service name, not `localhost`:
+
+```bash
+OBSERVABILITY__METRICS_ENABLED=true
+OBSERVABILITY__EXPORTER=otlp
+OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4318/v1/metrics
+```
+
+Important networking rule:
+
+- `localhost` on host = developer machine.
+- `localhost` inside app container = the app container itself.
+- To reach collector from another container, use `otel-collector` service DNS name.
+
+## OTLP HTTP path rule (`/v1/metrics`)
+
+This project expects a **full metrics endpoint** in settings:
+
+- `http://localhost:4318/v1/metrics`
+- `http://otel-collector:4318/v1/metrics`
+
+Do **not** use bare base URL (for this project):
+
+- avoid `http://otel-collector:4318` unless your exporter setup appends signal path automatically.
+
+Behavior verification for current dependency version (`opentelemetry-exporter-otlp-proto-http==1.28.2`):
+
+- `OTLPMetricExporter(endpoint=...)` uses the provided `endpoint` as-is.
+- Automatic `/v1/metrics` appending is used in fallback/env-based base endpoint handling, not when `endpoint=` is explicitly passed.
+
+Because this code passes `endpoint=settings.observability.otlp_endpoint` directly, you must provide the full `/v1/metrics` path and avoid duplicated paths such as:
+
+- `http://otel-collector:4318/v1/metrics/v1/metrics`
+
+## Manual OTLP metrics verification
+
+1. Start the collector:
+
+```bash
+docker compose --profile observability up otel-collector
+```
+
+2. Start the app with OTLP exporter enabled.
+
+Host app example:
+
+```bash
+OBSERVABILITY__METRICS_ENABLED=true \
+OBSERVABILITY__EXPORTER=otlp \
+OBSERVABILITY__OTLP_ENDPOINT=http://localhost:4318/v1/metrics \
+uvicorn app.main:app --reload
+```
+
+Docker app example:
+
+```bash
+OBSERVABILITY__METRICS_ENABLED=true
+OBSERVABILITY__EXPORTER=otlp
+OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4318/v1/metrics
+```
+
+3. Trigger HTTP metrics:
+
+```bash
+curl http://localhost:8000/api/v1/health/live
+```
+
+4. Trigger rate-limit metrics using an existing rate-limited endpoint and valid local auth/test setup.
+
+- Do not add insecure debug routes for this verification.
+- Rate-limit metrics verification depends on having a reachable rate-limited endpoint and valid credentials/local setup.
+
+5. Inspect collector logs and confirm metric names appear:
+
+- `http.server.request.duration`
+- `http.server.requests.total`
+- `rate_limit.requests.total`
+- `rate_limit.check.duration`
+
+## Troubleshooting
+
+- Collector not started:
+  - run `docker compose --profile observability up otel-collector`.
+- Wrong host in endpoint:
+  - host app must use `localhost`;
+  - app container must use `otel-collector`.
+- Missing `/v1/metrics`:
+  - set full endpoint path in `OBSERVABILITY__OTLP_ENDPOINT`.
+- Duplicate `/v1/metrics`:
+  - check endpoint construction and avoid concatenating path twice.
+- Exporter timeout:
+  - increase `OBSERVABILITY__OTLP_TIMEOUT_SECONDS` and verify collector readiness.
+
+## Future phases (not in this phase)
+
+- Prometheus-compatible collection path.
+- Grafana dashboards.
+- Alert rules.

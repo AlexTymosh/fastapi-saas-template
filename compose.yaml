@@ -142,6 +142,17 @@ services:
     entrypoint: ["sh", "/init.sh"]
     restart: "no"
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.123.0
+    container_name: fastapi_otel_collector
+    profiles:
+      - observability
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./docker/otel/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4318:4318"
+
 volumes:
   postgres_data:
   redis_data:
