@@ -1,15 +1,36 @@
 from __future__ import annotations
 
 from inspect import isawaitable
-from typing import Any
+from typing import Any, Final
 
 from opentelemetry import metrics
+from opentelemetry.sdk.metrics.view import (
+    ExplicitBucketHistogramAggregation,
+    View,
+)
 
 from app.core.config.settings import Settings
 from app.core.logging import get_logger
 
 log = get_logger(__name__)
 _initialized_provider: Any | None = None
+
+HTTP_SERVER_DURATION_BUCKETS: Final[tuple[float, ...]] = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    2.5,
+    5.0,
+    7.5,
+    10.0,
+)
 
 
 def _build_service_name(settings: Settings) -> str:
@@ -44,6 +65,9 @@ def _build_resource(service_name: str) -> Any:
 
 async def init_observability(settings: Settings) -> None:
     global _initialized_provider
+    # OpenTelemetry's global MeterProvider is process-wide and set-once.
+    # We keep a local guard to avoid repeated set_meter_provider calls in-process.
+    # Tests should monkeypatch metrics.set_meter_provider and avoid private OTel resets.
 
     if _initialized_provider is not None:
         return
@@ -78,7 +102,17 @@ async def init_observability(settings: Settings) -> None:
         export_timeout_millis=settings.observability.export_timeout_millis,
     )
     resource = _build_resource(_build_service_name(settings))
-    provider = meter_provider_cls(metric_readers=[reader], resource=resource)
+    http_duration_view = View(
+        instrument_name="http.server.request.duration",
+        aggregation=ExplicitBucketHistogramAggregation(
+            boundaries=HTTP_SERVER_DURATION_BUCKETS
+        ),
+    )
+    provider = meter_provider_cls(
+        metric_readers=[reader],
+        resource=resource,
+        views=[http_duration_view],
+    )
 
     metrics.set_meter_provider(provider)
     _initialized_provider = provider

@@ -36,6 +36,17 @@ class _FakeProvider:
             raise RuntimeError("shutdown failed")
 
 
+class _FakeView:
+    def __init__(self, *, instrument_name: str, aggregation: object) -> None:
+        self.instrument_name = instrument_name
+        self.aggregation = aggregation
+
+
+class _FakeExplicitBucketHistogramAggregation:
+    def __init__(self, *, boundaries: tuple[float, ...]) -> None:
+        self.boundaries = boundaries
+
+
 class _AsyncFakeProvider:
     def __init__(
         self, *, raise_force_flush: bool = False, raise_shutdown: bool = False
@@ -129,12 +140,17 @@ def test_init_observability_otlp_initializes_sdk_components(monkeypatch) -> None
 
     class _ProviderFactory:
         def __call__(
-            self, *, metric_readers: list[object], resource: object
+            self,
+            *,
+            metric_readers: list[object],
+            resource: object,
+            views: list[object],
         ) -> _FakeProvider:
             provider_construction.append(
                 {
                     "metric_readers": metric_readers,
                     "resource": resource,
+                    "views": views,
                 }
             )
             return _FakeProvider()
@@ -152,6 +168,12 @@ def test_init_observability_otlp_initializes_sdk_components(monkeypatch) -> None
         lambda service_name: (
             resource_calls.append(service_name) or {"service.name": service_name}
         ),
+    )
+    monkeypatch.setattr(lifecycle, "View", _FakeView)
+    monkeypatch.setattr(
+        lifecycle,
+        "ExplicitBucketHistogramAggregation",
+        _FakeExplicitBucketHistogramAggregation,
     )
     monkeypatch.setattr(
         lifecycle.metrics,
@@ -175,6 +197,14 @@ def test_init_observability_otlp_initializes_sdk_components(monkeypatch) -> None
 
     assert resource_calls == ["custom-service"]
     assert len(provider_construction) == 1
+    views = provider_construction[0]["views"]
+    assert isinstance(views, list)
+    assert len(views) == 1
+    view = views[0]
+    assert isinstance(view, _FakeView)
+    assert view.instrument_name == "http.server.request.duration"
+    assert isinstance(view.aggregation, _FakeExplicitBucketHistogramAggregation)
+    assert view.aggregation.boundaries == lifecycle.HTTP_SERVER_DURATION_BUCKETS
     assert len(set_meter_provider_calls) == 1
 
 
@@ -330,19 +360,34 @@ def test_repeated_init_and_shutdown_do_not_leak_state(monkeypatch) -> None:
         lambda: _FactoryCallRecorder(),
     )
     monkeypatch.setattr(lifecycle, "_build_resource", lambda service_name: {})
+    monkeypatch.setattr(lifecycle, "View", _FakeView)
+    monkeypatch.setattr(
+        lifecycle,
+        "ExplicitBucketHistogramAggregation",
+        _FakeExplicitBucketHistogramAggregation,
+    )
 
     providers: list[_FakeProvider] = []
+    set_meter_provider_calls: list[object] = []
 
     class _ProviderFactory:
         def __call__(
-            self, *, metric_readers: list[object], resource: object
+            self,
+            *,
+            metric_readers: list[object],
+            resource: object,
+            views: list[object],
         ) -> _FakeProvider:
             provider = _FakeProvider()
             providers.append(provider)
             return provider
 
     monkeypatch.setattr(lifecycle, "_load_meter_provider", lambda: _ProviderFactory())
-    monkeypatch.setattr(lifecycle.metrics, "set_meter_provider", lambda provider: None)
+    monkeypatch.setattr(
+        lifecycle.metrics,
+        "set_meter_provider",
+        lambda provider: set_meter_provider_calls.append(provider),
+    )
 
     run_async(lifecycle.init_observability(settings))
     run_async(lifecycle.init_observability(settings))
@@ -350,5 +395,6 @@ def test_repeated_init_and_shutdown_do_not_leak_state(monkeypatch) -> None:
     run_async(lifecycle.shutdown_observability())
 
     assert len(providers) == 1
+    assert len(set_meter_provider_calls) == 1
     assert providers[0].force_flush_calls == 1
     assert providers[0].shutdown_calls == 1

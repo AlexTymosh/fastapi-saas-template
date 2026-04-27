@@ -108,6 +108,12 @@ Current limitations:
 - no logs exporter
 - no database/Redis auto-instrumentation
 
+Meter provider lifecycle note:
+
+- OpenTelemetry global `MeterProvider` is process-wide and set once;
+- tests must use monkeypatch/fakes for `metrics.set_meter_provider`;
+- tests must not reset private OpenTelemetry globals.
+
 ## HTTP RED metrics foundation
 
 The project records HTTP RED-style metrics through OpenTelemetry API instruments.
@@ -117,6 +123,11 @@ Current HTTP metric names:
 - `http.server.requests.total`
 - `http.server.errors.total`
 - `http.server.request.duration`
+
+HTTP request duration aggregation:
+
+- `http.server.request.duration` uses explicit histogram bucket boundaries;
+- boundaries are configured in SDK initialization for predictable latency slices.
 
 Current phase:
 
