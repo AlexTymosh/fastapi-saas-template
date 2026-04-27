@@ -113,10 +113,14 @@ _LOG_SUPPRESSION_WINDOW_SECONDS: Final = 60.0
 _last_metrics_failure_log_at: dict[tuple[str, str, str], float] = {}
 
 
+def _monotonic() -> float:
+    return time.monotonic()
+
+
 def _should_emit_failure_log(
     *, metric_name: str, metric_event: str, reason: str
 ) -> bool:
-    now = time.monotonic()
+    now = _monotonic()
     key = (metric_name, metric_event, reason)
     last_logged_at = _last_metrics_failure_log_at.get(key)
     if (

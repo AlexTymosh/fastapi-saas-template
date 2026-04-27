@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import chain, repeat
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -71,6 +72,11 @@ class _FailureCounter:
 
     def add(self, value: int, attributes: dict[str, str]) -> None:
         self.calls.append((value, attributes))
+
+
+def _fake_clock(*values: float):
+    iterator = chain(values, repeat(values[-1]))
+    return lambda: next(iterator)
 
 
 async def _principal() -> AuthenticatedPrincipal:
@@ -413,7 +419,6 @@ def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
 def test_metrics_failure_logs_are_rate_limited(monkeypatch) -> None:
     captured_logs: list[dict[str, object]] = []
     failures_counter = _FailureCounter()
-    monotonic_values = iter([10.0, 20.0, 90.0])
 
     class _FakeLogger:
         def warning(self, event_name: str, **kwargs: object) -> None:
@@ -429,8 +434,9 @@ def test_metrics_failure_logs_are_rate_limited(monkeypatch) -> None:
         failures_counter,
     )
     monkeypatch.setattr(
-        "app.core.observability.metrics.time.monotonic",
-        lambda: next(monotonic_values),
+        metrics,
+        "_monotonic",
+        _fake_clock(10.0, 20.0, 90.0),
     )
 
     metrics._safe_record_metric(  # noqa: SLF001
@@ -456,7 +462,6 @@ def test_metrics_failure_logs_are_rate_limited(monkeypatch) -> None:
 def test_metrics_failure_logs_are_isolated_by_metric_key(monkeypatch) -> None:
     captured_logs: list[dict[str, object]] = []
     failures_counter = _FailureCounter()
-    monotonic_values = iter([10.0, 10.0, 10.0])
 
     class _FakeLogger:
         def warning(self, event_name: str, **kwargs: object) -> None:
@@ -469,8 +474,9 @@ def test_metrics_failure_logs_are_isolated_by_metric_key(monkeypatch) -> None:
         failures_counter,
     )
     monkeypatch.setattr(
-        "app.core.observability.metrics.time.monotonic",
-        lambda: next(monotonic_values),
+        metrics,
+        "_monotonic",
+        _fake_clock(10.0, 10.0, 10.0),
     )
 
     metrics._handle_metric_recording_failure(  # noqa: SLF001
