@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
+from limits import RateLimitItemPerMinute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -89,14 +90,12 @@ def _build_app(
     app = create_app()
     probe_policy = RateLimitPolicy(
         name="test_probe",
-        limit=1,
-        window_seconds=60,
+        item=RateLimitItemPerMinute(1),
         fail_open=False,
     )
     fail_open_policy = RateLimitPolicy(
         name="test_fail_open",
-        limit=1,
-        window_seconds=60,
+        item=RateLimitItemPerMinute(1),
         fail_open=True,
     )
 
@@ -281,8 +280,7 @@ def test_over_limit_does_not_execute_endpoint_body_or_database_io(monkeypatch) -
     router = APIRouter()
     policy = RateLimitPolicy(
         name="test_db_guard",
-        limit=1,
-        window_seconds=60,
+        item=RateLimitItemPerMinute(1),
         fail_open=False,
     )
 
@@ -349,8 +347,7 @@ def test_unauthenticated_request_returns_401_without_limiter_or_database_io(
     router = APIRouter()
     policy = RateLimitPolicy(
         name="test_auth_before_rate_limit",
-        limit=1,
-        window_seconds=60,
+        item=RateLimitItemPerMinute(1),
         fail_open=False,
     )
 
@@ -395,13 +392,14 @@ def test_rate_limiting_enablement_does_not_leak_between_apps(monkeypatch) -> Non
 
 def test_invite_policies_are_distinct_and_declarative() -> None:
     assert INVITE_ACCEPT_POLICY.name == "invite_accept"
-    assert INVITE_ACCEPT_POLICY.limit == 5
-    assert INVITE_ACCEPT_POLICY.window_seconds == 300
+    assert INVITE_ACCEPT_POLICY.item.amount == 5
+    assert INVITE_ACCEPT_POLICY.item.multiples == 5
+    assert INVITE_ACCEPT_POLICY.item.get_expiry() == 300
     assert INVITE_ACCEPT_POLICY.fail_open is False
 
     assert INVITE_CREATE_POLICY.name == "invite_create"
-    assert INVITE_CREATE_POLICY.limit == 20
-    assert INVITE_CREATE_POLICY.window_seconds == 3600
+    assert INVITE_CREATE_POLICY.item.amount == 20
+    assert INVITE_CREATE_POLICY.item.get_expiry() == 3600
     assert INVITE_CREATE_POLICY.fail_open is False
 
 
