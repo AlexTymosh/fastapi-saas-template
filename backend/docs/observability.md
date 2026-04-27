@@ -2,82 +2,18 @@
 
 ## Current phase
 
-- The project uses OpenTelemetry API instrumentation by default.
-- OpenTelemetry Metrics SDK initialization is optional and controlled by settings.
-- Optional OpenTelemetry SDK lifecycle supports OTLP HTTP exporter configuration.
+- OpenTelemetry API instrumentation exists.
+- Optional OpenTelemetry Metrics SDK lifecycle exists.
+- Optional OTLP HTTP exporter configuration exists.
+- No OTel Collector profile exists yet.
 - No `/metrics` endpoint is exposed.
-- Prometheus and Grafana are not connected at this phase.
+- Prometheus and Grafana are not connected yet.
 
 ## Current metrics foundation
 
-The current foundation prepares rate-limit metrics through OpenTelemetry API instruments.
-Without an initialized SDK, these instruments behave as no-op implementations at runtime.
-This allows stable instrumentation points now, while keeping runtime behavior unchanged.
-
-Current rate-limit metric names:
-
-- `rate_limit.requests.total`
-- `rate_limit.backend_errors.total`
-- `rate_limit.check.duration`
-
-## Rate-limit metric results
-
-Allowed result values:
-
-- `allowed`
-- `blocked`
-- `backend_error`
-- `fail_open`
-- `runtime_unavailable`
-
-`runtime_unavailable` means rate limiting was enabled, but the application did not
-have an initialized limiter runtime or limiter instance.
-
-## Low-cardinality rules
-
-Allowed labels/attributes:
-
-- `rate_limit.policy`
-- `rate_limit.result`
-- `rate_limit.identifier_kind`
-- `error.type`
-
-Forbidden labels/attributes:
-
-- user id
-- email
-- organisation id
-- request id
-- trace id
-- raw path
-- raw URL
-- IP address
-- token
-- Redis key
-- identifier value
-- hashed identifier value
-
-## Route template rule
-
-Future HTTP metrics must use route templates only:
-
-`request.scope.get("route").path`
-
-Do not use:
-
-- `request.url.path`
-- raw path
-- raw URL
-
-If the route template is unavailable, use `"unknown"`.
-
-## Future phases
-
-Next phase:
-
-- finalize OpenTelemetry SDK/exporter operational profile
-- expose or export metrics for Prometheus-compatible collection
-- prepare Grafana dashboard
+The current foundation prepares rate-limit and HTTP metrics through OpenTelemetry API
+instruments. Without an initialized SDK, these instruments behave as no-op implementations
+at runtime. This keeps instrumentation points stable while preserving current runtime behavior.
 
 ## OpenTelemetry SDK and exporter
 
@@ -127,13 +63,6 @@ Current HTTP metric names:
 - `http.server.errors.total`
 - `http.server.request.duration`
 
-Current phase:
-
-- no OpenTelemetry SDK is initialized;
-- no exporter is configured;
-- no `/metrics` endpoint is exposed;
-- Prometheus and Grafana are not connected yet.
-
 Route label rule:
 
 - use only route templates from `request.scope.get("route").path`;
@@ -145,12 +74,79 @@ Error rule:
 - 5xx responses are counted as errors;
 - 4xx responses are not counted as server errors.
 
+## Rate-limit observability outcomes
+
+Rate-limit metrics use `rate_limit.result` to describe the limiter decision or failure mode.
+
+| Result | Meaning | Expected HTTP behaviour | Operational meaning |
+|---|---|---|---|
+| `allowed` | Request passed the limiter | request continues | normal traffic |
+| `blocked` | Request exceeded configured limit | 429 | client/user exceeded policy |
+| `backend_error` | Limiter backend failed and policy failed closed | 503 | Redis/backend unavailable |
+| `fail_open` | Limiter backend failed and policy allowed request | request continues | degraded protection mode |
+| `runtime_unavailable` | Rate limiting is enabled but limiter runtime/limiter is missing | 503 | application lifecycle/configuration issue |
+
+Current rate-limit metric names:
+
+- `rate_limit.requests.total`
+- `rate_limit.backend_errors.total`
+- `rate_limit.check.duration`
+
+Allowed `rate_limit.result` values:
+
+- `allowed`
+- `blocked`
+- `backend_error`
+- `fail_open`
+- `runtime_unavailable`
+
+Allowed labels/attributes:
+
+- `rate_limit.policy`
+- `rate_limit.result`
+- `rate_limit.identifier_kind`
+- `error.type`
+
+Forbidden labels/attributes:
+
+- user id
+- email
+- organisation id
+- request id
+- trace id
+- raw path
+- raw URL
+- IP address
+- token
+- Redis key
+- identifier value
+- hashed identifier value
+
+## Rate-limit dashboard signals
+
+Recommended dashboard panels:
+
+- allowed requests by policy;
+- blocked requests by policy;
+- backend errors by policy and error type;
+- fail-open events by policy;
+- runtime unavailable events;
+- rate-limit check duration p50/p95/p99.
+
+Recommended alert candidates:
+
+- `runtime_unavailable > 0`: critical;
+- `fail_open > 0` on sensitive policies: critical;
+- sustained `backend_error > 0`: warning/critical depending on environment;
+- sudden spike in `blocked`: warning/security investigation;
+- high p95 `rate_limit.check.duration`: warning.
+
 ## Metrics recording failure handling
 
 Metric recording is best-effort.
 
-Failures in OpenTelemetry instruments, future SDK/exporter integration, or observability
-helpers must not affect API behavior.
+Failures in OpenTelemetry instruments, SDK/exporter integration, or observability helpers
+must not affect API behavior.
 
 The project records an internal self-metric:
 
@@ -173,3 +169,10 @@ Failure logs must remain low-cardinality and must not include:
 - identifier value
 - hashed identifier value
 - exception message
+
+## Future phases
+
+- add optional OTel Collector profile for local verification;
+- add Prometheus-compatible collection path;
+- add Grafana dashboards;
+- add alert rules.
