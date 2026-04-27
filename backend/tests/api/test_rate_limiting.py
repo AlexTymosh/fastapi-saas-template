@@ -67,16 +67,21 @@ async def _principal_user_b() -> AuthenticatedPrincipal:
     )
 
 
-def _build_app(monkeypatch, *, enabled: bool) -> TestClient:
-    async def _noop_init_rate_limiter(app, settings) -> None:
-        app.state.rate_limiter_runtime = RateLimiterRuntime(
+def _build_app(
+    monkeypatch,
+    *,
+    enabled: bool,
+    runtime: RateLimiterRuntime | None = None,
+) -> TestClient:
+    async def _fake_init_rate_limiter(app, settings) -> None:
+        app.state.rate_limiter_runtime = runtime or RateLimiterRuntime(
             enabled=False,
             storage=None,
             limiter=None,
             strategy_name=None,
         )
 
-    monkeypatch.setattr("app.main.init_rate_limiter", _noop_init_rate_limiter)
+    monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true" if enabled else "false")
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
     reset_settings_cache()
@@ -132,15 +137,14 @@ def test_rate_limiting_disabled_is_noop(monkeypatch) -> None:
 
 
 def test_over_limit_returns_429_problem_with_retry_after(monkeypatch) -> None:
-    client = _build_app(monkeypatch, enabled=True)
     fake = FakeLimiter(allow=False)
-
-    client.app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=fake,
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
     client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
 
     with client as api_client:
@@ -154,15 +158,14 @@ def test_over_limit_returns_429_problem_with_retry_after(monkeypatch) -> None:
 
 
 def test_rate_limiter_failure_fail_closed_returns_503(monkeypatch) -> None:
-    client = _build_app(monkeypatch, enabled=True)
     fake = FakeLimiter(raise_error=RuntimeError("redis down"))
-
-    client.app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=fake,
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
     client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
 
     with client as api_client:
@@ -174,13 +177,13 @@ def test_rate_limiter_failure_fail_closed_returns_503(monkeypatch) -> None:
 
 
 def test_rate_limiter_failure_fail_open_allows_request(monkeypatch) -> None:
-    client = _build_app(monkeypatch, enabled=True)
-    client.app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=FakeLimiter(raise_error=RuntimeError("redis down")),
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
     client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
 
     with client as api_client:
@@ -190,14 +193,14 @@ def test_rate_limiter_failure_fail_open_allows_request(monkeypatch) -> None:
 
 
 def test_authenticated_users_have_independent_buckets(monkeypatch) -> None:
-    client = _build_app(monkeypatch, enabled=True)
     fake = FakeLimiter(allow=True)
-    client.app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=fake,
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
 
     client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
     with client as api_client:
@@ -214,13 +217,13 @@ def test_authenticated_users_have_independent_buckets(monkeypatch) -> None:
 
 
 def test_health_endpoints_are_not_rate_limited(monkeypatch) -> None:
-    client = _build_app(monkeypatch, enabled=True)
-    client.app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=FakeLimiter(allow=False),
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
     with client as api_client:
         response = api_client.get("/api/v1/health/live")
     assert response.status_code == 200
@@ -229,13 +232,13 @@ def test_health_endpoints_are_not_rate_limited(monkeypatch) -> None:
 def test_unauthenticated_protected_endpoint_returns_401_before_rate_limiter(
     monkeypatch,
 ) -> None:
-    client = _build_app(monkeypatch, enabled=True)
-    client.app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=FakeLimiter(allow=False),
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
 
     with client as api_client:
         response = api_client.post("/api/v1/invites/accept", json={"token": "x"})
@@ -246,18 +249,15 @@ def test_unauthenticated_protected_endpoint_returns_401_before_rate_limiter(
 
 def test_over_limit_does_not_execute_endpoint_body_or_database_io(monkeypatch) -> None:
     endpoint_body_called = False
-    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
-    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
-    reset_settings_cache()
-
-    app = create_app()
     fake = FakeLimiter(allow=False)
-    app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=fake,
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    app = client.app
     app.dependency_overrides[require_authenticated_principal] = _principal_user_a
 
     session = AsyncMock(spec=AsyncSession)
@@ -300,10 +300,11 @@ def test_over_limit_does_not_execute_endpoint_body_or_database_io(monkeypatch) -
 
     app.include_router(router)
 
-    with TestClient(app) as client:
-        response = client.get("/api/v1/test/rate-limit/db-guard")
+    with client as api_client:
+        response = api_client.get("/api/v1/test/rate-limit/db-guard")
 
     assert response.status_code == 429
+    assert len(fake.hit_calls) == 1
     assert endpoint_body_called is False
     session.execute.assert_not_called()
     session.flush.assert_not_called()
@@ -322,18 +323,15 @@ def test_unauthenticated_request_returns_401_without_limiter_or_database_io(
     monkeypatch,
 ) -> None:
     endpoint_body_called = False
-    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
-    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
-    reset_settings_cache()
-
-    app = create_app()
     fake = FakeLimiter(allow=False, raise_error=RuntimeError("limiter must not run"))
-    app.state.rate_limiter_runtime = RateLimiterRuntime(
+    runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
         limiter=fake,
         strategy_name="moving-window",
     )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    app = client.app
 
     session = AsyncMock(spec=AsyncSession)
     session.execute = AsyncMock()
@@ -370,8 +368,8 @@ def test_unauthenticated_request_returns_401_without_limiter_or_database_io(
 
     app.include_router(router)
 
-    with TestClient(app) as client:
-        response = client.get("/api/v1/test/rate-limit/auth-first")
+    with client as api_client:
+        response = api_client.get("/api/v1/test/rate-limit/auth-first")
 
     assert response.status_code == 401
     assert response.json()["error_code"] == "unauthorized"
