@@ -14,6 +14,11 @@ from app.core.auth import AuthenticatedPrincipal, require_authenticated_principa
 from app.core.config.settings import get_settings
 from app.core.errors import RateLimiterUnavailableError, TooManyRequestsError
 from app.core.logging import get_logger
+from app.core.observability import (
+    record_rate_limit_backend_error,
+    record_rate_limit_check_duration,
+    record_rate_limit_request,
+)
 from app.core.rate_limit.identifiers import build_identifier
 from app.core.rate_limit.policies import RateLimitPolicy
 
@@ -63,6 +68,22 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
         )
         item = policy.item
 
+        started_at = time.perf_counter()
+
+        def _record_outcome(result: str) -> None:
+            duration_seconds = max(0.0, time.perf_counter() - started_at)
+            record_rate_limit_request(
+                policy_name=policy.name,
+                result=result,
+                identifier_kind=identifier.kind,
+            )
+            record_rate_limit_check_duration(
+                policy_name=policy.name,
+                result=result,
+                identifier_kind=identifier.kind,
+                duration_seconds=duration_seconds,
+            )
+
         try:
             allowed = await _await_with_timeout(
                 runtime.limiter.hit(item, namespace, identifier.hashed_value),
@@ -74,7 +95,13 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
             TimeoutError,
             RuntimeError,
         ) as exc:
+            record_rate_limit_backend_error(
+                policy_name=policy.name,
+                identifier_kind=identifier.kind,
+                error_type=exc.__class__.__name__,
+            )
             if policy.fail_open:
+                _record_outcome("fail_open")
                 log.warning(
                     "rate_limiter_fail_open",
                     policy=policy.name,
@@ -84,11 +111,13 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
                 )
                 return
 
+            _record_outcome("backend_error")
             raise RateLimiterUnavailableError(
                 detail="Rate limiter is temporarily unavailable.",
             ) from exc
 
         if allowed:
+            _record_outcome("allowed")
             return
 
         try:
@@ -109,6 +138,7 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
         ):
             retry_after = str(policy.item.get_expiry())
 
+        _record_outcome("blocked")
         raise TooManyRequestsError(
             detail="Too many requests.",
             headers={
