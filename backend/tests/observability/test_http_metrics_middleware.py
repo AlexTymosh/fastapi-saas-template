@@ -272,12 +272,11 @@ def test_4xx_response_does_not_record_error(monkeypatch) -> None:
 
 
 def test_success_response_is_preserved_when_request_metric_fails(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
+    def _raise_request_metric(value: int, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
+        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
     )
 
     client = TestClient(_build_app())
@@ -288,11 +287,11 @@ def test_success_response_is_preserved_when_request_metric_fails(monkeypatch) ->
 
 
 def test_success_response_is_preserved_when_duration_metric_fails(monkeypatch) -> None:
-    def _raise_duration_metric(**kwargs: object) -> None:
+    def _raise_duration_metric(value: float, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request_duration",
+        "app.core.observability.metrics.HTTP_REQUEST_DURATION.record",
         _raise_duration_metric,
     )
 
@@ -304,12 +303,11 @@ def test_success_response_is_preserved_when_duration_metric_fails(monkeypatch) -
 
 
 def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
-    def _raise_error_metric(**kwargs: object) -> None:
+    def _raise_error_metric(value: int, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_error",
-        _raise_error_metric,
+        "app.core.observability.metrics.HTTP_ERRORS_TOTAL.add", _raise_error_metric
     )
 
     client = TestClient(_build_app())
@@ -320,7 +318,7 @@ def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
 
 
 def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
+    def _raise_request_metric(value: int, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
     class _RaisingLogger:
@@ -328,10 +326,9 @@ def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -
             raise RuntimeError("logger failed")
 
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
+        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
     )
-    monkeypatch.setattr("app.core.observability.middleware.log", _RaisingLogger())
+    monkeypatch.setattr("app.core.observability.metrics.log", _RaisingLogger())
 
     client = TestClient(_build_app())
     response = client.get("/api/v1/test/success")
@@ -341,18 +338,17 @@ def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -
 
 
 def test_404_response_is_preserved_when_metrics_fail(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
+    def _raise_request_metric(value: int, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
-    def _raise_duration_metric(**kwargs: object) -> None:
+    def _raise_duration_metric(value: float, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
+        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
     )
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request_duration",
+        "app.core.observability.metrics.HTTP_REQUEST_DURATION.record",
         _raise_duration_metric,
     )
 
@@ -364,26 +360,24 @@ def test_404_response_is_preserved_when_metrics_fail(monkeypatch) -> None:
 
 
 def test_original_exception_is_preserved_when_metrics_fail(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
+    def _raise_request_metric(value: int, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
-    def _raise_duration_metric(**kwargs: object) -> None:
+    def _raise_duration_metric(value: float, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
-    def _raise_error_metric(**kwargs: object) -> None:
+    def _raise_error_metric(value: int, attributes: dict[str, str | int]) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
+        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
     )
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request_duration",
+        "app.core.observability.metrics.HTTP_REQUEST_DURATION.record",
         _raise_duration_metric,
     )
     monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_error",
-        _raise_error_metric,
+        "app.core.observability.metrics.HTTP_ERRORS_TOTAL.add", _raise_error_metric
     )
 
     client = TestClient(_build_app())

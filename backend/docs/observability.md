@@ -104,14 +104,20 @@ Error rule:
 - 5xx responses are counted as errors;
 - 4xx responses are not counted as server errors.
 
-## Runtime safety
+## Metrics recording failure handling
 
-Observability must not change API behavior.
+Metric recording is best-effort.
 
-Metric recording failures are swallowed and logged as low-cardinality observability warnings.
-The API response, status code, response body, and exception behavior remain unchanged.
+Failures in OpenTelemetry instruments, future SDK/exporter integration, or observability
+helpers must not affect API behavior.
 
-Metrics failure logs must not include:
+The project records an internal self-metric:
+
+- `observability.recording_failures.total`
+
+Failure logs are rate-limited in-process to avoid log storms.
+
+Failure logs must remain low-cardinality and must not include:
 
 - user id
 - email
