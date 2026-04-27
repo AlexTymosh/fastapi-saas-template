@@ -6,6 +6,7 @@ import uuid
 import pytest
 from fastapi import APIRouter, Depends
 from httpx import ASGITransport, AsyncClient
+from limits import RateLimitItemPerMinute
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.rate_limit.dependencies import rate_limit_dependency
@@ -43,8 +44,7 @@ async def test_real_redis_rate_limiter_blocks_after_threshold(
     router = APIRouter()
     policy = RateLimitPolicy(
         name="integration_probe",
-        limit=5,
-        window_seconds=60,
+        item=RateLimitItemPerMinute(5),
         fail_open=False,
     )
 

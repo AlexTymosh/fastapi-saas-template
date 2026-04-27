@@ -20,12 +20,6 @@ from app.core.rate_limit.policies import RateLimitPolicy
 log = get_logger(__name__)
 
 
-def _rate_limit_item(policy: RateLimitPolicy) -> Any:
-    from limits import RateLimitItemPerSecond  # type: ignore[import-not-found]
-
-    return RateLimitItemPerSecond(policy.limit, policy.window_seconds)
-
-
 async def _await_with_timeout(awaitable: Awaitable[Any], timeout_seconds: float) -> Any:
     return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
 
@@ -67,7 +61,7 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
         namespace = (
             f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
         )
-        item = _rate_limit_item(policy)
+        item = policy.item
 
         try:
             allowed = await _await_with_timeout(
@@ -113,7 +107,7 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
             TimeoutError,
             RuntimeError,
         ):
-            retry_after = str(policy.window_seconds)
+            retry_after = str(policy.item.get_expiry())
 
         raise TooManyRequestsError(
             detail="Too many requests.",
