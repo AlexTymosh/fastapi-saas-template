@@ -78,3 +78,65 @@ def test_lifespan_fails_fast_when_rate_limiting_enabled_without_redis(
     ):
         with TestClient(app):
             pass
+
+
+def test_lifespan_default_startup_does_not_require_otlp_endpoint(monkeypatch) -> None:
+    monkeypatch.delenv("OBSERVABILITY__OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("OBSERVABILITY__METRICS_ENABLED", raising=False)
+    monkeypatch.delenv("OBSERVABILITY__EXPORTER", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+
+
+def test_lifespan_fails_fast_when_observability_otlp_missing_endpoint(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OBSERVABILITY__METRICS_ENABLED", "true")
+    monkeypatch.setenv("OBSERVABILITY__EXPORTER", "otlp")
+    monkeypatch.delenv("OBSERVABILITY__OTLP_ENDPOINT", raising=False)
+    reset_settings_cache()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "OBSERVABILITY__OTLP_ENDPOINT is required when "
+            "OBSERVABILITY__METRICS_ENABLED=true and OBSERVABILITY__EXPORTER=otlp"
+        ),
+    ):
+        create_app()
+
+
+def test_lifespan_starts_when_observability_enabled_with_exporter_none(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OBSERVABILITY__METRICS_ENABLED", "true")
+    monkeypatch.setenv("OBSERVABILITY__EXPORTER", "none")
+    monkeypatch.delenv("OBSERVABILITY__OTLP_ENDPOINT", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+
+
+def test_lifespan_observability_does_not_change_rate_limiter_defaults(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OBSERVABILITY__METRICS_ENABLED", "true")
+    monkeypatch.setenv("OBSERVABILITY__EXPORTER", "none")
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.delenv("REDIS__URL", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200

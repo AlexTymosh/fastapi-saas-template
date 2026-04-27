@@ -11,6 +11,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware.access_log import AccessLogMiddleware
 from app.core.middleware.request_context import RequestContextMiddleware
+from app.core.observability import init_observability, shutdown_observability
 from app.core.observability.middleware import HttpMetricsMiddleware
 from app.core.rate_limit import init_rate_limiter, shutdown_rate_limiter
 from app.core.redis import close_redis
@@ -20,6 +21,7 @@ from app.core.redis import close_redis
 async def lifespan(app: FastAPI):
     log = get_logger(__name__)
     settings = get_settings()
+    await init_observability(settings)
     await init_rate_limiter(app, settings)
     log.info("app_started")
     try:
@@ -28,6 +30,7 @@ async def lifespan(app: FastAPI):
         await shutdown_rate_limiter(app)
         await close_redis()
         await dispose_engine()
+        await shutdown_observability()
         log.info("app_stopped")
 
 

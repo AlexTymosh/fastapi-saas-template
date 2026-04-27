@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -103,6 +103,47 @@ class RateLimitingSettings(BaseModel):
     storage_timeout_seconds: float = 1.0
 
 
+class ObservabilitySettings(BaseModel):
+    metrics_enabled: bool = False
+    exporter: Literal["none", "otlp"] = "none"
+    otlp_endpoint: str | None = None
+    service_name: str | None = None
+    otlp_timeout_seconds: float = Field(default=2.0, gt=0)
+    export_interval_millis: int = Field(default=60_000, gt=0)
+    export_timeout_millis: int = Field(default=2_000, gt=0)
+
+    @field_validator("otlp_endpoint")
+    @classmethod
+    def normalize_otlp_endpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        if not normalized:
+            return None
+        return normalized
+
+    @field_validator("service_name")
+    @classmethod
+    def normalize_service_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        if not normalized:
+            return None
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_otlp_requirements(self) -> ObservabilitySettings:
+        if self.metrics_enabled and self.exporter == "otlp" and not self.otlp_endpoint:
+            raise ValueError(
+                "OBSERVABILITY__OTLP_ENDPOINT is required when "
+                "OBSERVABILITY__METRICS_ENABLED=true and OBSERVABILITY__EXPORTER=otlp"
+            )
+        return self
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -123,6 +164,7 @@ class Settings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
 
 @lru_cache(maxsize=1)

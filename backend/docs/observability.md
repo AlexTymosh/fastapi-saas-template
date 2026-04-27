@@ -76,6 +76,38 @@ Next phase:
 - expose or export metrics for Prometheus-compatible collection
 - prepare Grafana dashboard
 
+## OpenTelemetry SDK and exporter
+
+The project can initialize OpenTelemetry Metrics SDK when explicitly enabled.
+
+Default behavior:
+
+- `OBSERVABILITY__METRICS_ENABLED=false`
+- `OBSERVABILITY__EXPORTER=none`
+- no SDK/exporter is initialized
+- OpenTelemetry API instruments remain no-op
+
+OTLP HTTP exporter:
+
+- set `OBSERVABILITY__METRICS_ENABLED=true`
+- set `OBSERVABILITY__EXPORTER=otlp`
+- set `OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4318/v1/metrics`
+
+Tuning:
+
+- `OBSERVABILITY__OTLP_TIMEOUT_SECONDS=2.0`
+- `OBSERVABILITY__EXPORT_INTERVAL_MILLIS=60000`
+- `OBSERVABILITY__EXPORT_TIMEOUT_MILLIS=2000`
+
+Current limitations:
+
+- no `/metrics` endpoint
+- no Prometheus service
+- no Grafana service
+- no tracing
+- no logs exporter
+- no database/Redis auto-instrumentation
+
 ## HTTP RED metrics foundation
 
 The project records HTTP RED-style metrics through OpenTelemetry API instruments.
