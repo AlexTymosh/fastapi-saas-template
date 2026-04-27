@@ -24,7 +24,6 @@ class HttpMetricsMiddleware:
 
         start = time.perf_counter()
         method = scope.get("method", "UNKNOWN")
-        route = get_route_template(Request(scope))
         status_code = 500
 
         async def send_wrapper(message: Message) -> None:
@@ -38,6 +37,7 @@ class HttpMetricsMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except Exception as exc:
+            route = get_route_template(Request(scope))
             duration_seconds = time.perf_counter() - start
             record_http_request(
                 method=method,
@@ -58,6 +58,7 @@ class HttpMetricsMiddleware:
             )
             raise
 
+        route = get_route_template(Request(scope))
         duration_seconds = time.perf_counter() - start
         record_http_request(
             method=method,
