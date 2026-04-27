@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Final
 
 from fastapi import Request
 from opentelemetry import metrics
 
-from app.core.logging import get_logger
+from app.core.observability.safety import safely_record_observability
 
 meter = metrics.get_meter("fastapi_saas_template")
-log = get_logger(__name__)
 
 rate_limit_requests_total = meter.create_counter(
     "rate_limit.requests.total",
@@ -75,6 +73,16 @@ HTTP_REQUEST_DURATION = meter.create_histogram(
     description="Duration of HTTP server requests.",
 )
 
+observability_recording_failures_total = meter.create_counter(
+    "observability.recording_failures.total",
+    unit="{failure}",
+    description="Total number of observability metric recording failures.",
+)
+
+OBSERVABILITY_ATTRIBUTE_METRIC_NAME: Final = "observability.metric_name"
+OBSERVABILITY_ATTRIBUTE_METRIC_EVENT: Final = "observability.metric_event"
+OBSERVABILITY_ATTRIBUTE_REASON: Final = "observability.reason"
+
 HTTP_ATTRIBUTE_METHOD: Final = "http.request.method"
 HTTP_ATTRIBUTE_ROUTE: Final = "http.route"
 HTTP_ATTRIBUTE_STATUS_CODE: Final = "http.response.status_code"
@@ -95,36 +103,6 @@ ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 
-def _log_metrics_failure(*, metric_name: str, metric_event: str, reason: str) -> None:
-    try:
-        log.warning(
-            "metrics_recording_failed",
-            metric_name=metric_name,
-            metric_event=metric_event,
-            reason=reason,
-            category="observability",
-        )
-    except Exception:
-        return
-
-
-def _safe_record_metric(
-    operation: Callable[..., None],
-    *args: object,
-    metric_name: str,
-    metric_event: str,
-    **kwargs: object,
-) -> None:
-    try:
-        operation(*args, **kwargs)
-    except Exception as exc:
-        _log_metrics_failure(
-            metric_name=metric_name,
-            metric_event=metric_event,
-            reason=exc.__class__.__name__,
-        )
-
-
 def _validate_attribute_keys(
     attributes: dict[str, str | int], allowed_keys: frozenset[str]
 ) -> None:
@@ -142,13 +120,29 @@ def _validate_result(result: str) -> None:
         )
 
 
+def _record_observability_failure(
+    metric_name: str, metric_event: str, reason: str
+) -> None:
+    attributes = {
+        OBSERVABILITY_ATTRIBUTE_METRIC_NAME: metric_name,
+        OBSERVABILITY_ATTRIBUTE_METRIC_EVENT: metric_event,
+        OBSERVABILITY_ATTRIBUTE_REASON: reason,
+    }
+
+    safely_record_observability(
+        lambda: observability_recording_failures_total.add(1, attributes=attributes),
+        metric_name="observability.recording_failures.total",
+        metric_event="observability_recording_failure",
+    )
+
+
 def record_rate_limit_decision(
     *,
     policy_name: str,
     result: str,
     identifier_kind: str,
 ) -> None:
-    try:
+    def _operation() -> None:
         _validate_result(result)
         attributes = {
             RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
@@ -156,20 +150,13 @@ def record_rate_limit_decision(
             RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
         }
         _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
-    except Exception as exc:
-        _log_metrics_failure(
-            metric_name="rate_limit.requests.total",
-            metric_event="rate_limit_decision",
-            reason=exc.__class__.__name__,
-        )
-        return
+        rate_limit_requests_total.add(1, attributes=attributes)
 
-    _safe_record_metric(
-        rate_limit_requests_total.add,
-        1,
-        attributes=attributes,
+    safely_record_observability(
+        _operation,
         metric_name="rate_limit.requests.total",
         metric_event="rate_limit_decision",
+        on_failure=_record_observability_failure,
     )
 
 
@@ -179,26 +166,20 @@ def record_rate_limit_backend_error(
     identifier_kind: str,
     error_type: str,
 ) -> None:
-    attributes = {
-        RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
-        RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
-        RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
-    }
-    try:
+    def _operation() -> None:
+        attributes = {
+            RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
+            RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
+            RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
+        }
         _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
-    except Exception as exc:
-        _log_metrics_failure(
-            metric_name="rate_limit.backend_errors.total",
-            metric_event="rate_limit_backend_error",
-            reason=exc.__class__.__name__,
-        )
-        return
-    _safe_record_metric(
-        rate_limit_backend_errors_total.add,
-        1,
-        attributes=attributes,
+        rate_limit_backend_errors_total.add(1, attributes=attributes)
+
+    safely_record_observability(
+        _operation,
         metric_name="rate_limit.backend_errors.total",
         metric_event="rate_limit_backend_error",
+        on_failure=_record_observability_failure,
     )
 
 
@@ -209,7 +190,7 @@ def record_rate_limit_check_duration(
     identifier_kind: str,
     duration_seconds: float,
 ) -> None:
-    try:
+    def _operation() -> None:
         _validate_result(result)
         attributes = {
             RATE_LIMIT_ATTRIBUTE_POLICY: policy_name,
@@ -217,20 +198,13 @@ def record_rate_limit_check_duration(
             RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: identifier_kind,
         }
         _validate_attribute_keys(attributes, ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
-    except Exception as exc:
-        _log_metrics_failure(
-            metric_name="rate_limit.check.duration",
-            metric_event="rate_limit_check_duration",
-            reason=exc.__class__.__name__,
-        )
-        return
+        rate_limit_check_duration.record(duration_seconds, attributes=attributes)
 
-    _safe_record_metric(
-        rate_limit_check_duration.record,
-        duration_seconds,
-        attributes=attributes,
+    safely_record_observability(
+        _operation,
         metric_name="rate_limit.check.duration",
         metric_event="rate_limit_check_duration",
+        on_failure=_record_observability_failure,
     )
 
 
@@ -240,27 +214,20 @@ def record_http_request(
     route: str,
     status_code: int,
 ) -> None:
-    attributes = {
-        HTTP_ATTRIBUTE_METHOD: method,
-        HTTP_ATTRIBUTE_ROUTE: route,
-        HTTP_ATTRIBUTE_STATUS_CODE: status_code,
-    }
-    try:
+    def _operation() -> None:
+        attributes = {
+            HTTP_ATTRIBUTE_METHOD: method,
+            HTTP_ATTRIBUTE_ROUTE: route,
+            HTTP_ATTRIBUTE_STATUS_CODE: status_code,
+        }
         _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
-    except Exception as exc:
-        _log_metrics_failure(
-            metric_name="http.server.requests.total",
-            metric_event="http_request",
-            reason=exc.__class__.__name__,
-        )
-        return
+        HTTP_REQUESTS_TOTAL.add(1, attributes=attributes)
 
-    _safe_record_metric(
-        HTTP_REQUESTS_TOTAL.add,
-        1,
-        attributes=attributes,
+    safely_record_observability(
+        _operation,
         metric_name="http.server.requests.total",
         metric_event="http_request",
+        on_failure=_record_observability_failure,
     )
 
 
@@ -271,27 +238,21 @@ def record_http_error(
     status_code: int,
     error_type: str,
 ) -> None:
-    attributes = {
-        HTTP_ATTRIBUTE_METHOD: method,
-        HTTP_ATTRIBUTE_ROUTE: route,
-        HTTP_ATTRIBUTE_STATUS_CODE: status_code,
-        RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
-    }
-    try:
+    def _operation() -> None:
+        attributes = {
+            HTTP_ATTRIBUTE_METHOD: method,
+            HTTP_ATTRIBUTE_ROUTE: route,
+            HTTP_ATTRIBUTE_STATUS_CODE: status_code,
+            RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
+        }
         _validate_attribute_keys(attributes, ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS)
-    except Exception as exc:
-        _log_metrics_failure(
-            metric_name="http.server.errors.total",
-            metric_event="http_error",
-            reason=exc.__class__.__name__,
-        )
-        return
-    _safe_record_metric(
-        HTTP_ERRORS_TOTAL.add,
-        1,
-        attributes=attributes,
+        HTTP_ERRORS_TOTAL.add(1, attributes=attributes)
+
+    safely_record_observability(
+        _operation,
         metric_name="http.server.errors.total",
         metric_event="http_error",
+        on_failure=_record_observability_failure,
     )
 
 
@@ -302,26 +263,20 @@ def record_http_request_duration(
     status_code: int,
     duration_seconds: float,
 ) -> None:
-    attributes = {
-        HTTP_ATTRIBUTE_METHOD: method,
-        HTTP_ATTRIBUTE_ROUTE: route,
-        HTTP_ATTRIBUTE_STATUS_CODE: status_code,
-    }
-    try:
+    def _operation() -> None:
+        attributes = {
+            HTTP_ATTRIBUTE_METHOD: method,
+            HTTP_ATTRIBUTE_ROUTE: route,
+            HTTP_ATTRIBUTE_STATUS_CODE: status_code,
+        }
         _validate_attribute_keys(attributes, ALLOWED_HTTP_ATTRIBUTE_KEYS)
-    except Exception as exc:
-        _log_metrics_failure(
-            metric_name="http.server.request.duration",
-            metric_event="http_request_duration",
-            reason=exc.__class__.__name__,
-        )
-        return
-    _safe_record_metric(
-        HTTP_REQUEST_DURATION.record,
-        duration_seconds,
-        attributes=attributes,
+        HTTP_REQUEST_DURATION.record(duration_seconds, attributes=attributes)
+
+    safely_record_observability(
+        _operation,
         metric_name="http.server.request.duration",
         metric_event="http_request_duration",
+        on_failure=_record_observability_failure,
     )
 
 

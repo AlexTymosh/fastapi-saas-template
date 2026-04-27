@@ -7,6 +7,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 
+from app.core.observability import metrics
 from app.core.observability.middleware import HttpMetricsMiddleware
 
 
@@ -16,6 +17,23 @@ class _CallRecorder:
 
     def __call__(self, **kwargs: object) -> None:
         self.calls.append(kwargs)
+
+
+class _RaisingCounter:
+    def add(self, value: int, attributes: dict[str, str | int] | None = None) -> None:
+        raise RuntimeError("metrics backend down")
+
+
+class _RaisingHistogram:
+    def record(
+        self, value: float, attributes: dict[str, str | int] | None = None
+    ) -> None:
+        raise RuntimeError("metrics backend down")
+
+
+class _RaisingLogger:
+    def warning(self, event_name: str, **kwargs: object) -> None:
+        raise RuntimeError("logger backend down")
 
 
 def _build_app() -> FastAPI:
@@ -272,13 +290,7 @@ def test_4xx_response_does_not_record_error(monkeypatch) -> None:
 
 
 def test_success_response_is_preserved_when_request_metric_fails(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
-    )
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
 
     client = TestClient(_build_app())
     response = client.get("/api/v1/test/success")
@@ -288,13 +300,7 @@ def test_success_response_is_preserved_when_request_metric_fails(monkeypatch) ->
 
 
 def test_success_response_is_preserved_when_duration_metric_fails(monkeypatch) -> None:
-    def _raise_duration_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request_duration",
-        _raise_duration_metric,
-    )
+    monkeypatch.setattr(metrics, "HTTP_REQUEST_DURATION", _RaisingHistogram())
 
     client = TestClient(_build_app())
     response = client.get("/api/v1/test/success")
@@ -304,13 +310,7 @@ def test_success_response_is_preserved_when_duration_metric_fails(monkeypatch) -
 
 
 def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
-    def _raise_error_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_error",
-        _raise_error_metric,
-    )
+    monkeypatch.setattr(metrics, "HTTP_ERRORS_TOTAL", _RaisingCounter())
 
     client = TestClient(_build_app())
     response = client.get("/api/v1/test/error-response")
@@ -320,18 +320,8 @@ def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
 
 
 def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    class _RaisingLogger:
-        def warning(self, event_name: str, **kwargs: object) -> None:
-            raise RuntimeError("logger failed")
-
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
-    )
-    monkeypatch.setattr("app.core.observability.middleware.log", _RaisingLogger())
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
+    monkeypatch.setattr("app.core.observability.safety.log", _RaisingLogger())
 
     client = TestClient(_build_app())
     response = client.get("/api/v1/test/success")
@@ -341,20 +331,8 @@ def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -
 
 
 def test_404_response_is_preserved_when_metrics_fail(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    def _raise_duration_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
-    )
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request_duration",
-        _raise_duration_metric,
-    )
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
+    monkeypatch.setattr(metrics, "HTTP_REQUEST_DURATION", _RaisingHistogram())
 
     client = TestClient(_build_app())
     response = client.get("/api/v1/test/not-found")
@@ -364,27 +342,9 @@ def test_404_response_is_preserved_when_metrics_fail(monkeypatch) -> None:
 
 
 def test_original_exception_is_preserved_when_metrics_fail(monkeypatch) -> None:
-    def _raise_request_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    def _raise_duration_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    def _raise_error_metric(**kwargs: object) -> None:
-        raise RuntimeError("metrics failed")
-
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request",
-        _raise_request_metric,
-    )
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_request_duration",
-        _raise_duration_metric,
-    )
-    monkeypatch.setattr(
-        "app.core.observability.middleware.record_http_error",
-        _raise_error_metric,
-    )
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
+    monkeypatch.setattr(metrics, "HTTP_REQUEST_DURATION", _RaisingHistogram())
+    monkeypatch.setattr(metrics, "HTTP_ERRORS_TOTAL", _RaisingCounter())
 
     client = TestClient(_build_app())
 

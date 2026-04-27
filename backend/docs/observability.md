@@ -126,3 +126,31 @@ Metrics failure logs must not include:
 - identifier value
 - hashed identifier value
 - exception message
+
+## Metrics recording failure handling
+
+Metric recording is best-effort.
+
+Failures in OpenTelemetry instruments, future SDK/exporter integration, or observability helpers must not affect API behavior.
+
+The project records an internal self-metric:
+
+- `observability.recording_failures.total`
+
+Failure logs are rate-limited in-process to reduce repeated log noise.
+
+Failure logs remain low-cardinality and must not include:
+
+- user id
+- email
+- organisation id
+- request id
+- trace id
+- raw path
+- raw URL
+- IP address
+- token
+- Redis key
+- identifier value
+- hashed identifier value
+- exception message

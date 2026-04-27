@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from limits import RateLimitItemPerMinute
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
-from app.core.observability import metrics
+from app.core.observability import metrics, safety
 from app.core.rate_limit.dependencies import rate_limit_dependency
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import RateLimitPolicy
@@ -63,6 +63,11 @@ class _RaisingHistogram:
         self, value: float, attributes: dict[str, str | int] | None = None
     ) -> None:
         raise RuntimeError("metrics backend down")
+
+
+class _RaisingLogger:
+    def warning(self, event_name: str, **kwargs: object) -> None:
+        raise RuntimeError("logger backend down")
 
 
 async def _principal() -> AuthenticatedPrincipal:
@@ -324,23 +329,29 @@ def test_record_rate_limit_check_duration_does_not_raise_when_histogram_fails(
     )
 
 
-def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
+def test_metrics_failure_logs_low_cardinality_fields(monkeypatch) -> None:
     captured_log: dict[str, object] = {}
+    self_metric_calls: list[tuple[int, dict[str, str]]] = []
 
     class _FakeLogger:
         def warning(self, event_name: str, **kwargs: object) -> None:
             captured_log["event_name"] = event_name
             captured_log["kwargs"] = kwargs
 
-    monkeypatch.setattr(metrics, "log", _FakeLogger())
+    class _FakeSelfCounter:
+        def add(self, value: int, attributes: dict[str, str]) -> None:
+            self_metric_calls.append((value, attributes))
 
-    def _raise() -> None:
-        raise RuntimeError("email=user@example.com")
+    monkeypatch.setattr(safety, "log", _FakeLogger())
+    monkeypatch.setattr(
+        metrics, "observability_recording_failures_total", _FakeSelfCounter()
+    )
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
 
-    metrics._safe_record_metric(  # noqa: SLF001
-        _raise,
-        metric_name="http.server.requests.total",
-        metric_event="http_request",
+    metrics.record_http_request(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=200,
     )
 
     assert captured_log["event_name"] == "metrics_recording_failed"
@@ -351,24 +362,32 @@ def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
         "category": "observability",
     }
     assert "email=user@example.com" not in str(captured_log)
+    assert len(self_metric_calls) == 1
 
 
-def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
-    monkeypatch,
-) -> None:
-    class _RaisingLogger:
-        def warning(self, event_name: str, **kwargs: object) -> None:
-            raise RuntimeError("logger backend down")
+def test_metrics_failure_does_not_raise_when_failure_logger_fails(monkeypatch) -> None:
+    monkeypatch.setattr(safety, "log", _RaisingLogger())
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
 
-    monkeypatch.setattr(metrics, "log", _RaisingLogger())
+    metrics.record_http_request(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=200,
+    )
 
-    def _raise() -> None:
-        raise RuntimeError("email=user@example.com")
 
-    metrics._safe_record_metric(  # noqa: SLF001
-        _raise,
-        metric_name="http.server.requests.total",
-        metric_event="http_request",
+def test_observability_self_metric_failure_does_not_raise(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
+    monkeypatch.setattr(
+        metrics,
+        "observability_recording_failures_total",
+        _RaisingCounter(),
+    )
+
+    metrics.record_http_request(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=200,
     )
 
 
