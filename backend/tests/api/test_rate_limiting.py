@@ -3,8 +3,9 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from typing import Annotated
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 from limits import RateLimitItemPerMinute
@@ -189,6 +190,112 @@ def test_rate_limiter_failure_fail_open_allows_request(monkeypatch) -> None:
         response = api_client.get("/api/v1/test/rate-limit/fail-open")
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize("runtime_mode", ["missing_runtime", "none_limiter"])
+def test_runtime_unavailable_records_observability_and_returns_503(
+    monkeypatch, runtime_mode: str
+) -> None:
+    endpoint_body_called = False
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=FakeLimiter(allow=True),
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    app = client.app
+    app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    policy = RateLimitPolicy(
+        name="test_runtime_unavailable",
+        item=RateLimitItemPerMinute(1),
+        fail_open=False,
+    )
+    router = APIRouter()
+
+    @router.get(
+        "/api/v1/test/rate-limit/runtime-unavailable",
+        dependencies=[Depends(rate_limit_dependency(policy))],
+    )
+    async def _probe() -> dict[str, str]:
+        nonlocal endpoint_body_called
+        endpoint_body_called = True
+        return {"ok": "true"}
+
+    app.include_router(router)
+
+    with (
+        patch(
+            "app.core.rate_limit.dependencies.record_rate_limit_backend_error",
+        ) as backend_error,
+        patch(
+            "app.core.rate_limit.dependencies.record_rate_limit_decision"
+        ) as decision,
+        patch(
+            "app.core.rate_limit.dependencies.record_rate_limit_check_duration"
+        ) as duration,
+    ):
+        with client as api_client:
+            if runtime_mode == "missing_runtime":
+                delattr(api_client.app.state, "rate_limiter_runtime")
+            else:
+                api_client.app.state.rate_limiter_runtime = RateLimiterRuntime(
+                    enabled=True,
+                    storage=object(),
+                    limiter=None,
+                    strategy_name="moving-window",
+                )
+
+            response = api_client.get("/api/v1/test/rate-limit/runtime-unavailable")
+
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "rate_limiter_unavailable"
+    assert endpoint_body_called is False
+    backend_error.assert_called_once_with(
+        policy_name=policy.name,
+        identifier_kind="unknown",
+        error_type="RuntimeUnavailable",
+    )
+    decision.assert_called_once()
+    assert decision.call_args.kwargs["result"] == "runtime_unavailable"
+    duration.assert_called_once()
+    assert duration.call_args.kwargs["result"] == "runtime_unavailable"
+    assert duration.call_args.kwargs["duration_seconds"] >= 0.0
+
+
+def test_runtime_unavailable_503_contract_is_preserved_when_metrics_fail(
+    monkeypatch,
+) -> None:
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=None,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    with (
+        patch(
+            "app.core.rate_limit.dependencies.record_rate_limit_backend_error",
+            side_effect=RuntimeError("metrics backend down"),
+        ),
+        patch(
+            "app.core.rate_limit.dependencies.record_rate_limit_decision",
+            side_effect=RuntimeError("metrics backend down"),
+        ),
+        patch(
+            "app.core.rate_limit.dependencies.record_rate_limit_check_duration",
+            side_effect=RuntimeError("metrics backend down"),
+        ),
+    ):
+        with client as api_client:
+            response = api_client.get("/api/v1/test/rate-limit/protected")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "rate_limiter_unavailable"
 
 
 def test_authenticated_users_have_independent_buckets(monkeypatch) -> None:

@@ -587,7 +587,10 @@ def test_self_metric_failure_counter_is_not_recorded_for_self_metric(
     )
 
 
-@pytest.mark.parametrize("result", ["allowed", "blocked", "backend_error", "fail_open"])
+@pytest.mark.parametrize(
+    "result",
+    ["allowed", "blocked", "backend_error", "fail_open", "runtime_unavailable"],
+)
 def test_record_rate_limit_check_duration_supports_all_results(
     monkeypatch, result: str
 ) -> None:
@@ -608,6 +611,38 @@ def test_record_rate_limit_check_duration_supports_all_results(
     assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_POLICY] == "invite_create"
     assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_RESULT] == result
     assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND] == "user"
+
+
+@pytest.mark.parametrize(
+    "result",
+    ["allowed", "blocked", "backend_error", "fail_open", "runtime_unavailable"],
+)
+def test_record_rate_limit_decision_supports_all_results(
+    monkeypatch, result: str
+) -> None:
+    requests_counter = _FakeCounter()
+    monkeypatch.setattr(metrics, "rate_limit_requests_total", requests_counter)
+
+    metrics.record_rate_limit_decision(
+        policy_name="invite_create",
+        result=result,
+        identifier_kind="user",
+    )
+
+    assert len(requests_counter.calls) == 1
+    _, attributes = requests_counter.calls[0]
+    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_POLICY] == "invite_create"
+    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_RESULT] == result
+    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND] == "user"
+
+
+def test_validate_result_accepts_runtime_unavailable() -> None:
+    metrics._validate_result("runtime_unavailable")  # noqa: SLF001
+
+
+def test_validate_result_rejects_unknown_result() -> None:
+    with pytest.raises(ValueError, match="Unsupported rate limit result"):
+        metrics._validate_result("unknown_result")  # noqa: SLF001
 
 
 def test_get_route_template_returns_route_path() -> None:
