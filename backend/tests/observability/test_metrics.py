@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 from limits import RateLimitItemPerMinute
@@ -107,6 +108,18 @@ def test_metrics_helpers_are_noop_without_sdk() -> None:
     metrics.record_rate_limit_check_duration(
         policy_name="invite_create",
         result="allowed",
+        identifier_kind="user",
+        duration_seconds=0.01,
+    )
+
+
+@pytest.mark.parametrize("result", ["allowed", "blocked", "backend_error", "fail_open"])
+def test_record_rate_limit_check_duration_accepts_all_supported_results(
+    result: str,
+) -> None:
+    metrics.record_rate_limit_check_duration(
+        policy_name="invite_create",
+        result=result,
         identifier_kind="user",
         duration_seconds=0.01,
     )
