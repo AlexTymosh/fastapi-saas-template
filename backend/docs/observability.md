@@ -2,17 +2,18 @@
 
 ## Current phase
 
-- The project uses OpenTelemetry API instrumentation by default.
-- OpenTelemetry Metrics SDK initialization is optional and controlled by settings.
-- Optional OpenTelemetry SDK lifecycle supports OTLP HTTP exporter configuration.
+- OpenTelemetry API instrumentation exists.
+- Optional OpenTelemetry Metrics SDK lifecycle exists.
+- Optional OTLP HTTP exporter configuration exists.
+- No OTel Collector profile exists yet.
 - No `/metrics` endpoint is exposed.
-- Prometheus and Grafana are not connected at this phase.
+- Prometheus and Grafana are not connected yet.
 
 ## Current metrics foundation
 
-The current foundation prepares rate-limit metrics through OpenTelemetry API instruments.
+The current foundation prepares rate-limit and HTTP metrics through OpenTelemetry API instruments.
 Without an initialized SDK, these instruments behave as no-op implementations at runtime.
-This allows stable instrumentation points now, while keeping runtime behavior unchanged.
+This keeps instrumentation points stable while preserving current runtime behavior.
 
 Current rate-limit metric names:
 
@@ -20,18 +21,36 @@ Current rate-limit metric names:
 - `rate_limit.backend_errors.total`
 - `rate_limit.check.duration`
 
-## Rate-limit metric results
+## Rate-limit observability outcomes
 
-Allowed result values:
+Rate-limit metrics use `rate_limit.result` to describe the limiter decision or failure mode.
 
-- `allowed`
-- `blocked`
-- `backend_error`
-- `fail_open`
-- `runtime_unavailable`
+| Result | Meaning | Expected HTTP behaviour | Operational meaning |
+|---|---|---|---|
+| `allowed` | Request passed the limiter | request continues | normal traffic |
+| `blocked` | Request exceeded configured limit | 429 | client/user exceeded policy |
+| `backend_error` | Limiter backend failed and policy failed closed | 503 | Redis/backend unavailable |
+| `fail_open` | Limiter backend failed and policy allowed request | request continues | degraded protection mode |
+| `runtime_unavailable` | Rate limiting is enabled but limiter runtime/limiter is missing | 503 | application lifecycle/configuration issue |
 
-`runtime_unavailable` means rate limiting was enabled, but the application did not
-have an initialized limiter runtime or limiter instance.
+## Rate-limit dashboard signals
+
+Recommended dashboard panels (future dashboard guidance):
+
+- allowed requests by policy;
+- blocked requests by policy;
+- backend errors by policy and error type;
+- fail-open events by policy;
+- runtime unavailable events;
+- rate-limit check duration p50/p95/p99.
+
+Recommended alert candidates:
+
+- `runtime_unavailable > 0`: critical;
+- `fail_open > 0` on sensitive policies: critical;
+- sustained `backend_error > 0`: warning or critical depending on environment;
+- sudden spike in `blocked`: warning or security investigation;
+- high p95 `rate_limit.check.duration`: warning.
 
 ## Low-cardinality rules
 
@@ -70,14 +89,6 @@ Do not use:
 - raw URL
 
 If the route template is unavailable, use `"unknown"`.
-
-## Future phases
-
-Next phase:
-
-- finalize OpenTelemetry SDK/exporter operational profile
-- expose or export metrics for Prometheus-compatible collection
-- prepare Grafana dashboard
 
 ## OpenTelemetry SDK and exporter
 
@@ -129,8 +140,6 @@ Current HTTP metric names:
 
 Current phase:
 
-- no OpenTelemetry SDK is initialized;
-- no exporter is configured;
 - no `/metrics` endpoint is exposed;
 - Prometheus and Grafana are not connected yet.
 
@@ -149,8 +158,8 @@ Error rule:
 
 Metric recording is best-effort.
 
-Failures in OpenTelemetry instruments, future SDK/exporter integration, or observability
-helpers must not affect API behavior.
+Failures in OpenTelemetry instruments, SDK/exporter integration, or observability helpers
+must not affect API behavior.
 
 The project records an internal self-metric:
 
@@ -173,3 +182,10 @@ Failure logs must remain low-cardinality and must not include:
 - identifier value
 - hashed identifier value
 - exception message
+
+## Future phases
+
+- add optional OTel Collector profile for local verification;
+- add Prometheus-compatible collection path;
+- add Grafana dashboards;
+- add alert rules.
