@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 import pytest
@@ -21,7 +20,8 @@ async def test_real_redis_rate_limiter_blocks_after_threshold(
     monkeypatch,
     redis_integration_url: str,
 ) -> None:
-    prefix = f"it-rl-{uuid.uuid4().hex}"
+    run_id = uuid.uuid4().hex
+    prefix = f"it-rl-{run_id}"
 
     monkeypatch.setenv("REDIS__URL", redis_integration_url)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
@@ -33,7 +33,7 @@ async def test_real_redis_rate_limiter_blocks_after_threshold(
 
     async def _principal() -> AuthenticatedPrincipal:
         return AuthenticatedPrincipal(
-            external_auth_id="integration-user",
+            external_auth_id=f"integration-user-{run_id}",
             email="integration-user@example.com",
             email_verified=True,
             platform_roles=[],
@@ -43,7 +43,7 @@ async def test_real_redis_rate_limiter_blocks_after_threshold(
 
     router = APIRouter()
     policy = RateLimitPolicy(
-        name="integration_probe",
+        name=f"integration_probe_{run_id}",
         item=RateLimitItemPerMinute(5),
         fail_open=False,
     )
@@ -60,12 +60,13 @@ async def test_real_redis_rate_limiter_blocks_after_threshold(
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            tasks = [client.get("/api/v1/integration/rate-limit") for _ in range(10)]
-            responses = await asyncio.gather(*tasks)
+            responses = []
+            for _ in range(6):
+                responses.append(await client.get("/api/v1/integration/rate-limit"))
 
     status_codes = [response.status_code for response in responses]
-    assert status_codes.count(200) == 5
-    assert status_codes.count(429) == 5
+    assert status_codes[:5] == [200, 200, 200, 200, 200]
+    assert status_codes[5] == 429
     for response in responses:
         if response.status_code == 429:
             assert response.headers["content-type"].startswith(

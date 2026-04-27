@@ -19,20 +19,23 @@ log = get_logger(__name__)
 def _safe_emit_metrics(
     *,
     metric_name: str,
-    event: str,
+    metric_event: str,
     operation,
     **kwargs: object,
 ) -> None:
     try:
         operation(**kwargs)
     except Exception as exc:
-        log.warning(
-            "metrics_recording_failed",
-            metric_name=metric_name,
-            event=event,
-            reason=exc.__class__.__name__,
-            category="observability",
-        )
+        try:
+            log.warning(
+                "metrics_recording_failed",
+                metric_name=metric_name,
+                metric_event=metric_event,
+                reason=exc.__class__.__name__,
+                category="observability",
+            )
+        except Exception:
+            return
 
 
 class HttpMetricsMiddleware:
@@ -63,7 +66,7 @@ class HttpMetricsMiddleware:
             duration_seconds = time.perf_counter() - start
             _safe_emit_metrics(
                 metric_name="http.server.requests.total",
-                event="http_request",
+                metric_event="http_request",
                 operation=record_http_request,
                 method=method,
                 route=route,
@@ -71,7 +74,7 @@ class HttpMetricsMiddleware:
             )
             _safe_emit_metrics(
                 metric_name="http.server.request.duration",
-                event="http_request_duration",
+                metric_event="http_request_duration",
                 operation=record_http_request_duration,
                 method=method,
                 route=route,
@@ -80,7 +83,7 @@ class HttpMetricsMiddleware:
             )
             _safe_emit_metrics(
                 metric_name="http.server.errors.total",
-                event="http_error",
+                metric_event="http_error",
                 operation=record_http_error,
                 method=method,
                 route=route,
@@ -93,7 +96,7 @@ class HttpMetricsMiddleware:
         duration_seconds = time.perf_counter() - start
         _safe_emit_metrics(
             metric_name="http.server.requests.total",
-            event="http_request",
+            metric_event="http_request",
             operation=record_http_request,
             method=method,
             route=route,
@@ -101,7 +104,7 @@ class HttpMetricsMiddleware:
         )
         _safe_emit_metrics(
             metric_name="http.server.request.duration",
-            event="http_request_duration",
+            metric_event="http_request_duration",
             operation=record_http_request_duration,
             method=method,
             route=route,
@@ -112,7 +115,7 @@ class HttpMetricsMiddleware:
         if status_code >= 500:
             _safe_emit_metrics(
                 metric_name="http.server.errors.total",
-                event="http_error",
+                metric_event="http_error",
                 operation=record_http_error,
                 method=method,
                 route=route,
