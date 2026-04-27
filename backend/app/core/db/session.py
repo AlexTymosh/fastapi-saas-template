@@ -80,6 +80,16 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
+    """
+    Yield a lazy SQLAlchemy AsyncSession for request-scoped database access.
+
+    Important:
+    This dependency must not perform database I/O during dependency resolution.
+    Do not call execute(), connection(), begin(), flush(), commit(), or refresh()
+    here. Security dependencies such as authentication and rate limiting may run
+    as sibling dependencies, and over-limit requests must be able to fail before
+    any database I/O is performed.
+    """
     session_factory = get_session_factory()
     async with session_factory() as session:
         yield session

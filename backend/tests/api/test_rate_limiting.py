@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from typing import Annotated
+from unittest.mock import AsyncMock
 
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
+from app.core.auth import (
+    AuthenticatedPrincipal,
+    get_authenticated_principal,
+)
+from app.core.db import get_db_session
 from app.core.rate_limit.dependencies import rate_limit_dependency
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
@@ -16,6 +23,8 @@ from app.core.rate_limit.policies import (
 )
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
+
+DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 @dataclass
@@ -234,6 +243,134 @@ def test_unauthenticated_protected_endpoint_returns_401_before_rate_limiter(
 
     assert response.status_code == 401
     assert response.json()["error_code"] == "unauthorized"
+
+
+def test_over_limit_does_not_execute_endpoint_body_or_database_io(monkeypatch) -> None:
+    endpoint_body_called = False
+
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
+    reset_settings_cache()
+
+    app = create_app()
+    fake_limiter = FakeLimiter(allow=False)
+    app.state.rate_limiter_runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake_limiter,
+        strategy_name="moving-window",
+    )
+    app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.connection = AsyncMock()
+    session.begin = AsyncMock()
+
+    async def _db_override():
+        yield session
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    router = APIRouter()
+    policy = RateLimitPolicy(
+        name="test_db_guard",
+        limit=1,
+        window_seconds=60,
+        fail_open=False,
+    )
+
+    @router.get(
+        "/api/v1/test/rate-limit/db-guard",
+        dependencies=[Depends(rate_limit_dependency(policy))],
+    )
+    async def _probe(db_session: DbSessionDep) -> dict[str, str]:
+        nonlocal endpoint_body_called
+        endpoint_body_called = True
+        await db_session.execute("select 1")
+        return {"ok": "true"}
+
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/test/rate-limit/db-guard")
+
+    assert response.status_code == 429
+    assert endpoint_body_called is False
+    session.execute.assert_not_called()
+    session.flush.assert_not_called()
+    session.commit.assert_not_called()
+    session.refresh.assert_not_called()
+    session.connection.assert_not_called()
+    session.begin.assert_not_called()
+
+
+def test_unauthenticated_request_returns_401_without_limiter_or_database_io(
+    monkeypatch,
+) -> None:
+    endpoint_body_called = False
+
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
+    reset_settings_cache()
+
+    app = create_app()
+    fake_limiter = FakeLimiter(raise_error=RuntimeError("limiter should not be called"))
+    app.state.rate_limiter_runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake_limiter,
+        strategy_name="moving-window",
+    )
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.connection = AsyncMock()
+    session.begin = AsyncMock()
+
+    async def _db_override():
+        yield session
+
+    app.dependency_overrides[get_db_session] = _db_override
+
+    router = APIRouter()
+    policy = RateLimitPolicy(
+        name="test_unauthenticated_guard",
+        limit=1,
+        window_seconds=60,
+        fail_open=False,
+    )
+
+    @router.get(
+        "/api/v1/test/rate-limit/auth-first",
+        dependencies=[Depends(rate_limit_dependency(policy))],
+    )
+    async def _probe(db_session: DbSessionDep) -> dict[str, str]:
+        nonlocal endpoint_body_called
+        endpoint_body_called = True
+        await db_session.execute("select 1")
+        return {"ok": "true"}
+
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/test/rate-limit/auth-first")
+
+    assert response.status_code == 401
+    assert endpoint_body_called is False
+    assert len(fake_limiter.hit_calls) == 0
+    session.execute.assert_not_called()
+    session.flush.assert_not_called()
+    session.commit.assert_not_called()
+    session.refresh.assert_not_called()
+    session.connection.assert_not_called()
+    session.begin.assert_not_called()
 
 
 def test_rate_limiting_enablement_does_not_leak_between_apps(monkeypatch) -> None:
