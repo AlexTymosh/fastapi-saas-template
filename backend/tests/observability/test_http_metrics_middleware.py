@@ -42,6 +42,10 @@ def _build_app() -> FastAPI:
     async def item(item_id: str) -> dict[str, str]:
         return {"item_id": item_id}
 
+    @app.get("/api/v1/test/items/{item_id}/exception")
+    async def item_exception(item_id: str) -> None:
+        raise RuntimeError("boom")
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -143,9 +147,43 @@ def test_route_label_uses_route_template_only(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert len(request_calls.calls) == 1
-    recorded_route = request_calls.calls[0]["route"]
+    recorded_payload = request_calls.calls[0]
+    recorded_route = recorded_payload["route"]
     assert recorded_route == "/api/v1/test/items/{item_id}"
-    assert item_id not in str(recorded_route)
+    assert item_id not in str(recorded_payload)
+
+
+def test_exception_route_uses_route_template_only(monkeypatch) -> None:
+    request_calls = _CallRecorder()
+    duration_calls = _CallRecorder()
+    error_calls = _CallRecorder()
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        request_calls,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request_duration",
+        duration_calls,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_error", error_calls
+    )
+
+    client = TestClient(_build_app())
+    item_id = str(uuid4())
+
+    with pytest.raises(RuntimeError, match="boom"):
+        client.get(f"/api/v1/test/items/{item_id}/exception")
+
+    assert len(request_calls.calls) == 1
+    assert len(duration_calls.calls) == 1
+    assert len(error_calls.calls) == 1
+    assert request_calls.calls[0]["route"] == "/api/v1/test/items/{item_id}/exception"
+    assert duration_calls.calls[0]["route"] == "/api/v1/test/items/{item_id}/exception"
+    assert error_calls.calls[0]["route"] == "/api/v1/test/items/{item_id}/exception"
+    assert item_id not in str(request_calls.calls[0])
+    assert item_id not in str(duration_calls.calls[0])
+    assert item_id not in str(error_calls.calls[0])
 
 
 def test_missing_route_template_falls_back_to_unknown(monkeypatch) -> None:
@@ -164,6 +202,7 @@ def test_missing_route_template_falls_back_to_unknown(monkeypatch) -> None:
     assert response.status_code == 404
     assert len(request_calls.calls) == 1
     assert request_calls.calls[0]["route"] == "unknown"
+    assert "no-route-handler" not in str(request_calls.calls[0])
 
 
 def test_non_http_scope_passes_without_metrics(monkeypatch) -> None:
