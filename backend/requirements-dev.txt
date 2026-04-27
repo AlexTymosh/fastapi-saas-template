@@ -85,6 +85,8 @@ markupsafe==3.0.3
     # via mako
 nodeenv==1.10.0
     # via pre-commit
+opentelemetry-api==1.28.0
+    # via fastapi-saas-template (pyproject.toml)
 packaging==26.0
     # via pytest
 platformdirs==4.9.6
