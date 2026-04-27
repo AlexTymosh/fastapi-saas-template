@@ -340,16 +340,36 @@ def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
     metrics._safe_record_metric(  # noqa: SLF001
         _raise,
         metric_name="http.server.requests.total",
-        event="http_request",
+        metric_event="http_request",
     )
 
     assert captured_log["event_name"] == "metrics_recording_failed"
     assert captured_log["kwargs"] == {
         "metric_name": "http.server.requests.total",
-        "event": "http_request",
+        "metric_event": "http_request",
         "reason": "RuntimeError",
         "category": "observability",
     }
+    assert "email=user@example.com" not in str(captured_log)
+
+
+def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
+    monkeypatch,
+) -> None:
+    class _RaisingLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            raise RuntimeError("logger backend down")
+
+    monkeypatch.setattr(metrics, "log", _RaisingLogger())
+
+    def _raise() -> None:
+        raise RuntimeError("email=user@example.com")
+
+    metrics._safe_record_metric(  # noqa: SLF001
+        _raise,
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+    )
 
 
 @pytest.mark.parametrize("result", ["allowed", "blocked", "backend_error", "fail_open"])

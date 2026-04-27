@@ -319,6 +319,27 @@ def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
     assert response.text == "boom"
 
 
+def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -> None:
+    def _raise_request_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    class _RaisingLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            raise RuntimeError("logger failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        _raise_request_metric,
+    )
+    monkeypatch.setattr("app.core.observability.middleware.log", _RaisingLogger())
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/success")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": "true"}
+
+
 def test_404_response_is_preserved_when_metrics_fail(monkeypatch) -> None:
     def _raise_request_metric(**kwargs: object) -> None:
         raise RuntimeError("metrics failed")

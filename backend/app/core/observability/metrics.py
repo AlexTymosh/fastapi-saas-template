@@ -95,21 +95,24 @@ ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 
-def _log_metrics_failure(*, metric_name: str, event: str, reason: str) -> None:
-    log.warning(
-        "metrics_recording_failed",
-        metric_name=metric_name,
-        event=event,
-        reason=reason,
-        category="observability",
-    )
+def _log_metrics_failure(*, metric_name: str, metric_event: str, reason: str) -> None:
+    try:
+        log.warning(
+            "metrics_recording_failed",
+            metric_name=metric_name,
+            metric_event=metric_event,
+            reason=reason,
+            category="observability",
+        )
+    except Exception:
+        return
 
 
 def _safe_record_metric(
     operation: Callable[..., None],
     *args: object,
     metric_name: str,
-    event: str,
+    metric_event: str,
     **kwargs: object,
 ) -> None:
     try:
@@ -117,7 +120,7 @@ def _safe_record_metric(
     except Exception as exc:
         _log_metrics_failure(
             metric_name=metric_name,
-            event=event,
+            metric_event=metric_event,
             reason=exc.__class__.__name__,
         )
 
@@ -156,7 +159,7 @@ def record_rate_limit_decision(
     except Exception as exc:
         _log_metrics_failure(
             metric_name="rate_limit.requests.total",
-            event="rate_limit_decision",
+            metric_event="rate_limit_decision",
             reason=exc.__class__.__name__,
         )
         return
@@ -166,7 +169,7 @@ def record_rate_limit_decision(
         1,
         attributes=attributes,
         metric_name="rate_limit.requests.total",
-        event="rate_limit_decision",
+        metric_event="rate_limit_decision",
     )
 
 
@@ -186,7 +189,7 @@ def record_rate_limit_backend_error(
     except Exception as exc:
         _log_metrics_failure(
             metric_name="rate_limit.backend_errors.total",
-            event="rate_limit_backend_error",
+            metric_event="rate_limit_backend_error",
             reason=exc.__class__.__name__,
         )
         return
@@ -195,7 +198,7 @@ def record_rate_limit_backend_error(
         1,
         attributes=attributes,
         metric_name="rate_limit.backend_errors.total",
-        event="rate_limit_backend_error",
+        metric_event="rate_limit_backend_error",
     )
 
 
@@ -217,7 +220,7 @@ def record_rate_limit_check_duration(
     except Exception as exc:
         _log_metrics_failure(
             metric_name="rate_limit.check.duration",
-            event="rate_limit_check_duration",
+            metric_event="rate_limit_check_duration",
             reason=exc.__class__.__name__,
         )
         return
@@ -227,7 +230,7 @@ def record_rate_limit_check_duration(
         duration_seconds,
         attributes=attributes,
         metric_name="rate_limit.check.duration",
-        event="rate_limit_check_duration",
+        metric_event="rate_limit_check_duration",
     )
 
 
@@ -247,7 +250,7 @@ def record_http_request(
     except Exception as exc:
         _log_metrics_failure(
             metric_name="http.server.requests.total",
-            event="http_request",
+            metric_event="http_request",
             reason=exc.__class__.__name__,
         )
         return
@@ -257,7 +260,7 @@ def record_http_request(
         1,
         attributes=attributes,
         metric_name="http.server.requests.total",
-        event="http_request",
+        metric_event="http_request",
     )
 
 
@@ -279,7 +282,7 @@ def record_http_error(
     except Exception as exc:
         _log_metrics_failure(
             metric_name="http.server.errors.total",
-            event="http_error",
+            metric_event="http_error",
             reason=exc.__class__.__name__,
         )
         return
@@ -288,7 +291,7 @@ def record_http_error(
         1,
         attributes=attributes,
         metric_name="http.server.errors.total",
-        event="http_error",
+        metric_event="http_error",
     )
 
 
@@ -309,7 +312,7 @@ def record_http_request_duration(
     except Exception as exc:
         _log_metrics_failure(
             metric_name="http.server.request.duration",
-            event="http_request_duration",
+            metric_event="http_request_duration",
             reason=exc.__class__.__name__,
         )
         return
@@ -318,7 +321,7 @@ def record_http_request_duration(
         duration_seconds,
         attributes=attributes,
         metric_name="http.server.request.duration",
-        event="http_request_duration",
+        metric_event="http_request_duration",
     )
 
 
