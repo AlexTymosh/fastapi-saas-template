@@ -269,3 +269,124 @@ def test_4xx_response_does_not_record_error(monkeypatch) -> None:
     assert len(request_calls.calls) == 1
     assert len(duration_calls.calls) == 1
     assert len(error_calls.calls) == 0
+
+
+def test_success_response_is_preserved_when_request_metric_fails(monkeypatch) -> None:
+    def _raise_request_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        _raise_request_metric,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/success")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": "true"}
+
+
+def test_success_response_is_preserved_when_duration_metric_fails(monkeypatch) -> None:
+    def _raise_duration_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request_duration",
+        _raise_duration_metric,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/success")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": "true"}
+
+
+def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
+    def _raise_error_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_error",
+        _raise_error_metric,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/error-response")
+
+    assert response.status_code == 500
+    assert response.text == "boom"
+
+
+def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -> None:
+    def _raise_request_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    class _RaisingLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            raise RuntimeError("logger failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        _raise_request_metric,
+    )
+    monkeypatch.setattr("app.core.observability.middleware.log", _RaisingLogger())
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/success")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": "true"}
+
+
+def test_404_response_is_preserved_when_metrics_fail(monkeypatch) -> None:
+    def _raise_request_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    def _raise_duration_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        _raise_request_metric,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request_duration",
+        _raise_duration_metric,
+    )
+
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/test/not-found")
+
+    assert response.status_code == 404
+    assert response.text == "not found"
+
+
+def test_original_exception_is_preserved_when_metrics_fail(monkeypatch) -> None:
+    def _raise_request_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    def _raise_duration_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    def _raise_error_metric(**kwargs: object) -> None:
+        raise RuntimeError("metrics failed")
+
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request",
+        _raise_request_metric,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_request_duration",
+        _raise_duration_metric,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.middleware.record_http_error",
+        _raise_error_metric,
+    )
+
+    client = TestClient(_build_app())
+
+    with pytest.raises(RuntimeError, match="boom"):
+        client.get("/api/v1/test/exception")

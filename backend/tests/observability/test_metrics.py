@@ -53,6 +53,18 @@ class _FakeHistogram:
         self.calls.append((value, attributes))
 
 
+class _RaisingCounter:
+    def add(self, value: int, attributes: dict[str, str | int] | None = None) -> None:
+        raise RuntimeError("metrics backend down")
+
+
+class _RaisingHistogram:
+    def record(
+        self, value: float, attributes: dict[str, str | int] | None = None
+    ) -> None:
+        raise RuntimeError("metrics backend down")
+
+
 async def _principal() -> AuthenticatedPrincipal:
     return AuthenticatedPrincipal(
         external_auth_id="user-a",
@@ -241,6 +253,123 @@ def test_record_http_request_rejects_unsupported_keys() -> None:
             },
             metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS,
         )
+
+
+def test_record_http_request_does_not_raise_when_counter_fails(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
+
+    metrics.record_http_request(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=200,
+    )
+
+
+def test_record_http_error_does_not_raise_when_counter_fails(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "HTTP_ERRORS_TOTAL", _RaisingCounter())
+
+    metrics.record_http_error(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=500,
+        error_type="http_5xx",
+    )
+
+
+def test_record_http_duration_does_not_raise_when_histogram_fails(monkeypatch) -> None:
+    monkeypatch.setattr(metrics, "HTTP_REQUEST_DURATION", _RaisingHistogram())
+
+    metrics.record_http_request_duration(
+        method="GET",
+        route="/api/v1/items/{item_id}",
+        status_code=200,
+        duration_seconds=0.02,
+    )
+
+
+def test_record_rate_limit_decision_does_not_raise_when_counter_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(metrics, "rate_limit_requests_total", _RaisingCounter())
+
+    metrics.record_rate_limit_decision(
+        policy_name="invite_create",
+        result="allowed",
+        identifier_kind="user",
+    )
+
+
+def test_record_rate_limit_backend_error_does_not_raise_when_counter_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(metrics, "rate_limit_backend_errors_total", _RaisingCounter())
+
+    metrics.record_rate_limit_backend_error(
+        policy_name="invite_create",
+        identifier_kind="user",
+        error_type="RuntimeError",
+    )
+
+
+def test_record_rate_limit_check_duration_does_not_raise_when_histogram_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(metrics, "rate_limit_check_duration", _RaisingHistogram())
+
+    metrics.record_rate_limit_check_duration(
+        policy_name="invite_create",
+        result="allowed",
+        identifier_kind="user",
+        duration_seconds=0.02,
+    )
+
+
+def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
+    captured_log: dict[str, object] = {}
+
+    class _FakeLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            captured_log["event_name"] = event_name
+            captured_log["kwargs"] = kwargs
+
+    monkeypatch.setattr(metrics, "log", _FakeLogger())
+
+    def _raise() -> None:
+        raise RuntimeError("email=user@example.com")
+
+    metrics._safe_record_metric(  # noqa: SLF001
+        _raise,
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+    )
+
+    assert captured_log["event_name"] == "metrics_recording_failed"
+    assert captured_log["kwargs"] == {
+        "metric_name": "http.server.requests.total",
+        "metric_event": "http_request",
+        "reason": "RuntimeError",
+        "category": "observability",
+    }
+    assert "email=user@example.com" not in str(captured_log)
+
+
+def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
+    monkeypatch,
+) -> None:
+    class _RaisingLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            raise RuntimeError("logger backend down")
+
+    monkeypatch.setattr(metrics, "log", _RaisingLogger())
+
+    def _raise() -> None:
+        raise RuntimeError("email=user@example.com")
+
+    metrics._safe_record_metric(  # noqa: SLF001
+        _raise,
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+    )
 
 
 @pytest.mark.parametrize("result", ["allowed", "blocked", "backend_error", "fail_open"])
