@@ -175,4 +175,6 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
             },
         )
 
+    _dependency.__rate_limit_policy_name__ = policy.name  # type: ignore[attr-defined]
+    _dependency.__rate_limit_policy__ = policy  # type: ignore[attr-defined]
     return _dependency

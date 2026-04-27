@@ -9,6 +9,8 @@ import pytest
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 from limits import RateLimitItemPerMinute
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.observability import metrics
@@ -142,6 +144,49 @@ def test_metrics_helpers_are_noop_without_sdk() -> None:
         identifier_kind="user",
         duration_seconds=0.01,
     )
+
+
+def test_inmemory_metric_reader_smoke_collects_expected_metric_names() -> None:
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    meter = provider.get_meter("tests.observability")
+
+    http_duration = meter.create_histogram(
+        "http.server.request.duration",
+        unit="s",
+    )
+    rate_limit_requests = meter.create_counter(
+        "rate_limit.requests.total",
+        unit="{request}",
+    )
+
+    http_duration.record(
+        0.02,
+        attributes={
+            metrics.HTTP_ATTRIBUTE_METHOD: "GET",
+            metrics.HTTP_ATTRIBUTE_ROUTE: "/api/v1/health/live",
+            metrics.HTTP_ATTRIBUTE_STATUS_CODE: 200,
+        },
+    )
+    rate_limit_requests.add(
+        1,
+        attributes={
+            metrics.RATE_LIMIT_ATTRIBUTE_POLICY: "invite_create",
+            metrics.RATE_LIMIT_ATTRIBUTE_RESULT: "allowed",
+            metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: "user",
+        },
+    )
+
+    metric_data = reader.get_metrics_data()
+    metric_names = {
+        metric.name
+        for resource_metric in metric_data.resource_metrics
+        for scope_metric in resource_metric.scope_metrics
+        for metric in scope_metric.metrics
+    }
+
+    assert "http.server.request.duration" in metric_names
+    assert "rate_limit.requests.total" in metric_names
 
 
 def test_metrics_helpers_emit_only_low_cardinality_attributes(monkeypatch) -> None:
