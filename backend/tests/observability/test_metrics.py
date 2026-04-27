@@ -65,6 +65,14 @@ class _RaisingHistogram:
         raise RuntimeError("metrics backend down")
 
 
+class _FailureCounter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, dict[str, str]]] = []
+
+    def add(self, value: int, attributes: dict[str, str]) -> None:
+        self.calls.append((value, attributes))
+
+
 async def _principal() -> AuthenticatedPrincipal:
     return AuthenticatedPrincipal(
         external_auth_id="user-a",
@@ -72,6 +80,11 @@ async def _principal() -> AuthenticatedPrincipal:
         email_verified=True,
         platform_roles=[],
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_metrics_failure_log_window() -> None:
+    metrics._last_metrics_failure_log_at.clear()  # noqa: SLF001
 
 
 def _build_app(
@@ -326,6 +339,7 @@ def test_record_rate_limit_check_duration_does_not_raise_when_histogram_fails(
 
 def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
     captured_log: dict[str, object] = {}
+    failures_counter = _FailureCounter()
 
     class _FakeLogger:
         def warning(self, event_name: str, **kwargs: object) -> None:
@@ -333,6 +347,11 @@ def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
             captured_log["kwargs"] = kwargs
 
     monkeypatch.setattr(metrics, "log", _FakeLogger())
+    monkeypatch.setattr(
+        metrics,
+        "observability_recording_failures_total",
+        failures_counter,
+    )
 
     def _raise() -> None:
         raise RuntimeError("email=user@example.com")
@@ -351,16 +370,33 @@ def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
         "category": "observability",
     }
     assert "email=user@example.com" not in str(captured_log)
+    assert failures_counter.calls == [
+        (
+            1,
+            {
+                "observability.metric_name": "http.server.requests.total",
+                "observability.metric_event": "http_request",
+                "observability.reason": "RuntimeError",
+            },
+        )
+    ]
 
 
 def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
     monkeypatch,
 ) -> None:
+    failures_counter = _FailureCounter()
+
     class _RaisingLogger:
         def warning(self, event_name: str, **kwargs: object) -> None:
             raise RuntimeError("logger backend down")
 
     monkeypatch.setattr(metrics, "log", _RaisingLogger())
+    monkeypatch.setattr(
+        metrics,
+        "observability_recording_failures_total",
+        failures_counter,
+    )
 
     def _raise() -> None:
         raise RuntimeError("email=user@example.com")
@@ -369,6 +405,142 @@ def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
         _raise,
         metric_name="http.server.requests.total",
         metric_event="http_request",
+    )
+
+    assert len(failures_counter.calls) == 1
+
+
+def test_metrics_failure_logs_are_rate_limited(monkeypatch) -> None:
+    captured_logs: list[dict[str, object]] = []
+    failures_counter = _FailureCounter()
+    monotonic_values = iter([10.0, 20.0, 90.0])
+
+    class _FakeLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            captured_logs.append({"event_name": event_name, "kwargs": kwargs})
+
+    def _raise() -> None:
+        raise RuntimeError("backend down")
+
+    monkeypatch.setattr(metrics, "log", _FakeLogger())
+    monkeypatch.setattr(
+        metrics,
+        "observability_recording_failures_total",
+        failures_counter,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.metrics.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    metrics._safe_record_metric(  # noqa: SLF001
+        _raise,
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+    )
+    metrics._safe_record_metric(  # noqa: SLF001
+        _raise,
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+    )
+    metrics._safe_record_metric(  # noqa: SLF001
+        _raise,
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+    )
+
+    assert len(captured_logs) == 2
+    assert len(failures_counter.calls) == 3
+
+
+def test_metrics_failure_logs_are_isolated_by_metric_key(monkeypatch) -> None:
+    captured_logs: list[dict[str, object]] = []
+    failures_counter = _FailureCounter()
+    monotonic_values = iter([10.0, 10.0, 10.0])
+
+    class _FakeLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            captured_logs.append({"event_name": event_name, "kwargs": kwargs})
+
+    monkeypatch.setattr(metrics, "log", _FakeLogger())
+    monkeypatch.setattr(
+        metrics,
+        "observability_recording_failures_total",
+        failures_counter,
+    )
+    monkeypatch.setattr(
+        "app.core.observability.metrics.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    metrics._handle_metric_recording_failure(  # noqa: SLF001
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+        reason="RuntimeError",
+    )
+    metrics._handle_metric_recording_failure(  # noqa: SLF001
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+        reason="ValueError",
+    )
+    metrics._handle_metric_recording_failure(  # noqa: SLF001
+        metric_name="http.server.errors.total",
+        metric_event="http_error",
+        reason="RuntimeError",
+    )
+
+    assert len(captured_logs) == 3
+    assert len(failures_counter.calls) == 3
+
+
+def test_self_metric_failure_is_swallowed_without_recursion(monkeypatch) -> None:
+    captured_logs: list[dict[str, object]] = []
+
+    class _RaisingCounter:
+        def add(
+            self, value: int, attributes: dict[str, str | int] | None = None
+        ) -> None:
+            raise RuntimeError("self metric failed")
+
+    class _FakeLogger:
+        def warning(self, event_name: str, **kwargs: object) -> None:
+            captured_logs.append({"event_name": event_name, "kwargs": kwargs})
+
+    monkeypatch.setattr(
+        metrics,
+        "observability_recording_failures_total",
+        _RaisingCounter(),
+    )
+    monkeypatch.setattr(metrics, "log", _FakeLogger())
+
+    metrics._handle_metric_recording_failure(  # noqa: SLF001
+        metric_name="http.server.requests.total",
+        metric_event="http_request",
+        reason="RuntimeError",
+    )
+
+    assert len(captured_logs) == 1
+
+
+def test_self_metric_failure_counter_is_not_recorded_for_self_metric(
+    monkeypatch,
+) -> None:
+    class _ExplodingCounter:
+        def add(
+            self, value: int, attributes: dict[str, str | int] | None = None
+        ) -> None:
+            raise AssertionError("self metric should not be incremented recursively")
+
+    monkeypatch.setattr(
+        metrics,
+        "observability_recording_failures_total",
+        _ExplodingCounter(),
+    )
+
+    metrics._handle_metric_recording_failure(  # noqa: SLF001
+        metric_name=metrics.OBSERVABILITY_RECORDING_FAILURES_TOTAL_NAME,
+        metric_event="observability_failure",
+        reason="RuntimeError",
     )
 
 
