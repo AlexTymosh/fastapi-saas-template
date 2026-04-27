@@ -46,19 +46,30 @@ def _select_rate_limiter_strategy(storage: Any) -> tuple[Any, str]:
 
 async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
     log = get_logger(__name__)
+    environment = settings.app.environment
 
     if not settings.rate_limiting.enabled:
+        secure_environment = environment in {"staging", "prod"}
+        allow_disabled_in_prod = settings.rate_limiting.allow_disabled_in_prod
+
+        if secure_environment and not allow_disabled_in_prod:
+            raise RuntimeError(
+                "RATE_LIMITING__ENABLED=false is not allowed in staging/prod unless "
+                "RATE_LIMITING__ALLOW_DISABLED_IN_PROD=true"
+            )
+
         app.state.rate_limiter_runtime = RateLimiterRuntime(
             enabled=False,
             storage=None,
             limiter=None,
             strategy_name=None,
         )
-        if settings.app.environment in {"staging", "prod"}:
+        if secure_environment and allow_disabled_in_prod:
             log.warning(
-                "rate_limiting_disabled",
-                environment=settings.app.environment,
+                "rate_limiting_disabled_in_secure_environment",
+                environment=environment,
                 category="security",
+                allow_disabled_in_prod=True,
             )
         return
 

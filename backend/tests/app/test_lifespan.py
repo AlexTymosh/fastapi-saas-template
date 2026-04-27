@@ -64,9 +64,93 @@ def test_lifespan_does_not_require_redis_when_rate_limiting_disabled(
     assert response.status_code == 200
 
 
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_lifespan_fails_fast_when_rate_limiting_disabled_in_secure_environment(
+    monkeypatch,
+    environment: str,
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", environment)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ALLOW_DISABLED_IN_PROD", "false")
+    reset_settings_cache()
+
+    app = create_app()
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "RATE_LIMITING__ENABLED=false is not allowed in staging/prod unless "
+            "RATE_LIMITING__ALLOW_DISABLED_IN_PROD=true"
+        ),
+    ):
+        with TestClient(app):
+            pass
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_lifespan_allows_disabled_rate_limiting_with_explicit_bypass_and_logs_warning(
+    monkeypatch,
+    environment: str,
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", environment)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ALLOW_DISABLED_IN_PROD", "true")
+    monkeypatch.setenv("LOGGING__AS_JSON", "true")
+    reset_settings_cache()
+
+    stream = io.StringIO()
+    with patch("sys.stdout", stream):
+        app = create_app()
+        with TestClient(app) as client:
+            response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+    records = _parse_json_lines(stream.getvalue())
+    warning_records = [
+        record
+        for record in records
+        if record.get("event") == "rate_limiting_disabled_in_secure_environment"
+    ]
+    assert warning_records
+    assert warning_records[0]["environment"] == environment
+    assert warning_records[0]["category"] == "security"
+    assert warning_records[0]["allow_disabled_in_prod"] is True
+
+
+def test_lifespan_test_environment_allows_disabled_rate_limiting(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "test")
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ALLOW_DISABLED_IN_PROD", "false")
+    reset_settings_cache()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/health/live")
+
+    assert response.status_code == 200
+
+
 def test_lifespan_fails_fast_when_rate_limiting_enabled_without_redis(
     monkeypatch,
 ) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.delenv("REDIS__URL", raising=False)
+    reset_settings_cache()
+
+    app = create_app()
+    with pytest.raises(
+        RuntimeError,
+        match="REDIS__URL is required when RATE_LIMITING__ENABLED=true",
+    ):
+        with TestClient(app):
+            pass
+
+
+def test_lifespan_prod_enabled_rate_limiting_still_requires_redis(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
     monkeypatch.delenv("REDIS__URL", raising=False)
     reset_settings_cache()

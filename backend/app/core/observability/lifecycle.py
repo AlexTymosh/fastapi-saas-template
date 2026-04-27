@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from inspect import isawaitable
 from typing import Any
 
@@ -64,7 +65,8 @@ def _load_periodic_exporting_metric_reader() -> type[Any]:
 def _build_resource(service_name: str) -> Any:
     from opentelemetry.sdk.resources import Resource
 
-    return Resource.create({"service.name": service_name})
+    resolved_service_name = os.getenv("OTEL_SERVICE_NAME") or service_name
+    return Resource.create({"service.name": resolved_service_name})
 
 
 async def init_observability(settings: Settings) -> None:

@@ -219,6 +219,14 @@ def test_init_observability_service_name_falls_back_to_app_name(
     assert service_name_calls == ["fallback-app"]
 
 
+def test_build_resource_prefers_otel_service_name_env(monkeypatch) -> None:
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "otel-service")
+
+    resource = lifecycle._build_resource("fallback-service")  # noqa: SLF001
+
+    assert resource.attributes["service.name"] == "otel-service"
+
+
 def test_init_observability_fails_fast_without_otlp_endpoint() -> None:
     settings = Settings.model_validate(
         {

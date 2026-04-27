@@ -2,170 +2,102 @@
 
 ## Current phase
 
-- The project uses OpenTelemetry API instrumentation by default.
-- OpenTelemetry Metrics SDK initialization is optional and controlled by settings.
+- OpenTelemetry API + SDK integration points are implemented.
+- Observability is disabled by default (`OBSERVABILITY__METRICS_ENABLED=false`, `OBSERVABILITY__EXPORTER=none`).
 - No `/metrics` endpoint is exposed.
-- Prometheus and Grafana are not connected at this phase.
+- Prometheus and Grafana are intentionally not included in this phase.
 
-## Current metrics foundation
+## OpenTelemetry configuration model
 
-The current foundation prepares rate-limit metrics through OpenTelemetry API instruments.
-Without an initialized SDK, these instruments behave as no-op implementations at runtime.
-This allows stable instrumentation points now, while keeping runtime behavior unchanged.
+### Application-level fallback service name
 
-Current rate-limit metric names:
+The app keeps an explicit fallback chain for `service.name`:
+
+1. `OTEL_SERVICE_NAME` (standard OpenTelemetry env var, highest priority)
+2. `OBSERVABILITY__SERVICE_NAME` (project setting fallback)
+3. `APP__NAME` (final fallback)
+
+### Deployment metadata via standard OTel env vars
+
+Do not add a custom Pydantic field for every resource attribute. Use standard OpenTelemetry environment variables instead:
+
+```bash
+OTEL_SERVICE_NAME=fastapi-saas-template
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=production,service.version=1.2.0
+```
+
+Notes:
+
+- Use `deployment.environment.name` (not deprecated `deployment.environment`).
+- `OTEL_RESOURCE_ATTRIBUTES` is the correct place for deployment metadata such as environment and version.
+
+## OTLP headers and compression
+
+Configure exporter headers/compression with standard OTel env vars:
+
+```bash
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <token>
+OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer <token>
+OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip
+```
+
+Security rules:
+
+- OTLP headers can contain secrets.
+- Do not log OTLP header values.
+- Do not expose OTLP headers via plain string Pydantic settings.
+
+## HTTP metrics semantics
+
+Current HTTP metrics:
+
+- `http.server.request.duration`
+- `http.server.requests.total`
+- `http.server.errors.total`
+
+Semantics:
+
+- `http.server.request.duration` is the primary OpenTelemetry semantic-convention metric.
+- `http.server.requests.total` and `http.server.errors.total` are project-level custom helper metrics.
+- These custom counters may be removed later if backend validation confirms histogram `_count` is sufficient for request/error rates.
+- Do not duplicate these metrics later with auto-instrumentation without an explicit design decision.
+
+## Rate-limit metrics foundation
+
+Current rate-limit metrics:
 
 - `rate_limit.requests.total`
 - `rate_limit.backend_errors.total`
 - `rate_limit.check.duration`
 
-## Rate-limit metric results
-
-Allowed result values:
+Allowed `rate_limit.result` values:
 
 - `allowed`
 - `blocked`
 - `backend_error`
 - `fail_open`
 
-## Low-cardinality rules
-
-Allowed labels/attributes:
+Low-cardinality attributes only:
 
 - `rate_limit.policy`
 - `rate_limit.result`
 - `rate_limit.identifier_kind`
 - `error.type`
 
-Forbidden labels/attributes:
+## Local OTLP collector profile (optional)
 
-- user id
-- email
-- organisation id
-- request id
-- trace id
-- raw path
-- raw URL
-- IP address
-- token
-- Redis key
-- identifier value
-- hashed identifier value
+Use the optional Docker Compose profile when you want to inspect OTLP exports locally:
 
-## Route template rule
+```bash
+docker compose --profile observability up
+```
 
-Future HTTP metrics must use route templates only:
+Then enable export from the app:
 
-`request.scope.get("route").path`
+```bash
+OBSERVABILITY__METRICS_ENABLED=true
+OBSERVABILITY__EXPORTER=otlp
+OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4318/v1/metrics
+```
 
-Do not use:
-
-- `request.url.path`
-- raw path
-- raw URL
-
-If the route template is unavailable, use `"unknown"`.
-
-## Future phases
-
-Next phase:
-
-- initialize OpenTelemetry SDK
-- add exporter
-- expose or export metrics for Prometheus-compatible collection
-- prepare Grafana dashboard
-
-## OpenTelemetry SDK and exporter
-
-The project can initialize OpenTelemetry Metrics SDK when explicitly enabled.
-
-Default behavior:
-
-- `OBSERVABILITY__METRICS_ENABLED=false`
-- `OBSERVABILITY__EXPORTER=none`
-- no SDK/exporter is initialized
-- OpenTelemetry API instruments remain no-op
-
-OTLP HTTP exporter:
-
-- set `OBSERVABILITY__METRICS_ENABLED=true`
-- set `OBSERVABILITY__EXPORTER=otlp`
-- set `OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4318/v1/metrics`
-
-Tuning:
-
-- `OBSERVABILITY__OTLP_TIMEOUT_SECONDS=2.0`
-- `OBSERVABILITY__EXPORT_INTERVAL_MILLIS=60000`
-- `OBSERVABILITY__EXPORT_TIMEOUT_MILLIS=2000`
-
-Current limitations:
-
-- no `/metrics` endpoint
-- no Prometheus service
-- no Grafana service
-- no tracing
-- no logs exporter
-- no database/Redis auto-instrumentation
-
-Implementation notes:
-
-- `http.server.request.duration` is configured with explicit histogram buckets during SDK initialization.
-- OpenTelemetry global `MeterProvider` is process-wide and set-once.
-- Tests should use monkeypatch/fakes for lifecycle assertions and must not reset private OpenTelemetry globals.
-
-## HTTP RED metrics foundation
-
-The project records HTTP RED-style metrics through OpenTelemetry API instruments.
-
-Current HTTP metric names:
-
-- `http.server.requests.total`
-- `http.server.errors.total`
-- `http.server.request.duration`
-
-Current phase:
-
-- no OpenTelemetry SDK is initialized;
-- no exporter is configured;
-- no `/metrics` endpoint is exposed;
-- Prometheus and Grafana are not connected yet.
-
-Route label rule:
-
-- use only route templates from `request.scope.get("route").path`;
-- never use raw URL path;
-- use `"unknown"` when route template is unavailable.
-
-Error rule:
-
-- 5xx responses are counted as errors;
-- 4xx responses are not counted as server errors.
-
-## Metrics recording failure handling
-
-Metric recording is best-effort.
-
-Failures in OpenTelemetry instruments, future SDK/exporter integration, or observability
-helpers must not affect API behavior.
-
-The project records an internal self-metric:
-
-- `observability.recording_failures.total`
-
-Failure logs are rate-limited in-process to avoid log storms.
-
-Failure logs must remain low-cardinality and must not include:
-
-- user id
-- email
-- organisation id
-- request id
-- trace id
-- raw path
-- raw URL
-- IP address
-- token
-- Redis key
-- identifier value
-- hashed identifier value
-- exception message
+The collector profile is local-only, uses OTLP HTTP (`4318`), and logs/debug-prints exported metrics. It does not add Prometheus, Grafana, or a scraping endpoint.

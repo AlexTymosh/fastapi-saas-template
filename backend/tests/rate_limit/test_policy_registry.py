@@ -3,8 +3,10 @@ from __future__ import annotations
 import pytest
 from limits import RateLimitItemPerMinute
 
+from app.core.config.settings import RateLimitingSettings
 from app.core.rate_limit.policies import RateLimitPolicy
 from app.core.rate_limit.registry import (
+    build_explicit_default_policy,
     build_policy_registry,
     get_rate_limit_policy,
     iter_rate_limit_policies,
@@ -68,3 +70,18 @@ def test_invite_policy_semantics_are_unchanged() -> None:
     assert invite_create.item.amount == 20
     assert invite_create.item.get_expiry() == 3600
     assert invite_create.fail_open is False
+
+
+def test_explicit_default_policy_factory_uses_settings_values() -> None:
+    policy = build_explicit_default_policy(
+        RateLimitingSettings(
+            default_limit=77,
+            default_window_seconds=45,
+            default_fail_open=False,
+        )
+    )
+
+    assert policy.name == "default"
+    assert policy.item.amount == 77
+    assert policy.item.get_expiry() == 45
+    assert policy.fail_open is False
