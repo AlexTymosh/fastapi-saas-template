@@ -77,6 +77,8 @@ Important safety notes:
 - Pin image tags.
 - Expose only required ports.
 - Wait for readiness with bounded timeouts.
+- TCP readiness is not always enough for containerised services.
+- Prefer application-level readiness signals such as health endpoints or stable startup logs when available.
 - Use random prefixes/suffixes for shared stores.
 - Do not rely on docker compose state.
 - `docker compose down -v` must not break pre-push tests.
@@ -92,6 +94,10 @@ Important safety notes:
 - Avoid brittle timing assertions.
 - Use eventual polling for async exports.
 - Include last logs/output in timeout failures.
+- OTLP Collector export tests should use an ephemeral OpenTelemetry Collector via
+  Testcontainers.
+- For OTLP integration/e2e verification run:
+  `pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs`.
 
 ## When to ask the user
 
