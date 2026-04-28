@@ -5,7 +5,7 @@ import time
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.core.observability.metrics import (
+from app.core.observability import (
     get_route_template,
     record_http_error,
     record_http_request,

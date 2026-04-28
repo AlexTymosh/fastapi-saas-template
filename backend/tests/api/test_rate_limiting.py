@@ -17,6 +17,7 @@ from app.core.auth import (
     require_authenticated_principal,
 )
 from app.core.db.session import get_db_session
+from app.core.observability import rate_limit_metrics
 from app.core.rate_limit.dependencies import rate_limit_dependency
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
@@ -276,22 +277,30 @@ def test_runtime_unavailable_503_contract_is_preserved_when_metrics_fail(
     client = _build_app(monkeypatch, enabled=True, runtime=runtime)
     client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
 
-    with (
-        patch(
-            "app.core.rate_limit.dependencies.record_rate_limit_backend_error",
-            side_effect=RuntimeError("metrics backend down"),
+    monkeypatch.setattr(
+        rate_limit_metrics.rate_limit_backend_errors_total,
+        "add",
+        lambda value, attributes=None: (_ for _ in ()).throw(
+            RuntimeError("metrics backend down")
         ),
-        patch(
-            "app.core.rate_limit.dependencies.record_rate_limit_decision",
-            side_effect=RuntimeError("metrics backend down"),
+    )
+    monkeypatch.setattr(
+        rate_limit_metrics.rate_limit_requests_total,
+        "add",
+        lambda value, attributes=None: (_ for _ in ()).throw(
+            RuntimeError("metrics backend down")
         ),
-        patch(
-            "app.core.rate_limit.dependencies.record_rate_limit_check_duration",
-            side_effect=RuntimeError("metrics backend down"),
+    )
+    monkeypatch.setattr(
+        rate_limit_metrics.rate_limit_check_duration,
+        "record",
+        lambda value, attributes=None: (_ for _ in ()).throw(
+            RuntimeError("metrics backend down")
         ),
-    ):
-        with client as api_client:
-            response = api_client.get("/api/v1/test/rate-limit/protected")
+    )
+
+    with client as api_client:
+        response = api_client.get("/api/v1/test/rate-limit/protected")
 
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")

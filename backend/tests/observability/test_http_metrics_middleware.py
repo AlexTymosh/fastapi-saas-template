@@ -276,7 +276,8 @@ def test_success_response_is_preserved_when_request_metric_fails(monkeypatch) ->
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
+        "app.core.observability.http_metrics.HTTP_REQUESTS_TOTAL.add",
+        _raise_request_metric,
     )
 
     client = TestClient(_build_app())
@@ -291,7 +292,7 @@ def test_success_response_is_preserved_when_duration_metric_fails(monkeypatch) -
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_REQUEST_DURATION.record",
+        "app.core.observability.http_metrics.HTTP_REQUEST_DURATION.record",
         _raise_duration_metric,
     )
 
@@ -307,7 +308,7 @@ def test_500_response_is_preserved_when_error_metric_fails(monkeypatch) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_ERRORS_TOTAL.add", _raise_error_metric
+        "app.core.observability.http_metrics.HTTP_ERRORS_TOTAL.add", _raise_error_metric
     )
 
     client = TestClient(_build_app())
@@ -326,9 +327,10 @@ def test_success_response_is_preserved_when_metrics_logging_fails(monkeypatch) -
             raise RuntimeError("logger failed")
 
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
+        "app.core.observability.http_metrics.HTTP_REQUESTS_TOTAL.add",
+        _raise_request_metric,
     )
-    monkeypatch.setattr("app.core.observability.metrics.log", _RaisingLogger())
+    monkeypatch.setattr("app.core.observability.safety.log", _RaisingLogger())
 
     client = TestClient(_build_app())
     response = client.get("/api/v1/test/success")
@@ -345,10 +347,11 @@ def test_404_response_is_preserved_when_metrics_fail(monkeypatch) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
+        "app.core.observability.http_metrics.HTTP_REQUESTS_TOTAL.add",
+        _raise_request_metric,
     )
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_REQUEST_DURATION.record",
+        "app.core.observability.http_metrics.HTTP_REQUEST_DURATION.record",
         _raise_duration_metric,
     )
 
@@ -370,14 +373,15 @@ def test_original_exception_is_preserved_when_metrics_fail(monkeypatch) -> None:
         raise RuntimeError("metrics failed")
 
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_REQUESTS_TOTAL.add", _raise_request_metric
+        "app.core.observability.http_metrics.HTTP_REQUESTS_TOTAL.add",
+        _raise_request_metric,
     )
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_REQUEST_DURATION.record",
+        "app.core.observability.http_metrics.HTTP_REQUEST_DURATION.record",
         _raise_duration_metric,
     )
     monkeypatch.setattr(
-        "app.core.observability.metrics.HTTP_ERRORS_TOTAL.add", _raise_error_metric
+        "app.core.observability.http_metrics.HTTP_ERRORS_TOTAL.add", _raise_error_metric
     )
 
     client = TestClient(_build_app())

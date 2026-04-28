@@ -46,23 +46,17 @@ def _record_rate_limit_outcome(
     started_at: float,
 ) -> None:
     duration_seconds = time.perf_counter() - started_at
-    try:
-        record_rate_limit_decision(
-            policy_name=policy_name,
-            result=result,
-            identifier_kind=identifier_kind,
-        )
-    except Exception:
-        pass
-    try:
-        record_rate_limit_check_duration(
-            policy_name=policy_name,
-            result=result,
-            identifier_kind=identifier_kind,
-            duration_seconds=duration_seconds,
-        )
-    except Exception:
-        pass
+    record_rate_limit_decision(
+        policy_name=policy_name,
+        result=result,
+        identifier_kind=identifier_kind,
+    )
+    record_rate_limit_check_duration(
+        policy_name=policy_name,
+        result=result,
+        identifier_kind=identifier_kind,
+        duration_seconds=duration_seconds,
+    )
 
 
 def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[None]]:
@@ -82,14 +76,11 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
         runtime = _runtime_from_request(request)
 
         if runtime is None or runtime.limiter is None:
-            try:
-                record_rate_limit_backend_error(
-                    policy_name=policy.name,
-                    identifier_kind="unknown",
-                    error_type="RuntimeUnavailable",
-                )
-            except Exception:
-                pass
+            record_rate_limit_backend_error(
+                policy_name=policy.name,
+                identifier_kind="unknown",
+                error_type="RuntimeUnavailable",
+            )
             _record_rate_limit_outcome(
                 policy_name=policy.name,
                 result="runtime_unavailable",
@@ -122,14 +113,11 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
             TimeoutError,
             RuntimeError,
         ) as exc:
-            try:
-                record_rate_limit_backend_error(
-                    policy_name=policy.name,
-                    identifier_kind=identifier.kind,
-                    error_type=exc.__class__.__name__,
-                )
-            except Exception:
-                pass
+            record_rate_limit_backend_error(
+                policy_name=policy.name,
+                identifier_kind=identifier.kind,
+                error_type=exc.__class__.__name__,
+            )
 
             if policy.fail_open:
                 _record_rate_limit_outcome(
