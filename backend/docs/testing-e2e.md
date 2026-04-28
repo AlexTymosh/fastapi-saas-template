@@ -92,6 +92,10 @@ Important safety notes:
 - Avoid brittle timing assertions.
 - Use eventual polling for async exports.
 - Include last logs/output in timeout failures.
+- OTLP Collector export tests should use an ephemeral OpenTelemetry Collector via
+  Testcontainers.
+- For OTLP integration/e2e verification run:
+  `pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs`.
 
 ## When to ask the user
 
