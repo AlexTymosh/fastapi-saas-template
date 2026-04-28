@@ -200,3 +200,21 @@ pytest tests/observability/test_otlp_export_integration.py -q -m "integration an
 - **Duplicate `/v1/metrics`**: fix endpoint to a single full path.
 - **Exporter timeout**: adjust `OBSERVABILITY__OTLP_TIMEOUT_SECONDS` and verify collector is reachable.
 - **No rate-limit metrics**: ensure a rate-limited endpoint is actually called with valid auth/test setup.
+
+## OpenTelemetry global MeterProvider limitation
+
+OpenTelemetry Python treats the global meter provider as process-wide and set-once.
+
+This project uses a local `_initialized_provider` guard to avoid repeated initialisation
+inside the app lifecycle, but the underlying global provider cannot be reset cleanly
+inside the same Python process.
+
+### Testing strategy
+
+- Unit tests should monkeypatch `opentelemetry.metrics.set_meter_provider` instead of
+  repeatedly installing real global providers.
+- Tests that require real OTLP export should keep SDK initialisation isolated.
+- E2E OTLP export verification should run as a single controlled scenario per test
+  process, or in separate processes when multiple real SDK initialisations are needed.
+- Do not write tests that rely on resetting the global OpenTelemetry meter provider
+  after shutdown.
