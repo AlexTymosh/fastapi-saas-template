@@ -173,9 +173,14 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
 
 - An integration/e2e test starts an ephemeral OpenTelemetry Collector via
   Testcontainers.
-- The test verifies export through the collector debug exporter logs.
+- The test verifies export through the collector debug exporter logs for:
+  - HTTP metrics (`http.server.request.duration`, `http.server.requests.total`);
+  - rate-limit decision metrics (`rate_limit.requests.total`) with `allowed` and `blocked` outcomes;
+  - rate-limit check duration metrics (`rate_limit.check.duration`).
 - No Prometheus/Grafana stack is required.
 - No `/metrics` endpoint is required.
+- Backend error/fail-open/fail-closed OTLP export paths are not part of this
+  automated verification yet.
 
 Run:
 
