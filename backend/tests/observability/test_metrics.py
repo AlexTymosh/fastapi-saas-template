@@ -12,8 +12,14 @@ from limits import RateLimitItemPerMinute
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
+from app.core import observability
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
-from app.core.observability import metrics
+from app.core.observability import (
+    http_metrics,
+    rate_limit_metrics,
+    route,
+    safety,
+)
 from app.core.rate_limit.dependencies import rate_limit_dependency
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import RateLimitPolicy
@@ -92,7 +98,7 @@ async def _principal() -> AuthenticatedPrincipal:
 
 @pytest.fixture(autouse=True)
 def _reset_metrics_failure_log_window() -> None:
-    metrics._last_metrics_failure_log_at.clear()  # noqa: SLF001
+    safety._last_metrics_failure_log_at.clear()  # noqa: SLF001
 
 
 def _build_app(
@@ -128,22 +134,41 @@ def _build_app(
 
 
 def test_metrics_helpers_are_noop_without_sdk() -> None:
-    metrics.record_rate_limit_decision(
+    observability.record_rate_limit_decision(
         policy_name="invite_create",
         result="allowed",
         identifier_kind="user",
     )
-    metrics.record_rate_limit_backend_error(
+    rate_limit_metrics.record_rate_limit_backend_error(
         policy_name="invite_create",
         identifier_kind="user",
         error_type="RuntimeError",
     )
-    metrics.record_rate_limit_check_duration(
+    rate_limit_metrics.record_rate_limit_check_duration(
         policy_name="invite_create",
         result="allowed",
         identifier_kind="user",
         duration_seconds=0.01,
     )
+
+
+def test_observability_public_api_exports_metrics_helpers() -> None:
+    expected_exports = {
+        "record_http_error",
+        "record_http_request",
+        "record_http_request_duration",
+        "record_rate_limit_decision",
+        "record_rate_limit_backend_error",
+        "record_rate_limit_check_duration",
+        "get_route_template",
+        "init_observability",
+        "shutdown_observability",
+    }
+
+    for export_name in expected_exports:
+        assert hasattr(observability, export_name)
+
+    assert set(observability.__all__) == expected_exports
 
 
 def test_inmemory_metric_reader_smoke_collects_expected_metric_names() -> None:
@@ -163,17 +188,17 @@ def test_inmemory_metric_reader_smoke_collects_expected_metric_names() -> None:
     http_duration.record(
         0.02,
         attributes={
-            metrics.HTTP_ATTRIBUTE_METHOD: "GET",
-            metrics.HTTP_ATTRIBUTE_ROUTE: "/api/v1/health/live",
-            metrics.HTTP_ATTRIBUTE_STATUS_CODE: 200,
+            http_metrics.HTTP_ATTRIBUTE_METHOD: "GET",
+            http_metrics.HTTP_ATTRIBUTE_ROUTE: "/api/v1/health/live",
+            http_metrics.HTTP_ATTRIBUTE_STATUS_CODE: 200,
         },
     )
     rate_limit_requests.add(
         1,
         attributes={
-            metrics.RATE_LIMIT_ATTRIBUTE_POLICY: "invite_create",
-            metrics.RATE_LIMIT_ATTRIBUTE_RESULT: "allowed",
-            metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: "user",
+            rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_POLICY: "invite_create",
+            rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_RESULT: "allowed",
+            rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: "user",
         },
     )
 
@@ -193,21 +218,33 @@ def test_metrics_helpers_emit_only_low_cardinality_attributes(monkeypatch) -> No
     requests_counter = _FakeCounter()
     backend_counter = _FakeCounter()
     duration_histogram = _FakeHistogram()
-    monkeypatch.setattr(metrics, "rate_limit_requests_total", requests_counter)
-    monkeypatch.setattr(metrics, "rate_limit_backend_errors_total", backend_counter)
-    monkeypatch.setattr(metrics, "rate_limit_check_duration", duration_histogram)
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_requests_total",
+        requests_counter,
+    )
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_backend_errors_total",
+        backend_counter,
+    )
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_check_duration",
+        duration_histogram,
+    )
 
-    metrics.record_rate_limit_decision(
+    rate_limit_metrics.record_rate_limit_decision(
         policy_name="invite_create",
         result="allowed",
         identifier_kind="user",
     )
-    metrics.record_rate_limit_backend_error(
+    observability.record_rate_limit_backend_error(
         policy_name="invite_create",
         identifier_kind="user",
         error_type="RuntimeError",
     )
-    metrics.record_rate_limit_check_duration(
+    observability.record_rate_limit_check_duration(
         policy_name="invite_create",
         result="blocked",
         identifier_kind="user",
@@ -235,15 +272,21 @@ def test_metrics_helpers_emit_only_low_cardinality_attributes(monkeypatch) -> No
     }
 
     for _, attributes in requests_counter.calls:
-        assert set(attributes).issubset(metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
+        assert set(attributes).issubset(
+            rate_limit_metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS
+        )
         assert set(attributes).isdisjoint(forbidden_keys)
 
     for _, attributes in backend_counter.calls:
-        assert set(attributes).issubset(metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
+        assert set(attributes).issubset(
+            rate_limit_metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS
+        )
         assert set(attributes).isdisjoint(forbidden_keys)
 
     for _, attributes in duration_histogram.calls:
-        assert set(attributes).issubset(metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS)
+        assert set(attributes).issubset(
+            rate_limit_metrics.ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS
+        )
         assert set(attributes).isdisjoint(forbidden_keys)
 
 
@@ -251,22 +294,22 @@ def test_http_metrics_helpers_emit_only_allowed_attributes(monkeypatch) -> None:
     requests_counter = _FakeCounter()
     errors_counter = _FakeCounter()
     duration_histogram = _FakeHistogram()
-    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", requests_counter)
-    monkeypatch.setattr(metrics, "HTTP_ERRORS_TOTAL", errors_counter)
-    monkeypatch.setattr(metrics, "HTTP_REQUEST_DURATION", duration_histogram)
+    monkeypatch.setattr(http_metrics, "HTTP_REQUESTS_TOTAL", requests_counter)
+    monkeypatch.setattr(http_metrics, "HTTP_ERRORS_TOTAL", errors_counter)
+    monkeypatch.setattr(http_metrics, "HTTP_REQUEST_DURATION", duration_histogram)
 
-    metrics.record_http_request(
+    http_metrics.record_http_request(
         method="GET",
         route="/api/v1/items/{item_id}",
         status_code=200,
     )
-    metrics.record_http_error(
+    http_metrics.record_http_error(
         method="GET",
         route="/api/v1/items/{item_id}",
         status_code=500,
         error_type="http_5xx",
     )
-    metrics.record_http_request_duration(
+    http_metrics.record_http_request_duration(
         method="GET",
         route="/api/v1/items/{item_id}",
         status_code=200,
@@ -294,35 +337,35 @@ def test_http_metrics_helpers_emit_only_allowed_attributes(monkeypatch) -> None:
     }
 
     for _, attributes in requests_counter.calls:
-        assert set(attributes) == metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS
+        assert set(attributes) == http_metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS
         assert set(attributes).isdisjoint(forbidden_keys)
 
     for _, attributes in errors_counter.calls:
-        assert set(attributes) == metrics.ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS
+        assert set(attributes) == http_metrics.ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS
         assert set(attributes).isdisjoint(forbidden_keys)
 
     for _, attributes in duration_histogram.calls:
-        assert set(attributes) == metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS
+        assert set(attributes) == http_metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS
         assert set(attributes).isdisjoint(forbidden_keys)
 
 
 def test_record_http_request_rejects_unsupported_keys() -> None:
     with pytest.raises(ValueError, match="Unsupported metric attribute keys"):
-        metrics._validate_attribute_keys(  # noqa: SLF001
+        http_metrics._validate_attribute_keys(  # noqa: SLF001
             {
-                metrics.HTTP_ATTRIBUTE_METHOD: "GET",
-                metrics.HTTP_ATTRIBUTE_ROUTE: "/api/v1/items/{item_id}",
-                metrics.HTTP_ATTRIBUTE_STATUS_CODE: 200,
+                http_metrics.HTTP_ATTRIBUTE_METHOD: "GET",
+                http_metrics.HTTP_ATTRIBUTE_ROUTE: "/api/v1/items/{item_id}",
+                http_metrics.HTTP_ATTRIBUTE_STATUS_CODE: 200,
                 "path": "/api/v1/items/123",
             },
-            metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS,
+            http_metrics.ALLOWED_HTTP_ATTRIBUTE_KEYS,
         )
 
 
 def test_record_http_request_does_not_raise_when_counter_fails(monkeypatch) -> None:
-    monkeypatch.setattr(metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
+    monkeypatch.setattr(http_metrics, "HTTP_REQUESTS_TOTAL", _RaisingCounter())
 
-    metrics.record_http_request(
+    http_metrics.record_http_request(
         method="GET",
         route="/api/v1/items/{item_id}",
         status_code=200,
@@ -330,9 +373,9 @@ def test_record_http_request_does_not_raise_when_counter_fails(monkeypatch) -> N
 
 
 def test_record_http_error_does_not_raise_when_counter_fails(monkeypatch) -> None:
-    monkeypatch.setattr(metrics, "HTTP_ERRORS_TOTAL", _RaisingCounter())
+    monkeypatch.setattr(http_metrics, "HTTP_ERRORS_TOTAL", _RaisingCounter())
 
-    metrics.record_http_error(
+    http_metrics.record_http_error(
         method="GET",
         route="/api/v1/items/{item_id}",
         status_code=500,
@@ -341,9 +384,9 @@ def test_record_http_error_does_not_raise_when_counter_fails(monkeypatch) -> Non
 
 
 def test_record_http_duration_does_not_raise_when_histogram_fails(monkeypatch) -> None:
-    monkeypatch.setattr(metrics, "HTTP_REQUEST_DURATION", _RaisingHistogram())
+    monkeypatch.setattr(http_metrics, "HTTP_REQUEST_DURATION", _RaisingHistogram())
 
-    metrics.record_http_request_duration(
+    http_metrics.record_http_request_duration(
         method="GET",
         route="/api/v1/items/{item_id}",
         status_code=200,
@@ -354,9 +397,13 @@ def test_record_http_duration_does_not_raise_when_histogram_fails(monkeypatch) -
 def test_record_rate_limit_decision_does_not_raise_when_counter_fails(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(metrics, "rate_limit_requests_total", _RaisingCounter())
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_requests_total",
+        _RaisingCounter(),
+    )
 
-    metrics.record_rate_limit_decision(
+    rate_limit_metrics.record_rate_limit_decision(
         policy_name="invite_create",
         result="allowed",
         identifier_kind="user",
@@ -366,9 +413,13 @@ def test_record_rate_limit_decision_does_not_raise_when_counter_fails(
 def test_record_rate_limit_backend_error_does_not_raise_when_counter_fails(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(metrics, "rate_limit_backend_errors_total", _RaisingCounter())
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_backend_errors_total",
+        _RaisingCounter(),
+    )
 
-    metrics.record_rate_limit_backend_error(
+    rate_limit_metrics.record_rate_limit_backend_error(
         policy_name="invite_create",
         identifier_kind="user",
         error_type="RuntimeError",
@@ -378,9 +429,13 @@ def test_record_rate_limit_backend_error_does_not_raise_when_counter_fails(
 def test_record_rate_limit_check_duration_does_not_raise_when_histogram_fails(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(metrics, "rate_limit_check_duration", _RaisingHistogram())
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_check_duration",
+        _RaisingHistogram(),
+    )
 
-    metrics.record_rate_limit_check_duration(
+    rate_limit_metrics.record_rate_limit_check_duration(
         policy_name="invite_create",
         result="allowed",
         identifier_kind="user",
@@ -397,9 +452,9 @@ def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
             captured_log["event_name"] = event_name
             captured_log["kwargs"] = kwargs
 
-    monkeypatch.setattr(metrics, "log", _FakeLogger())
+    monkeypatch.setattr(safety, "log", _FakeLogger())
     monkeypatch.setattr(
-        metrics,
+        safety,
         "observability_recording_failures_total",
         failures_counter,
     )
@@ -407,7 +462,7 @@ def test_safe_record_metric_logs_low_cardinality_fields(monkeypatch) -> None:
     def _raise() -> None:
         raise RuntimeError("email=user@example.com")
 
-    metrics._safe_record_metric(  # noqa: SLF001
+    safety._safe_record_metric(  # noqa: SLF001
         _raise,
         metric_name="http.server.requests.total",
         metric_event="http_request",
@@ -442,9 +497,9 @@ def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
         def warning(self, event_name: str, **kwargs: object) -> None:
             raise RuntimeError("logger backend down")
 
-    monkeypatch.setattr(metrics, "log", _RaisingLogger())
+    monkeypatch.setattr(safety, "log", _RaisingLogger())
     monkeypatch.setattr(
-        metrics,
+        safety,
         "observability_recording_failures_total",
         failures_counter,
     )
@@ -452,7 +507,7 @@ def test_safe_record_metric_does_not_raise_when_failure_logger_fails(
     def _raise() -> None:
         raise RuntimeError("email=user@example.com")
 
-    metrics._safe_record_metric(  # noqa: SLF001
+    safety._safe_record_metric(  # noqa: SLF001
         _raise,
         metric_name="http.server.requests.total",
         metric_event="http_request",
@@ -472,25 +527,25 @@ def test_metrics_failure_logs_are_rate_limited(monkeypatch) -> None:
     def _raise() -> None:
         raise RuntimeError("backend down")
 
-    monkeypatch.setattr(metrics, "log", _FakeLogger())
+    monkeypatch.setattr(safety, "log", _FakeLogger())
     monkeypatch.setattr(
-        metrics,
+        safety,
         "observability_recording_failures_total",
         failures_counter,
     )
-    monkeypatch.setattr(metrics, "_monotonic", _fake_clock(10.0, 20.0, 90.0))
+    monkeypatch.setattr(safety, "_monotonic", _fake_clock(10.0, 20.0, 90.0))
 
-    metrics._safe_record_metric(  # noqa: SLF001
+    safety._safe_record_metric(  # noqa: SLF001
         _raise,
         metric_name="http.server.requests.total",
         metric_event="http_request",
     )
-    metrics._safe_record_metric(  # noqa: SLF001
+    safety._safe_record_metric(  # noqa: SLF001
         _raise,
         metric_name="http.server.requests.total",
         metric_event="http_request",
     )
-    metrics._safe_record_metric(  # noqa: SLF001
+    safety._safe_record_metric(  # noqa: SLF001
         _raise,
         metric_name="http.server.requests.total",
         metric_event="http_request",
@@ -508,25 +563,25 @@ def test_metrics_failure_logs_are_isolated_by_metric_key(monkeypatch) -> None:
         def warning(self, event_name: str, **kwargs: object) -> None:
             captured_logs.append({"event_name": event_name, "kwargs": kwargs})
 
-    monkeypatch.setattr(metrics, "log", _FakeLogger())
+    monkeypatch.setattr(safety, "log", _FakeLogger())
     monkeypatch.setattr(
-        metrics,
+        safety,
         "observability_recording_failures_total",
         failures_counter,
     )
-    monkeypatch.setattr(metrics, "_monotonic", _fake_clock(10.0, 10.0, 10.0))
+    monkeypatch.setattr(safety, "_monotonic", _fake_clock(10.0, 10.0, 10.0))
 
-    metrics._handle_metric_recording_failure(  # noqa: SLF001
+    safety._handle_metric_recording_failure(  # noqa: SLF001
         metric_name="http.server.requests.total",
         metric_event="http_request",
         reason="RuntimeError",
     )
-    metrics._handle_metric_recording_failure(  # noqa: SLF001
+    safety._handle_metric_recording_failure(  # noqa: SLF001
         metric_name="http.server.requests.total",
         metric_event="http_request",
         reason="ValueError",
     )
-    metrics._handle_metric_recording_failure(  # noqa: SLF001
+    safety._handle_metric_recording_failure(  # noqa: SLF001
         metric_name="http.server.errors.total",
         metric_event="http_error",
         reason="RuntimeError",
@@ -550,13 +605,13 @@ def test_self_metric_failure_is_swallowed_without_recursion(monkeypatch) -> None
             captured_logs.append({"event_name": event_name, "kwargs": kwargs})
 
     monkeypatch.setattr(
-        metrics,
+        safety,
         "observability_recording_failures_total",
         _RaisingCounter(),
     )
-    monkeypatch.setattr(metrics, "log", _FakeLogger())
+    monkeypatch.setattr(safety, "log", _FakeLogger())
 
-    metrics._handle_metric_recording_failure(  # noqa: SLF001
+    safety._handle_metric_recording_failure(  # noqa: SLF001
         metric_name="http.server.requests.total",
         metric_event="http_request",
         reason="RuntimeError",
@@ -575,13 +630,13 @@ def test_self_metric_failure_counter_is_not_recorded_for_self_metric(
             raise AssertionError("self metric should not be incremented recursively")
 
     monkeypatch.setattr(
-        metrics,
+        safety,
         "observability_recording_failures_total",
         _ExplodingCounter(),
     )
 
-    metrics._handle_metric_recording_failure(  # noqa: SLF001
-        metric_name=metrics.OBSERVABILITY_RECORDING_FAILURES_TOTAL_NAME,
+    safety._handle_metric_recording_failure(  # noqa: SLF001
+        metric_name=safety.OBSERVABILITY_RECORDING_FAILURES_TOTAL_NAME,
         metric_event="observability_failure",
         reason="RuntimeError",
     )
@@ -595,9 +650,13 @@ def test_record_rate_limit_check_duration_supports_all_results(
     monkeypatch, result: str
 ) -> None:
     duration_histogram = _FakeHistogram()
-    monkeypatch.setattr(metrics, "rate_limit_check_duration", duration_histogram)
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_check_duration",
+        duration_histogram,
+    )
 
-    metrics.record_rate_limit_check_duration(
+    rate_limit_metrics.record_rate_limit_check_duration(
         policy_name="invite_create",
         result=result,
         identifier_kind="user",
@@ -608,9 +667,9 @@ def test_record_rate_limit_check_duration_supports_all_results(
     recorded_duration, attributes = duration_histogram.calls[0]
     assert isinstance(recorded_duration, float)
     assert recorded_duration >= 0
-    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_POLICY] == "invite_create"
-    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_RESULT] == result
-    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND] == "user"
+    assert attributes[rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_POLICY] == "invite_create"
+    assert attributes[rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_RESULT] == result
+    assert attributes[rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND] == "user"
 
 
 @pytest.mark.parametrize(
@@ -621,9 +680,13 @@ def test_record_rate_limit_decision_supports_all_results(
     monkeypatch, result: str
 ) -> None:
     requests_counter = _FakeCounter()
-    monkeypatch.setattr(metrics, "rate_limit_requests_total", requests_counter)
+    monkeypatch.setattr(
+        rate_limit_metrics,
+        "rate_limit_requests_total",
+        requests_counter,
+    )
 
-    metrics.record_rate_limit_decision(
+    rate_limit_metrics.record_rate_limit_decision(
         policy_name="invite_create",
         result=result,
         identifier_kind="user",
@@ -631,18 +694,18 @@ def test_record_rate_limit_decision_supports_all_results(
 
     assert len(requests_counter.calls) == 1
     _, attributes = requests_counter.calls[0]
-    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_POLICY] == "invite_create"
-    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_RESULT] == result
-    assert attributes[metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND] == "user"
+    assert attributes[rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_POLICY] == "invite_create"
+    assert attributes[rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_RESULT] == result
+    assert attributes[rate_limit_metrics.RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND] == "user"
 
 
 def test_validate_result_accepts_runtime_unavailable() -> None:
-    metrics._validate_result("runtime_unavailable")  # noqa: SLF001
+    rate_limit_metrics._validate_result("runtime_unavailable")  # noqa: SLF001
 
 
 def test_validate_result_rejects_unknown_result() -> None:
     with pytest.raises(ValueError, match="Unsupported rate limit result"):
-        metrics._validate_result("unknown_result")  # noqa: SLF001
+        rate_limit_metrics._validate_result("unknown_result")  # noqa: SLF001
 
 
 def test_get_route_template_returns_route_path() -> None:
@@ -661,7 +724,7 @@ def test_get_route_template_returns_route_path() -> None:
     )()
 
     assert (
-        metrics.get_route_template(request)
+        route.get_route_template(request)
         == "/api/v1/organisations/{organisation_id}/invites"
     )
 
@@ -669,14 +732,14 @@ def test_get_route_template_returns_route_path() -> None:
 def test_get_route_template_returns_unknown_without_route() -> None:
     request = type("RequestStub", (), {"scope": {}})()
 
-    assert metrics.get_route_template(request) == "unknown"
+    assert route.get_route_template(request) == "unknown"
 
 
 def test_get_route_template_never_uses_raw_path() -> None:
     raw_path = f"/api/v1/organisations/{uuid4()}/invites"
     request = type("RequestStub", (), {"scope": {"path": raw_path}})()
 
-    assert metrics.get_route_template(request) == "unknown"
+    assert route.get_route_template(request) == "unknown"
 
 
 def test_rate_limit_dependency_records_allowed(monkeypatch) -> None:

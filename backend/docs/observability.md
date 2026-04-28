@@ -111,6 +111,24 @@ In upstream source for this version, `OTLPMetricExporter(endpoint=...)` uses the
 
 To avoid double path issues (for example `/v1/metrics/v1/metrics`), this project expects explicit full metrics endpoint configuration.
 
+## OpenTelemetry global MeterProvider limitation
+
+OpenTelemetry Python treats the global meter provider as process-wide and set-once.
+
+This project uses a local `_initialized_provider` guard to avoid repeated initialisation
+inside the app lifecycle, but the underlying global provider cannot be reset cleanly
+inside the same Python process.
+
+Testing strategy:
+
+- Unit tests must monkeypatch `opentelemetry.metrics.set_meter_provider` instead of
+  repeatedly installing real global providers.
+- Tests that need real OTLP export should keep SDK initialisation isolated.
+- E2E OTLP export verification should run as a single controlled scenario per test
+  process, or in a separate process when multiple real SDK initialisations are required.
+- Do not write tests that rely on resetting the global OpenTelemetry meter provider
+  after shutdown.
+
 ## Metrics currently instrumented
 
 HTTP RED metrics:
