@@ -172,37 +172,45 @@ async def test_otlp_collector_receives_http_and_rate_limit_metrics_export(
     app.include_router(router)
 
     async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            health_response = await client.get("/api/v1/health/live")
-            first_response = await client.get("/api/v1/integration/rate-limit-otlp")
-            second_response = await client.get("/api/v1/integration/rate-limit-otlp")
+        original_runtime = app.state.rate_limiter_runtime
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                health_response = await client.get("/api/v1/health/live")
+                first_response = await client.get("/api/v1/integration/rate-limit-otlp")
+                second_response = await client.get(
+                    "/api/v1/integration/rate-limit-otlp"
+                )
 
-            app.state.rate_limiter_runtime = RateLimiterRuntime(
-                enabled=True,
-                storage=object(),
-                limiter=_FailingLimiter(),
-                strategy_name="moving-window",
-            )
+                app.state.rate_limiter_runtime = RateLimiterRuntime(
+                    enabled=True,
+                    storage=object(),
+                    limiter=_FailingLimiter(),
+                    strategy_name="moving-window",
+                )
 
-            backend_error_response = await client.get(
-                "/api/v1/integration/rate-limit-backend-error"
-            )
-            fail_open_response = await client.get(
-                "/api/v1/integration/rate-limit-fail-open"
-            )
+                backend_error_response = await client.get(
+                    "/api/v1/integration/rate-limit-backend-error"
+                )
+                fail_open_response = await client.get(
+                    "/api/v1/integration/rate-limit-fail-open"
+                )
 
-            app.state.rate_limiter_runtime = RateLimiterRuntime(
-                enabled=True,
-                storage=object(),
-                limiter=None,
-                strategy_name="moving-window",
-            )
-            runtime_unavailable_response = await client.get(
-                "/api/v1/integration/rate-limit-runtime-unavailable"
-            )
+                app.state.rate_limiter_runtime = RateLimiterRuntime(
+                    enabled=True,
+                    storage=object(),
+                    limiter=None,
+                    strategy_name="moving-window",
+                )
+                runtime_unavailable_response = await client.get(
+                    "/api/v1/integration/rate-limit-runtime-unavailable"
+                )
 
-        await _force_flush_metrics()
+            await _force_flush_metrics()
+        finally:
+            app.state.rate_limiter_runtime = original_runtime
 
     assert health_response.status_code == 200
     assert first_response.status_code == 200
