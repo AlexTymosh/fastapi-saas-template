@@ -4,6 +4,8 @@
 
 This repository is now in the **OTel Collector-only verification** phase for metrics export.
 
+For rate-limit behaviour and contracts, see [Rate limiting](./rate-limiting.md).
+
 What is implemented in this phase:
 
 - OpenTelemetry API instrumentation for HTTP RED and rate-limit metrics.
@@ -175,12 +177,12 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
   Testcontainers.
 - The test verifies export through the collector debug exporter logs for:
   - HTTP metrics (`http.server.request.duration`, `http.server.requests.total`);
-  - rate-limit decision metrics (`rate_limit.requests.total`) with `allowed` and `blocked` outcomes;
+  - rate-limit decision metrics (`rate_limit.requests.total`) with `allowed`, `blocked`, `backend_error`, `fail_open`, and `runtime_unavailable` outcomes;
+  - rate-limit backend error metrics (`rate_limit.backend_errors.total`) with `error.type`;
   - rate-limit check duration metrics (`rate_limit.check.duration`).
 - No Prometheus/Grafana stack is required.
 - No `/metrics` endpoint is required.
-- Backend error/fail-open/fail-closed OTLP export paths are not part of this
-  automated verification yet.
+- Backend error OTLP export paths are covered for fail-closed, fail-open, and runtime-unavailable scenarios.
 
 Run:
 

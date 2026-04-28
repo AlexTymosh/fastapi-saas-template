@@ -3,18 +3,26 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Iterable
+from inspect import isawaitable
 
 import pytest
 from fastapi import APIRouter, Depends
 from httpx import ASGITransport, AsyncClient
 from limits import RateLimitItemPerMinute
+from opentelemetry import metrics
 from testcontainers.core.container import DockerContainer
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.rate_limit.dependencies import rate_limit_dependency
+from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import RateLimitPolicy
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
+
+
+class _FailingLimiter:
+    async def hit(self, item, namespace: str, key: str) -> bool:
+        raise RuntimeError("redis down")
 
 
 def _decode_logs_payload(log_payload: object) -> str:
@@ -57,10 +65,21 @@ def _wait_for_collector_logs(
     )
 
 
+async def _force_flush_metrics() -> None:
+    provider = metrics.get_meter_provider()
+    force_flush = getattr(provider, "force_flush", None)
+    if force_flush is None:
+        return
+
+    result = force_flush()
+    if isawaitable(result):
+        await result
+
+
 @pytest.mark.integration
 @pytest.mark.e2e
 @pytest.mark.anyio
-async def test_otlp_collector_receives_http_metrics_export(
+async def test_otlp_collector_receives_http_and_rate_limit_metrics_export(
     monkeypatch,
     otel_collector_container: DockerContainer,
     otlp_metrics_endpoint: str,
@@ -68,7 +87,12 @@ async def test_otlp_collector_receives_http_metrics_export(
 ) -> None:
     test_suffix = uuid.uuid4().hex
     redis_prefix = f"it-otlp-rl-{test_suffix}"
-    policy_name = f"otlp_rate_limit_probe_{test_suffix}"
+    standard_policy_name = f"otlp_rate_limit_probe_{test_suffix}"
+    backend_error_policy_name = f"otlp_rate_limit_backend_error_{test_suffix}"
+    fail_open_policy_name = f"otlp_rate_limit_fail_open_{test_suffix}"
+    runtime_unavailable_policy_name = (
+        f"otlp_rate_limit_runtime_unavailable_{test_suffix}"
+    )
 
     monkeypatch.setenv("OBSERVABILITY__METRICS_ENABLED", "true")
     monkeypatch.setenv("OBSERVABILITY__EXPORTER", "otlp")
@@ -96,33 +120,113 @@ async def test_otlp_collector_receives_http_metrics_export(
     app.dependency_overrides[get_authenticated_principal] = _principal
 
     router = APIRouter()
-    policy = RateLimitPolicy(
-        name=policy_name,
+    standard_policy = RateLimitPolicy(
+        name=standard_policy_name,
+        item=RateLimitItemPerMinute(1),
+        fail_open=False,
+    )
+    backend_error_policy = RateLimitPolicy(
+        name=backend_error_policy_name,
+        item=RateLimitItemPerMinute(1),
+        fail_open=False,
+    )
+    fail_open_policy = RateLimitPolicy(
+        name=fail_open_policy_name,
+        item=RateLimitItemPerMinute(1),
+        fail_open=True,
+    )
+    runtime_unavailable_policy = RateLimitPolicy(
+        name=runtime_unavailable_policy_name,
         item=RateLimitItemPerMinute(1),
         fail_open=False,
     )
 
     @router.get(
         "/api/v1/integration/rate-limit-otlp",
-        dependencies=[Depends(rate_limit_dependency(policy))],
+        dependencies=[Depends(rate_limit_dependency(standard_policy))],
     )
     async def _probe() -> dict[str, str]:
+        return {"ok": "true"}
+
+    @router.get(
+        "/api/v1/integration/rate-limit-backend-error",
+        dependencies=[Depends(rate_limit_dependency(backend_error_policy))],
+    )
+    async def _backend_error_probe() -> dict[str, str]:
+        return {"ok": "true"}
+
+    @router.get(
+        "/api/v1/integration/rate-limit-fail-open",
+        dependencies=[Depends(rate_limit_dependency(fail_open_policy))],
+    )
+    async def _fail_open_probe() -> dict[str, str]:
+        return {"ok": "true"}
+
+    @router.get(
+        "/api/v1/integration/rate-limit-runtime-unavailable",
+        dependencies=[Depends(rate_limit_dependency(runtime_unavailable_policy))],
+    )
+    async def _runtime_unavailable_probe() -> dict[str, str]:
         return {"ok": "true"}
 
     app.include_router(router)
 
     async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            health_response = await client.get("/api/v1/health/live")
-            first_response = await client.get("/api/v1/integration/rate-limit-otlp")
-            second_response = await client.get("/api/v1/integration/rate-limit-otlp")
+        original_runtime = app.state.rate_limiter_runtime
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                health_response = await client.get("/api/v1/health/live")
+                first_response = await client.get("/api/v1/integration/rate-limit-otlp")
+                second_response = await client.get(
+                    "/api/v1/integration/rate-limit-otlp"
+                )
+
+                app.state.rate_limiter_runtime = RateLimiterRuntime(
+                    enabled=True,
+                    storage=object(),
+                    limiter=_FailingLimiter(),
+                    strategy_name="moving-window",
+                )
+
+                backend_error_response = await client.get(
+                    "/api/v1/integration/rate-limit-backend-error"
+                )
+                fail_open_response = await client.get(
+                    "/api/v1/integration/rate-limit-fail-open"
+                )
+
+                app.state.rate_limiter_runtime = RateLimiterRuntime(
+                    enabled=True,
+                    storage=object(),
+                    limiter=None,
+                    strategy_name="moving-window",
+                )
+                runtime_unavailable_response = await client.get(
+                    "/api/v1/integration/rate-limit-runtime-unavailable"
+                )
+
+            await _force_flush_metrics()
+        finally:
+            app.state.rate_limiter_runtime = original_runtime
 
     assert health_response.status_code == 200
     assert first_response.status_code == 200
     assert second_response.status_code == 429
     assert second_response.json()["error_code"] == "rate_limited"
     assert second_response.headers["retry-after"].isdigit()
+
+    assert backend_error_response.status_code == 503
+    assert backend_error_response.json()["error_code"] == "rate_limiter_unavailable"
+
+    assert fail_open_response.status_code == 200
+
+    assert runtime_unavailable_response.status_code == 503
+    assert (
+        runtime_unavailable_response.json()["error_code"] == "rate_limiter_unavailable"
+    )
 
     logs = _wait_for_collector_logs(
         container=otel_collector_container,
@@ -131,12 +235,22 @@ async def test_otlp_collector_receives_http_metrics_export(
             "http.server.requests.total",
             "fastapi-saas-template-test",
             "rate_limit.requests.total",
+            "rate_limit.backend_errors.total",
             "rate_limit.check.duration",
             "rate_limit.policy",
             "rate_limit.result",
-            policy_name,
+            standard_policy_name,
+            backend_error_policy_name,
+            fail_open_policy_name,
+            runtime_unavailable_policy_name,
             "allowed",
             "blocked",
+            "backend_error",
+            "fail_open",
+            "runtime_unavailable",
+            "error.type",
+            "RuntimeError",
+            "RuntimeUnavailable",
         ],
     )
 
