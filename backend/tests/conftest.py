@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from socket import create_connection
 
@@ -213,6 +213,43 @@ def _wait_for_tcp_readiness(*, host: str, port: int, timeout_seconds: float) -> 
             time.sleep(0.2)
 
 
+def _decode_container_logs(log_payload: object) -> str:
+    if isinstance(log_payload, tuple):
+        return "\n".join(_decode_container_logs(part) for part in log_payload)
+    if isinstance(log_payload, bytes):
+        return log_payload.decode("utf-8", errors="replace")
+    if isinstance(log_payload, str):
+        return log_payload
+    if isinstance(log_payload, Iterable):
+        return "\n".join(_decode_container_logs(part) for part in log_payload)
+    return str(log_payload)
+
+
+def _wait_for_container_log(
+    container: DockerContainer,
+    *,
+    expected_substring: str,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.2,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    latest_logs = ""
+
+    while time.monotonic() < deadline:
+        logs = _decode_container_logs(container.get_logs())
+        if logs:
+            latest_logs = logs
+        if expected_substring in logs:
+            return
+        time.sleep(poll_interval_seconds)
+
+    pytest.fail(
+        "Timed out waiting for container log readiness. "
+        f"Expected substring: {expected_substring!r}. "
+        f"Latest container logs:\n{latest_logs}"
+    )
+
+
 def _build_otel_collector_config(config_path: Path) -> None:
     config_path.write_text(
         "\n".join(
@@ -260,6 +297,11 @@ def otel_collector_container(tmp_path_factory) -> Iterator[DockerContainer]:
         host = container.get_container_host_ip()
         port = int(container.get_exposed_port(4318))
         _wait_for_tcp_readiness(host=host, port=port, timeout_seconds=30.0)
+        _wait_for_container_log(
+            container,
+            expected_substring="Everything is ready",
+            timeout_seconds=30.0,
+        )
         yield container
 
 
