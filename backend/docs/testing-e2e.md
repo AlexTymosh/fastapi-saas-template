@@ -77,6 +77,9 @@ Important safety notes:
 - Pin image tags.
 - Expose only required ports.
 - Wait for readiness with bounded timeouts.
+- TCP readiness is not always enough for containerised services.
+- Prefer application-level readiness signals, such as health endpoints or
+  stable startup logs, when available.
 - Use random prefixes/suffixes for shared stores.
 - Do not rely on docker compose state.
 - `docker compose down -v` must not break pre-push tests.
