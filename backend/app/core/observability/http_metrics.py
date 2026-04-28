@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from app.core.observability.attributes import ERROR_TYPE_ATTRIBUTE
 from app.core.observability.metrics import meter
-from app.core.observability.rate_limit_metrics import RATE_LIMIT_ATTRIBUTE_ERROR_TYPE
 from app.core.observability.safety import (
     _handle_metric_recording_failure,
     _safe_record_metric,
@@ -42,7 +42,7 @@ ALLOWED_HTTP_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
 ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
         *ALLOWED_HTTP_ATTRIBUTE_KEYS,
-        RATE_LIMIT_ATTRIBUTE_ERROR_TYPE,
+        ERROR_TYPE_ATTRIBUTE,
     }
 )
 
@@ -97,7 +97,7 @@ def record_http_error(
         HTTP_ATTRIBUTE_METHOD: method,
         HTTP_ATTRIBUTE_ROUTE: route,
         HTTP_ATTRIBUTE_STATUS_CODE: status_code,
-        RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: error_type,
+        ERROR_TYPE_ATTRIBUTE: error_type,
     }
     try:
         _validate_attribute_keys(attributes, ALLOWED_HTTP_ERROR_ATTRIBUTE_KEYS)
