@@ -270,61 +270,22 @@ These containers are created for the tests and removed afterwards.
 
 Most integration tests do not require manually configured database URLs.
 
-There is one optional external database migration test that can be enabled manually if you want to validate migrations against an already running local test database.
+There is one opt-in `external_db` migration test for persistent local test databases.
+It never runs by default and requires explicit flags.
 
-PowerShell example:
+Safe commands:
 
-```powershell
-$env:TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:5432/app"
-$env:ENABLE_EXTERNAL_MIGRATION_DB_TEST="1"
-pytest -q -m integration -rs
+```bash
+task pre-push
+pytest -q -m "not external_db"
+pytest -q -m external_db --run-external-db -rs
 ```
 
-Clean up environment variables afterwards:
-
-```powershell
-Remove-Item Env:TEST_DATABASE_URL -ErrorAction SilentlyContinue
-Remove-Item Env:ENABLE_EXTERNAL_MIGRATION_DB_TEST -ErrorAction SilentlyContinue
-```
+`external_db` tests also require `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`.
+Do not set `ENABLE_EXTERNAL_MIGRATION_DB_TEST` globally.
 
 > [!NOTE]
 > `TEST_REDIS_URL` is no longer required for the main Redis integration tests. Redis is started automatically by Testcontainers.
-
-
-
-### 1. Start the services
-
-```bash
-docker compose up -d
-```
-
-### 2. Set test environment variables in PowerShell
-
-```powershell
-$env:TEST_DATABASE_URL="postgresql+psycopg://app:app@localhost:5432/app"
-$env:TEST_REDIS_URL="redis://localhost:6379/0"
-$env:ENABLE_EXTERNAL_MIGRATION_DB_TEST="1"
-```
-
-### 3. Run integration tests
-
-```bash
-pytest -q -m integration -rs
-```
-
-If you later run tests in the same terminal without integration variables, remove them first:
-
-```powershell
-Remove-Item Env:TEST_DATABASE_URL -ErrorAction SilentlyContinue
-Remove-Item Env:TEST_REDIS_URL -ErrorAction SilentlyContinue
-Remove-Item Env:ENABLE_EXTERNAL_MIGRATION_DB_TEST
-```
-
----
-
-
-
-
 
 ### 7. Services
 

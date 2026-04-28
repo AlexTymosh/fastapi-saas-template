@@ -37,10 +37,13 @@ def _is_safe_test_database_url(database_url: str) -> bool:
 
     host = (parsed.hostname or "").lower()
     db_name_or_path = (parsed.path or "").lower()
+    unsafe_names = {"app", "postgres", "prod", "production", "main"}
     markers = ("test", "ci", "tmp")
     has_test_marker = any(marker in db_name_or_path for marker in markers)
-    is_local_host = host in {"localhost", "127.0.0.1"}
-    return is_local_host and has_test_marker
+    db_identifier = db_name_or_path.strip("/").split("/")[-1]
+    has_unsafe_name = db_identifier in unsafe_names
+    is_local_host = host in {"localhost", "127.0.0.1", "host.docker.internal"}
+    return is_local_host and has_test_marker and not has_unsafe_name
 
 
 @pytest.mark.integration
@@ -87,6 +90,7 @@ def test_alembic_upgrade_head_check_and_downgrade_base(
 
 
 @pytest.mark.integration
+@pytest.mark.external_db
 def test_alembic_upgrade_head_and_check_with_external_database() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if not database_url:
@@ -108,3 +112,23 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
 
     check = _run_alembic("check", env=env)
     assert check.returncode == 0, check.stdout + "\n" + check.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("database_url", "expected"),
+    [
+        ("sqlite+aiosqlite:///tmp/test.db", True),
+        ("postgresql://user:pass@localhost:5432/app_test", True),
+        ("postgresql://user:pass@127.0.0.1:5432/ci_migrations", True),
+        ("postgresql://user:pass@host.docker.internal:5432/tmp_db", True),
+        ("postgresql://user:pass@db.example.com:5432/app_test", False),
+        ("postgresql://user:pass@localhost:5432/postgres", False),
+        ("postgresql://user:pass@localhost:5432/production", False),
+        ("postgresql://user:pass@localhost:5432/main_db", False),
+        ("postgresql://user:pass@localhost:5432/app", False),
+        ("postgresql://user:pass@localhost:5432/service", False),
+    ],
+)
+def test_is_safe_test_database_url(database_url: str, expected: bool) -> None:
+    assert _is_safe_test_database_url(database_url) is expected
