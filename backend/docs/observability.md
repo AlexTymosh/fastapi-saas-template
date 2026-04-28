@@ -169,6 +169,24 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
 - `rate_limit.requests.total`
 - `rate_limit.check.duration`
 
+## Automated OTLP integration verification
+
+An automated integration test now validates end-to-end OTLP HTTP metrics export using
+an ephemeral OpenTelemetry Collector started via Testcontainers.
+
+Run:
+
+```bash
+pytest tests/observability/test_otlp_export_integration.py -q -m integration
+```
+
+Notes:
+
+- Docker/Testcontainers is required for this test.
+- The test is self-contained and does not depend on `docker compose` services.
+- Prometheus and Grafana are not required.
+- The test collector uses a metrics-only pipeline with the debug exporter.
+
 ## Troubleshooting
 
 - **Collector not started**: start `docker compose --profile observability up otel-collector`.

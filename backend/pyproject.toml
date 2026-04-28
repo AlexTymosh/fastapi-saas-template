@@ -57,7 +57,7 @@ indent-style = "space"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "integration: tests that require real external services like PostgreSQL or Redis",
+    "integration: tests that require ephemeral external services like PostgreSQL, Redis, or OpenTelemetry Collector",
 ]
 
 [tool.alembic]
