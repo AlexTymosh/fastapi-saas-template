@@ -4,11 +4,14 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
 import sqlalchemy as sa
+
+from tests import conftest as test_conftest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -52,9 +55,8 @@ def _is_safe_test_database_url(database_url: str) -> bool:
     db_name_tokens = set(filter(None, re.split(r"[^a-z0-9]+", db_name_or_path)))
 
     required_markers = {"test", "ci", "tmp"}
-    has_required_marker = (
-        not required_markers.isdisjoint(db_name_tokens)
-        or any(marker in db_name_or_path for marker in required_markers)
+    has_required_marker = not required_markers.isdisjoint(db_name_tokens) or any(
+        marker in db_name_or_path for marker in required_markers
     )
     if not has_required_marker:
         return False
@@ -65,6 +67,23 @@ def _is_safe_test_database_url(database_url: str) -> bool:
 
     blocked_tokens = {"postgres", "prod", "production", "main"}
     return blocked_tokens.isdisjoint(db_name_tokens)
+
+
+def _is_external_database_reachable(database_url: str) -> bool:
+    parsed = urlparse(database_url)
+    connect_args: dict[str, int] = {}
+    if parsed.scheme.startswith("postgresql"):
+        connect_args["connect_timeout"] = 2
+
+    engine = sa.create_engine(database_url, connect_args=connect_args)
+    try:
+        with engine.connect() as connection:
+            connection.execute(sa.text("SELECT 1"))
+        return True
+    except (sa.exc.OperationalError, sa.exc.DBAPIError):
+        return False
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.integration
@@ -124,6 +143,8 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
         pytest.skip(
             "TEST_DATABASE_URL must point to a clearly test-scoped local database"
         )
+    if not _is_external_database_reachable(database_url):
+        pytest.skip("External test database is not reachable")
 
     env = os.environ.copy()
     env["DATABASE__URL"] = database_url
@@ -161,3 +182,64 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
 )
 def test_is_safe_test_database_url(database_url: str, expected: bool) -> None:
     assert _is_safe_test_database_url(database_url) is expected
+
+
+@pytest.mark.unit
+def test_is_external_database_reachable_unreachable_port_returns_false_quickly() -> (
+    None
+):
+    start = time.monotonic()
+    is_reachable = _is_external_database_reachable(
+        "postgresql+psycopg://postgres:postgres@127.0.0.1:1/app_test"
+    )
+    elapsed = time.monotonic() - start
+
+    assert is_reachable is False
+    assert elapsed < 5
+
+
+@pytest.mark.unit
+def test_is_safe_test_database_url_rejects_unsafe_url() -> None:
+    assert (
+        _is_safe_test_database_url("postgresql://user:pass@localhost:5432/production")
+        is False
+    )
+
+
+@pytest.mark.unit
+def test_external_db_collection_requires_run_external_db_flag() -> None:
+    class _Config:
+        def getoption(self, option: str) -> bool:
+            assert option == "--run-external-db"
+            return False
+
+    class _Item:
+        def __init__(self) -> None:
+            self.keywords = {"external_db": True}
+            self.markers: list[pytest.MarkDecorator] = []
+
+        def add_marker(self, marker: pytest.MarkDecorator) -> None:
+            self.markers.append(marker)
+
+    item = _Item()
+    test_conftest.pytest_collection_modifyitems(_Config(), [item])  # type: ignore[arg-type]
+
+    assert len(item.markers) == 1
+    assert item.markers[0].mark.name == "skip"
+    assert (
+        item.markers[0].mark.kwargs["reason"]
+        == "external_db tests require explicit --run-external-db"
+    )
+
+
+@pytest.mark.unit
+def test_external_db_test_requires_env_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "TEST_DATABASE_URL", "postgresql://user:pass@localhost:5432/app_test"
+    )
+    monkeypatch.delenv("ENABLE_EXTERNAL_MIGRATION_DB_TEST", raising=False)
+
+    with pytest.raises(
+        pytest.skip.Exception, match="ENABLE_EXTERNAL_MIGRATION_DB_TEST=1"
+    ):
+        test_alembic_upgrade_head_and_check_with_external_database()
