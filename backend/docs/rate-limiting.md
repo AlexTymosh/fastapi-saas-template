@@ -1,101 +1,79 @@
-# Rate Limiting
+# Rate limiting
 
-## Current phase
+## Current status
 
-- Rate limiting is implemented with Redis-backed storage through the `limits` library.
-- Rate limiting is disabled by default.
-- Redis is required only when `RATE_LIMITING__ENABLED=true`.
-- Rate limiting is currently applied to selected sensitive flows.
-- Health endpoints are not rate limited.
+Rate limiting is implemented using the `limits` async Redis backend.
+
+Current defaults:
+
+- `RATE_LIMITING__ENABLED=false` by default;
+- when disabled, no Redis rate-limiter runtime is initialised;
+- when enabled, requests are evaluated by configured policy dependencies.
 
 ## Configuration
 
-| Setting | Purpose | Notes |
-|---|---|---|
-| `RATE_LIMITING__ENABLED` | Enables rate-limiting runtime | Default is disabled |
-| `RATE_LIMITING__BACKEND` | Selects storage backend | Redis-backed configuration is used in current phase |
-| `RATE_LIMITING__REDIS_PREFIX` | Namespaces limiter keys in Redis | Keep stable across app instances for shared enforcement |
-| `RATE_LIMITING__TRUST_PROXY_HEADERS` | Controls whether proxy headers are used for client identity derivation | Default is `false` |
-| `RATE_LIMITING__DEFAULT_LIMIT` | Default request limit for policies using defaults | Applies when policy-level values are not overridden |
-| `RATE_LIMITING__DEFAULT_WINDOW_SECONDS` | Default time window for default policy limits | Applies when policy-level values are not overridden |
-| `RATE_LIMITING__DEFAULT_FAIL_OPEN` | Default backend failure behavior for non-sensitive policies | Use with caution |
-| `RATE_LIMITING__SENSITIVE_FAIL_OPEN` | Backend failure behavior for sensitive policies | Sensitive flows should remain fail-closed |
-| `RATE_LIMITING__STORAGE_TIMEOUT_SECONDS` | Timeout for storage operations | Limits backend wait time during checks |
-| `REDIS__URL` | Redis connection URL | Required only when rate limiting is enabled |
+Primary settings:
 
-Safe defaults:
+- `RATE_LIMITING__ENABLED` — enables/disables rate limiting globally.
+- `RATE_LIMITING__BACKEND` — backend type (`redis` in the current implementation).
+- `RATE_LIMITING__REDIS_PREFIX` — key namespace prefix used for Redis counters.
+- `RATE_LIMITING__TRUST_PROXY_HEADERS` — controls whether trusted proxy headers may be used for identifier fallback.
+- `RATE_LIMITING__STORAGE_TIMEOUT_SECONDS` — timeout for storage operations.
+- `RATE_LIMITING__DEFAULT_FAIL_OPEN` — default fail-open mode for non-sensitive policies.
+- `RATE_LIMITING__SENSITIVE_FAIL_OPEN` — fail-open mode override for sensitive policies.
+- `REDIS__URL` — Redis connection URL.
 
-- Rate limiting is disabled by default.
-- `RATE_LIMITING__TRUST_PROXY_HEADERS=false` by default.
-- Redis URL is required only when rate limiting is enabled.
+Notes:
 
-## Policies
+- `REDIS__URL` is required only when `RATE_LIMITING__ENABLED=true`.
+- Startup is fail-fast when rate limiting is enabled and `REDIS__URL` is missing.
+
+## Policy matrix
 
 | Policy | Limit | Window | Fail mode | Purpose |
-|---|---:|---:|---|---|
-| `invite_accept` | 5 | 5 minutes | fail-closed | Protect invite token acceptance |
-| `invite_create` | 20 | 1 hour | fail-closed | Protect invite creation abuse |
-
-## Policy registry
-
-- Policies are registered in the rate-limit policy registry.
-- Duplicate policy names are rejected.
-- Unknown policy names raise a clear error.
-- The policy registry is intentionally static in the current phase.
+|---|---:|---|---|---|
+| `invite_accept` | 5 | 5 minutes | fail-closed | Protect invite acceptance from brute force or token guessing. |
+| `invite_create` | 20 | 1 hour | fail-closed | Protect invite creation from abuse. |
 
 ## Identifier strategy
 
-- Authenticated users are rate-limited independently.
-- The limiter uses a low-cardinality identifier kind such as `user`.
-- Raw user IDs, emails, tokens, request IDs, trace IDs, and IPs must not be used as metric labels.
-- Identifier values must not be exposed in logs or metrics.
+- Authenticated requests are bucketed by authenticated principal identity.
+- If principal identity is unavailable, fallback identifier kind may be used (for example, unknown/runtime-unavailable handling paths).
+- Identifier values are hashed before being used as Redis keys.
+- Raw user id, email, and IP address must not appear in metric attributes.
+- `RATE_LIMITING__TRUST_PROXY_HEADERS` should remain `false` unless the service is behind a trusted proxy chain.
 
-## Proxy headers
+## Auth-before-rate-limit rule
 
-- `RATE_LIMITING__TRUST_PROXY_HEADERS=false` by default.
-- Do not enable trusted proxy headers unless the app is behind a trusted reverse proxy.
-- Never trust `X-Forwarded-For` directly from the public internet.
-- Incorrect proxy configuration can cause unrelated users to share a bucket or allow spoofing.
+For protected endpoints, authentication is resolved before rate-limit evaluation.
 
-## Failure modes
+Expected behaviour:
 
-### Redis/backend unavailable
+- unauthenticated request returns `401` before rate-limit check;
+- limiter does not build anonymous buckets for protected endpoints.
 
-- Sensitive policies fail closed.
-- API returns `503` Problem Details.
-- Metric outcome: `backend_error`.
-- Backend error metric is recorded.
+## Redis outage behaviour
 
-### Fail-open policy
+Current behaviour is policy-driven:
 
-- If a policy is configured fail-open and backend fails, request is allowed.
-- Metric outcome: `fail_open`.
-- This should be treated as degraded mode.
+- fail-closed policy + backend failure -> `503` with `error_code=rate_limiter_unavailable`;
+- fail-open policy + backend failure -> request is allowed and a security warning is logged;
+- runtime unavailable (runtime missing or limiter missing) -> `503` with `error_code=rate_limiter_unavailable`.
 
-### Runtime unavailable
+Backend failures emit dedicated metrics (`rate_limit.backend_errors.total`) and decision/duration metrics.
 
-- Rate limiting is enabled, but limiter runtime or limiter instance is missing.
-- API returns `503` Problem Details.
-- Metric outcome: `runtime_unavailable`.
-- This indicates an application lifecycle/configuration problem.
+## Retry-After contract
 
-### Over limit
+When the request is over the configured limit:
 
-- API returns `429` Problem Details.
-- `Retry-After` header is returned.
-- Metric outcome: `blocked`.
+- API returns `429` with `error_code=rate_limited`;
+- response includes `Retry-After` header;
+- `Access-Control-Expose-Headers: Retry-After` is included for browser/SPA clients;
+- when precise Redis window stats are unavailable, fallback uses policy item expiry.
 
-## HTTP contract
+## Metrics contract
 
-- Over-limit responses return `429`.
-- Backend unavailable responses return `503`.
-- Unauthenticated protected requests return `401` before rate limiter execution.
-- Rate limiter must not execute endpoint body or DB I/O when request is blocked.
-- Response schemas and Problem Details contracts must remain stable.
-
-## Observability
-
-Current rate-limit metric names:
+Emitted metric names:
 
 - `rate_limit.requests.total`
 - `rate_limit.backend_errors.total`
@@ -109,54 +87,47 @@ Allowed `rate_limit.result` values:
 - `fail_open`
 - `runtime_unavailable`
 
-Allowed metric attributes:
+Allowed attributes:
 
 - `rate_limit.policy`
 - `rate_limit.result`
 - `rate_limit.identifier_kind`
 - `error.type`
 
-Forbidden labels/attributes:
+Forbidden high-cardinality/sensitive values in metric attributes:
 
-- user id
-- email
-- organisation id
-- request id
-- trace id
-- raw path
-- raw URL
-- IP address
-- token
-- Redis key
-- identifier value
-- hashed identifier value
+- raw user id;
+- email;
+- organisation id;
+- request id;
+- trace id;
+- raw path;
+- raw URL;
+- IP address;
+- token;
+- Redis key;
+- raw identifier value;
+- hashed identifier value.
 
-## Operational risks
+## OTLP verification status
 
-- Shared NAT/shared IP bucket issues when identity derivation is misconfigured.
-- Reverse proxy misconfiguration causing incorrect client attribution.
-- Redis outage impacting backend checks.
-- Rate limiter runtime not initialized while feature is enabled.
-- Accidentally enabling fail-open for sensitive flows.
-- High-cardinality metrics if raw identifiers are exposed.
+Automated OTLP e2e verification currently covers:
 
-## Testing expectations
+- HTTP metrics export;
+- rate-limit `allowed`/`blocked` export;
+- backend error metric export for fail-closed path (`backend_error`);
+- backend error metric export for fail-open path (`fail_open`);
+- runtime unavailable path export (`runtime_unavailable`).
 
-Expected coverage:
+This phase intentionally does **not** include Prometheus/Grafana and does **not** expose a `/metrics` endpoint.
 
-- Disabled rate limiting is a no-op.
-- Enabled rate limiting requires Redis URL in real lifecycle.
-- Over-limit returns `429`.
-- Backend failure with fail-closed policy returns `503`.
-- Fail-open allows request and records degraded outcome.
-- Unauthenticated request returns `401` before limiter.
-- Endpoint body and DB I/O are not executed on `429`.
-- Runtime unavailable returns `503` and records `runtime_unavailable`.
+## Testing
 
-## Future improvements
+Typical commands:
 
-- Optional OTel Collector profile for local verification.
-- Dashboards and alert rules.
-- Policy metadata when more policies are added.
-- Policy inventory tests for protected endpoints.
-- Production proxy-header deployment guidance.
+```bash
+pytest tests/api/test_rate_limiting.py -q
+pytest tests/api/test_rate_limiting_integration.py -q -m integration -rs
+pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
+pytest tests/observability -q
+```

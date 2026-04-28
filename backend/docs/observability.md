@@ -1,5 +1,9 @@
 # Observability
 
+Related documentation:
+
+- [Rate limiting](./rate-limiting.md)
+
 ## Current phase
 
 This repository is now in the **OTel Collector-only verification** phase for metrics export.
@@ -167,6 +171,7 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
 - `http.server.request.duration`
 - `http.server.requests.total`
 - `rate_limit.requests.total`
+- `rate_limit.backend_errors.total`
 - `rate_limit.check.duration`
 
 ## Automated OTLP verification
@@ -176,11 +181,15 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
 - The test verifies export through the collector debug exporter logs for:
   - HTTP metrics (`http.server.request.duration`, `http.server.requests.total`);
   - rate-limit decision metrics (`rate_limit.requests.total`) with `allowed` and `blocked` outcomes;
-  - rate-limit check duration metrics (`rate_limit.check.duration`).
+  - rate-limit check duration metrics (`rate_limit.check.duration`);
+  - rate-limit backend error metrics (`rate_limit.backend_errors.total`) for:
+    - fail-closed backend failures (`backend_error`);
+    - fail-open backend failures (`fail_open`);
+    - runtime unavailable failures (`runtime_unavailable`).
 - No Prometheus/Grafana stack is required.
 - No `/metrics` endpoint is required.
-- Backend error/fail-open/fail-closed OTLP export paths are not part of this
-  automated verification yet.
+- Backend error/fail-open/fail-closed OTLP export paths are part of the
+  automated verification.
 
 Run:
 
