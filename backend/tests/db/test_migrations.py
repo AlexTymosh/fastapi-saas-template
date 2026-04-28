@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -52,9 +53,8 @@ def _is_safe_test_database_url(database_url: str) -> bool:
     db_name_tokens = set(filter(None, re.split(r"[^a-z0-9]+", db_name_or_path)))
 
     required_markers = {"test", "ci", "tmp"}
-    has_required_marker = (
-        not required_markers.isdisjoint(db_name_tokens)
-        or any(marker in db_name_or_path for marker in required_markers)
+    has_required_marker = not required_markers.isdisjoint(db_name_tokens) or any(
+        marker in db_name_or_path for marker in required_markers
     )
     if not has_required_marker:
         return False
@@ -65,6 +65,23 @@ def _is_safe_test_database_url(database_url: str) -> bool:
 
     blocked_tokens = {"postgres", "prod", "production", "main"}
     return blocked_tokens.isdisjoint(db_name_tokens)
+
+
+def _is_external_database_reachable(database_url: str) -> bool:
+    parsed = urlparse(database_url)
+    connect_args: dict[str, int] = {}
+    if parsed.scheme.startswith("postgresql") and "psycopg" in parsed.scheme:
+        connect_args = {"connect_timeout": 2}
+
+    engine = sa.create_engine(database_url, connect_args=connect_args)
+    try:
+        with engine.connect() as connection:
+            connection.execute(sa.text("SELECT 1"))
+        return True
+    except (sa.exc.OperationalError, sa.exc.DBAPIError):
+        return False
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.integration
@@ -124,6 +141,8 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
         pytest.skip(
             "TEST_DATABASE_URL must point to a clearly test-scoped local database"
         )
+    if not _is_external_database_reachable(database_url):
+        pytest.skip("External test database is not reachable")
 
     env = os.environ.copy()
     env["DATABASE__URL"] = database_url
@@ -161,3 +180,50 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
 )
 def test_is_safe_test_database_url(database_url: str, expected: bool) -> None:
     assert _is_safe_test_database_url(database_url) is expected
+
+
+@pytest.mark.unit
+def test_is_external_database_reachable_returns_false_fast_for_unreachable_port() -> (
+    None
+):
+    start = time.monotonic()
+    reachable = _is_external_database_reachable(
+        "postgresql+psycopg://postgres:postgres@127.0.0.1:1/app_test"
+    )
+    elapsed = time.monotonic() - start
+
+    assert reachable is False
+    assert elapsed < 5
+
+
+@pytest.mark.unit
+def test_safe_url_check_rejects_unsafe_url() -> None:
+    assert (
+        _is_safe_test_database_url("postgresql://user:pass@localhost:5432/production")
+        is False
+    )
+
+
+@pytest.mark.unit
+def test_external_db_test_keeps_opt_in_marker() -> None:
+    external_db_test = test_alembic_upgrade_head_and_check_with_external_database
+    marker_names = {marker.name for marker in external_db_test.pytestmark}
+    assert "external_db" in marker_names
+
+
+@pytest.mark.unit
+def test_external_db_test_requires_enable_env_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "TEST_DATABASE_URL", "postgresql://user:pass@localhost:5432/app_test"
+    )
+    monkeypatch.delenv("ENABLE_EXTERNAL_MIGRATION_DB_TEST", raising=False)
+
+    with pytest.raises(
+        pytest.skip.Exception,
+        match=(
+            "Set ENABLE_EXTERNAL_MIGRATION_DB_TEST=1 to run external DB migration test"
+        ),
+    ):
+        test_alembic_upgrade_head_and_check_with_external_database()

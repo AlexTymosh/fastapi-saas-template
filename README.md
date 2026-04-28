@@ -293,7 +293,7 @@ Run it explicitly:
 pytest -q -m external_db --run-external-db -rs
 ```
 
-This test requires both `TEST_DATABASE_URL` and `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`, and it is skipped unless `--run-external-db` is passed.
+This test requires both `TEST_DATABASE_URL` and `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`, and it is skipped unless `--run-external-db` is passed. It also performs a fast preflight connectivity check and skips quickly when the configured external database is unreachable.
 
 > [!NOTE]
 > `TEST_REDIS_URL` is no longer required for the main Redis integration tests. Redis is started automatically by Testcontainers.
