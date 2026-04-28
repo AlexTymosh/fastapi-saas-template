@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import socket
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -169,3 +171,64 @@ def redis_integration_url() -> Iterator[str]:
             yield redis_url
         finally:
             client.close()
+
+
+@pytest.fixture(scope="session")
+def otel_collector_container(tmp_path_factory) -> Iterator[DockerContainer]:
+    """Start an ephemeral OpenTelemetry Collector for integration tests."""
+    tmp_dir = tmp_path_factory.mktemp("otel-collector")
+    config_path = tmp_dir / "otel-collector.yaml"
+    config_path.write_text(
+        """
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [debug]
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with (
+        DockerContainer("otel/opentelemetry-collector-contrib:0.122.1")
+        .with_exposed_ports(4318)
+        .with_bind_mount(
+            str(Path(config_path).resolve()), "/etc/otel-collector.yaml", "ro"
+        )
+        .with_command("--config=/etc/otel-collector.yaml")
+    ) as collector:
+        host = collector.get_container_host_ip()
+        port = int(collector.get_exposed_port(4318))
+        deadline = time.monotonic() + 30
+
+        while True:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.5)
+                if sock.connect_ex((host, port)) == 0:
+                    break
+            if time.monotonic() >= deadline:
+                pytest.fail(
+                    "OpenTelemetry Collector was not ready within 30 seconds "
+                    f"at {host}:{port}"
+                )
+            time.sleep(0.2)
+
+        yield collector
+
+
+@pytest.fixture(scope="session")
+def otlp_metrics_endpoint(otel_collector_container: DockerContainer) -> str:
+    host = otel_collector_container.get_container_host_ip()
+    port = otel_collector_container.get_exposed_port(4318)
+    return f"http://{host}:{port}/v1/metrics"

@@ -125,6 +125,22 @@ Rate-limit metrics:
 
 Route labels use route templates from FastAPI routes, not raw paths.
 
+## Automated OTLP integration verification
+
+An automated integration test validates OTLP HTTP metric export using an ephemeral OpenTelemetry Collector started via Testcontainers.
+
+Run:
+
+```bash
+pytest tests/observability/test_otlp_export_integration.py -q -m integration
+```
+
+Notes:
+
+- Docker/Testcontainers must be available.
+- The test does **not** require Prometheus, Grafana, or a `/metrics` endpoint.
+- The test collector uses a metrics-only pipeline with the debug exporter.
+
 ## Manual OTLP metrics verification
 
 1. Start collector profile:
