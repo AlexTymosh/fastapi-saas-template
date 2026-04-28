@@ -1,0 +1,38 @@
+version: '3'
+
+tasks:
+  lint:
+    dir: backend
+    cmds:
+      - ruff check .
+      - ruff format --check .
+
+  test:unit:
+    dir: backend
+    cmds:
+      - pytest -q -m "not integration and not e2e and not external_db"
+
+  test:integration:
+    dir: backend
+    cmds:
+      - pytest -q -m "integration and not external_db" -rs
+
+  test:e2e:
+    dir: backend
+    cmds:
+      - pytest -q -m "e2e and not external_db" -rs
+
+  test:safe:
+    dir: backend
+    cmds:
+      - pytest -q -m "not external_db"
+
+  test:external-db:
+    dir: backend
+    cmds:
+      - pytest -q -m external_db --run-external-db -rs
+
+  pre-push:
+    cmds:
+      - task: lint
+      - task: test:safe

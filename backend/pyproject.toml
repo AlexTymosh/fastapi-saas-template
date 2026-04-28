@@ -56,8 +56,12 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--strict-markers"]
 markers = [
-    "integration: tests that require real external services like PostgreSQL or Redis",
+    "unit: fast tests without external I/O or external services",
+    "integration: tests that combine application code with ephemeral external services via Testcontainers",
+    "e2e: end-to-end tests that exercise full API flows against ephemeral infrastructure",
+    "external_db: opt-in tests that use TEST_DATABASE_URL and must never run by default",
 ]
 
 [tool.alembic]

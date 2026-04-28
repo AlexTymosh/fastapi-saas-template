@@ -30,6 +30,32 @@ from tests.helpers.auth import AuthenticatedClientBundle, FakeAuthProvider
 from tests.helpers.settings import reset_settings_cache
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-external-db",
+        action="store_true",
+        default=False,
+        help=(
+            "Run opt-in tests that use TEST_DATABASE_URL against a persistent "
+            "external test database."
+        ),
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    if config.getoption("--run-external-db"):
+        return
+
+    skip_external_db = pytest.mark.skip(
+        reason="external_db tests require explicit --run-external-db"
+    )
+    for item in items:
+        if "external_db" in item.keywords:
+            item.add_marker(skip_external_db)
+
+
 @pytest.fixture(autouse=True)
 def reset_runtime_state(monkeypatch, tmp_path):
     monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env.test"))
