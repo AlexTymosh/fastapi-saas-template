@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,11 +37,26 @@ def _is_safe_test_database_url(database_url: str) -> bool:
         return True
 
     host = (parsed.hostname or "").lower()
-    db_name_or_path = (parsed.path or "").lower()
+    allowed_hosts = {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "host.docker.internal",
+        "docker.for.mac.localhost",
+        "docker.for.win.localhost",
+    }
+    if host not in allowed_hosts:
+        return False
+
+    db_name_or_path = (parsed.path or "").lower().lstrip("/")
     markers = ("test", "ci", "tmp")
     has_test_marker = any(marker in db_name_or_path for marker in markers)
-    is_local_host = host in {"localhost", "127.0.0.1"}
-    return is_local_host and has_test_marker
+    if not has_test_marker:
+        return False
+
+    blocked_database_names = {"app", "postgres", "prod", "production", "main"}
+    db_name_tokens = set(filter(None, re.split(r"[^a-z0-9]+", db_name_or_path)))
+    return blocked_database_names.isdisjoint(db_name_tokens)
 
 
 @pytest.mark.integration
@@ -87,6 +103,7 @@ def test_alembic_upgrade_head_check_and_downgrade_base(
 
 
 @pytest.mark.integration
+@pytest.mark.external_db
 def test_alembic_upgrade_head_and_check_with_external_database() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if not database_url:
@@ -108,3 +125,22 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
 
     check = _run_alembic("check", env=env)
     assert check.returncode == 0, check.stdout + "\n" + check.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("database_url", "expected"),
+    [
+        ("sqlite+aiosqlite:///./tmp.db", True),
+        ("postgresql://user:pass@localhost:5432/app_test", True),
+        ("postgresql://user:pass@127.0.0.1:5432/ci_database", True),
+        ("postgresql://user:pass@host.docker.internal:5432/my_tmp_db", True),
+        ("postgresql://user:pass@db.internal:5432/app_test", False),
+        ("postgresql://user:pass@localhost:5432/postgres_test", False),
+        ("postgresql://user:pass@localhost:5432/production_tmp", False),
+        ("postgresql://user:pass@localhost:5432/app", False),
+        ("postgresql://user:pass@localhost:5432/myapp", False),
+    ],
+)
+def test_is_safe_test_database_url(database_url: str, expected: bool) -> None:
+    assert _is_safe_test_database_url(database_url) is expected
