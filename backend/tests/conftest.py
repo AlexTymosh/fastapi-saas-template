@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from pathlib import Path
+from socket import create_connection
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,6 +30,24 @@ from tests.helpers.alembic import upgrade_database_to_head
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import AuthenticatedClientBundle, FakeAuthProvider
 from tests.helpers.settings import reset_settings_cache
+
+_OTEL_COLLECTOR_CONFIG = """\
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [debug]
+"""
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -195,3 +215,50 @@ def redis_integration_url() -> Iterator[str]:
             yield redis_url
         finally:
             client.close()
+
+
+@pytest.fixture(scope="session")
+def otel_collector_container(tmp_path_factory) -> Iterator[DockerContainer]:
+    """
+    Start an ephemeral OpenTelemetry Collector for OTLP metrics integration tests.
+    """
+    config_dir = tmp_path_factory.mktemp("otel_collector")
+    config_path = Path(config_dir) / "otel-collector.yaml"
+    config_path.write_text(_OTEL_COLLECTOR_CONFIG, encoding="utf-8")
+
+    collector = (
+        DockerContainer("otel/opentelemetry-collector-contrib:0.122.1")
+        .with_exposed_ports(4318)
+        .with_volume_mapping(
+            str(config_path.resolve()),
+            "/etc/otel-collector.yaml",
+            mode="ro",
+        )
+        .with_command("--config=/etc/otel-collector.yaml")
+    )
+
+    with collector:
+        host = collector.get_container_host_ip()
+        port = int(collector.get_exposed_port(4318))
+        deadline = time.monotonic() + 30
+
+        while True:
+            try:
+                with create_connection((host, port), timeout=1):
+                    break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "OpenTelemetry Collector did not become ready on "
+                        f"{host}:{port} within 30 seconds"
+                    ) from exc
+                time.sleep(0.2)
+
+        yield collector
+
+
+@pytest.fixture(scope="session")
+def otlp_metrics_endpoint(otel_collector_container: DockerContainer) -> str:
+    host = otel_collector_container.get_container_host_ip()
+    port = otel_collector_container.get_exposed_port(4318)
+    return f"http://{host}:{port}/v1/metrics"

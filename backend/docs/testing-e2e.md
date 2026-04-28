@@ -59,6 +59,12 @@ Integration + E2E only:
 pytest -q -m "integration or e2e" -rs
 ```
 
+Run OTLP metrics export integration/E2E verification only:
+
+```bash
+pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
+```
+
 External DB only:
 
 ```bash
@@ -92,6 +98,7 @@ Important safety notes:
 - Avoid brittle timing assertions.
 - Use eventual polling for async exports.
 - Include last logs/output in timeout failures.
+- OTLP export verification tests should use an ephemeral OpenTelemetry Collector via Testcontainers.
 
 ## When to ask the user
 
