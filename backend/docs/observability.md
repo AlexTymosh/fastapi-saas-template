@@ -179,3 +179,17 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
 - **Duplicate `/v1/metrics`**: fix endpoint to a single full path.
 - **Exporter timeout**: adjust `OBSERVABILITY__OTLP_TIMEOUT_SECONDS` and verify collector is reachable.
 - **No rate-limit metrics**: ensure a rate-limited endpoint is actually called with valid auth/test setup.
+
+## Automated OTLP export verification
+
+The integration test `tests/observability/test_otlp_export_e2e.py` starts a real OpenTelemetry Collector through Testcontainers and verifies that the application exports HTTP RED metrics through OTLP HTTP.
+
+The test is marked as `integration` and requires Docker.
+
+Run:
+
+```bash
+pytest tests/observability/test_otlp_export_e2e.py -q -m integration -rs
+```
+
+It intentionally does not start Prometheus, Grafana, or expose `/metrics`.
