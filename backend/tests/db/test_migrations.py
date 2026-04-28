@@ -48,15 +48,23 @@ def _is_safe_test_database_url(database_url: str) -> bool:
     if host not in allowed_hosts:
         return False
 
-    db_name_or_path = (parsed.path or "").lower().lstrip("/")
-    markers = ("test", "ci", "tmp")
-    has_test_marker = any(marker in db_name_or_path for marker in markers)
-    if not has_test_marker:
+    db_name_or_path = (parsed.path or "").lower().strip("/")
+    db_name_tokens = set(filter(None, re.split(r"[^a-z0-9]+", db_name_or_path)))
+
+    required_markers = {"test", "ci", "tmp"}
+    has_required_marker = (
+        not required_markers.isdisjoint(db_name_tokens)
+        or any(marker in db_name_or_path for marker in required_markers)
+    )
+    if not has_required_marker:
         return False
 
-    blocked_database_names = {"app", "postgres", "prod", "production", "main"}
-    db_name_tokens = set(filter(None, re.split(r"[^a-z0-9]+", db_name_or_path)))
-    return blocked_database_names.isdisjoint(db_name_tokens)
+    blocked_exact_names = {"app", "postgres", "prod", "production", "main"}
+    if db_name_or_path in blocked_exact_names:
+        return False
+
+    blocked_tokens = {"postgres", "prod", "production", "main"}
+    return blocked_tokens.isdisjoint(db_name_tokens)
 
 
 @pytest.mark.integration
@@ -135,11 +143,20 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
         ("postgresql://user:pass@localhost:5432/app_test", True),
         ("postgresql://user:pass@127.0.0.1:5432/ci_database", True),
         ("postgresql://user:pass@host.docker.internal:5432/my_tmp_db", True),
+        ("postgresql://user:pass@[::1]:5432/test_db", True),
         ("postgresql://user:pass@db.internal:5432/app_test", False),
+        ("postgresql://user:pass@example.com:5432/app_test", False),
+        ("postgresql://user:pass@localhost:5432/postgres", False),
+        ("postgresql://user:pass@localhost:5432/main", False),
+        ("postgresql://user:pass@localhost:5432/prod", False),
+        ("postgresql://user:pass@localhost:5432/production", False),
         ("postgresql://user:pass@localhost:5432/postgres_test", False),
+        ("postgresql://user:pass@localhost:5432/main_test", False),
+        ("postgresql://user:pass@localhost:5432/prod_test", False),
         ("postgresql://user:pass@localhost:5432/production_tmp", False),
         ("postgresql://user:pass@localhost:5432/app", False),
         ("postgresql://user:pass@localhost:5432/myapp", False),
+        ("postgresql://user:pass@localhost:5432/service", False),
     ],
 )
 def test_is_safe_test_database_url(database_url: str, expected: bool) -> None:
