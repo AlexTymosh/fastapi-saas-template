@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from app.core.observability.attributes import ERROR_TYPE_ATTRIBUTE
 from app.core.observability.metrics import meter
 from app.core.observability.safety import (
     _handle_metric_recording_failure,
@@ -45,7 +46,7 @@ ALLOWED_RATE_LIMIT_RESULTS: Final[frozenset[str]] = frozenset(
 RATE_LIMIT_ATTRIBUTE_POLICY: Final = "rate_limit.policy"
 RATE_LIMIT_ATTRIBUTE_RESULT: Final = "rate_limit.result"
 RATE_LIMIT_ATTRIBUTE_IDENTIFIER_KIND: Final = "rate_limit.identifier_kind"
-RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: Final = "error.type"
+RATE_LIMIT_ATTRIBUTE_ERROR_TYPE: Final = ERROR_TYPE_ATTRIBUTE
 
 ALLOWED_RATE_LIMIT_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
