@@ -55,9 +55,6 @@ class AuthenticatedPrincipal(BaseModel):
     last_name: str | None = None
     platform_roles: list[str] = Field(default_factory=list)
 
-    def is_superadmin(self) -> bool:
-        return any(role.lower() == "superadmin" for role in self.platform_roles)
-
     @classmethod
     def from_unverified_jwt_claims(
         cls, claims: dict[str, object]

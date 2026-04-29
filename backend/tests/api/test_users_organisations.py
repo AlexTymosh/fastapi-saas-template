@@ -745,46 +745,54 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
         assert response.status_code == 403
 
 
-def test_superadmin_created_organisation_has_no_memberships(
-    authenticated_client_factory,
-    migrated_database_url: str,
-    migrated_session_factory,
-) -> None:
-    superadmin_client_bundle = authenticated_client_factory(
-        identity=_identity_for(
-            external_auth_id="kc-super-create-org",
-            email="super-create-org@example.com",
-            roles=["superadmin"],
-        ),
-        database_url=migrated_database_url,
-        redis_url=None,
-    )
-    superadmin_client = superadmin_client_bundle.client
-    with superadmin_client as client:
-        response = client.post(
+def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
             "/api/v1/organisations",
-            json={"name": "Support Org", "slug": "support-org"},
+            json={"name": "Private Org", "slug": "private-org-platform-read"},
         )
-        assert response.status_code == 201
-        organisation_id = response.json()["id"]
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
 
-    async def _assert_no_membership() -> None:
-        async with migrated_session_factory() as session:
-            user_result = await session.execute(
-                select(User).where(User.external_auth_id == "kc-super-create-org")
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-platform-actor-read",
+                email="platform-read@example.com",
+                roles=["platform_admin"],
             )
-            user = user_result.scalar_one_or_none()
-            if user is not None:
-                membership_result = await session.execute(
-                    select(Membership).where(
-                        Membership.user_id == user.id,
-                        Membership.organisation_id == UUID(organisation_id),
-                        Membership.is_active.is_(True),
-                    )
-                )
-                assert membership_result.scalar_one_or_none() is None
+        )
+        response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
 
-    run_async(_assert_no_membership())
+    run_async(engine.dispose())
+
+
+def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Private Org", "slug": "private-org-super-role-list"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-platform-actor-list",
+                email="platform-list@example.com",
+                roles=["superadmin"],
+            )
+        )
+        response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    run_async(engine.dispose())
 
 
 def test_owner_can_update_slug_and_soft_delete_organisation(

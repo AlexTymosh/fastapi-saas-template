@@ -172,7 +172,6 @@ def test_create_invite_admin_cannot_assign_admin_role() -> None:
                 actor_user_id=uuid4(),
                 role=MembershipRole.ADMIN,
                 email="a@example.com",
-                actor_is_superadmin=False,
             )
         )
 
@@ -189,6 +188,5 @@ def test_create_invite_rejects_owner_role() -> None:
                 actor_user_id=uuid4(),
                 role=MembershipRole.OWNER,
                 email="a@example.com",
-                actor_is_superadmin=True,
             )
         )

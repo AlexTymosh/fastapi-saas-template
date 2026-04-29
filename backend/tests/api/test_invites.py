@@ -193,7 +193,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
         assert response.status_code == 409
 
 
-def test_superadmin_can_invite_without_membership(
+def test_superadmin_role_cannot_invite_without_membership(
     authenticated_client_factory,
     migrated_database_url: str,
 ) -> None:
@@ -228,7 +228,7 @@ def test_superadmin_can_invite_without_membership(
             json={"email": "new@example.com", "role": "admin"},
         )
 
-    assert response.status_code == 201
+    assert response.status_code == 403
 
 
 def test_old_invite_accept_path_route_is_not_available(

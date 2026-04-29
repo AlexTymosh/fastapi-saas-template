@@ -59,7 +59,6 @@ async def create_invite(
         actor_user_id=user.id,
         role=payload.role,
         email=payload.email,
-        actor_is_superadmin=identity.is_superadmin(),
     )
     return InviteResponse.model_validate(invite)
 
