@@ -745,12 +745,12 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
         assert response.status_code == 403
 
 
-def test_superadmin_created_organisation_has_no_memberships(
+def test_platform_role_cannot_bypass_self_service_organisation_creation(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
 ) -> None:
-    superadmin_client_bundle = authenticated_client_factory(
+    platform_role_client_bundle = authenticated_client_factory(
         identity=_identity_for(
             external_auth_id="kc-super-create-org",
             email="super-create-org@example.com",
@@ -759,8 +759,8 @@ def test_superadmin_created_organisation_has_no_memberships(
         database_url=migrated_database_url,
         redis_url=None,
     )
-    superadmin_client = superadmin_client_bundle.client
-    with superadmin_client as client:
+    platform_role_client = platform_role_client_bundle.client
+    with platform_role_client as client:
         response = client.post(
             "/api/v1/organisations",
             json={"name": "Support Org", "slug": "support-org"},
@@ -768,23 +768,23 @@ def test_superadmin_created_organisation_has_no_memberships(
         assert response.status_code == 201
         organisation_id = response.json()["id"]
 
-    async def _assert_no_membership() -> None:
+    async def _assert_owner_membership_exists() -> None:
         async with migrated_session_factory() as session:
             user_result = await session.execute(
                 select(User).where(User.external_auth_id == "kc-super-create-org")
             )
-            user = user_result.scalar_one_or_none()
-            if user is not None:
-                membership_result = await session.execute(
-                    select(Membership).where(
-                        Membership.user_id == user.id,
-                        Membership.organisation_id == UUID(organisation_id),
-                        Membership.is_active.is_(True),
-                    )
+            user = user_result.scalar_one()
+            membership_result = await session.execute(
+                select(Membership).where(
+                    Membership.user_id == user.id,
+                    Membership.organisation_id == UUID(organisation_id),
+                    Membership.is_active.is_(True),
                 )
-                assert membership_result.scalar_one_or_none() is None
+            )
+            membership = membership_result.scalar_one()
+            assert membership.role == MembershipRole.OWNER
 
-    run_async(_assert_no_membership())
+    run_async(_assert_owner_membership_exists())
 
 
 def test_owner_can_update_slug_and_soft_delete_organisation(
@@ -908,3 +908,73 @@ def test_soft_deleted_organisation_slug_is_released_for_reuse(
         )
         assert recreate_response.status_code == 201
         assert recreate_response.json()["slug"] == "reusable-org"
+
+
+def test_platform_role_cannot_read_other_organisation(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-owner-platform-read",
+            "owner-platform-read@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_bundle.client as owner_client:
+        create_response = owner_client.post(
+            "/api/v1/organisations",
+            json={"name": "Owner Org", "slug": "owner-org-platform-read"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+    platform_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-platform-read",
+            "platform-read@example.com",
+            roles=["platform_admin"],
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with platform_bundle.client as platform_client:
+        response = platform_client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 403
+
+
+def test_platform_role_cannot_list_other_organisation_memberships(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-owner-platform-members",
+            "owner-platform-members@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_bundle.client as owner_client:
+        create_response = owner_client.post(
+            "/api/v1/organisations",
+            json={"name": "Owner Membership Org", "slug": "owner-org-platform-members"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+    platform_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-platform-members",
+            "platform-members@example.com",
+            roles=["superadmin"],
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with platform_bundle.client as platform_client:
+        response = platform_client.get(
+            f"/api/v1/organisations/{organisation_id}/memberships"
+        )
+        assert response.status_code == 403

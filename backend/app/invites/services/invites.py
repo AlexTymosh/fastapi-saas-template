@@ -47,7 +47,6 @@ class InviteService:
         actor_user_id: UUID,
         role: MembershipRole,
         email: str,
-        actor_is_superadmin: bool,
     ) -> Invite:
         if self.session.in_transaction():
             return await self._create_invite(
@@ -55,7 +54,6 @@ class InviteService:
                 actor_user_id=actor_user_id,
                 role=role,
                 email=email,
-                actor_is_superadmin=actor_is_superadmin,
             )
         async with self.session.begin():
             return await self._create_invite(
@@ -63,7 +61,6 @@ class InviteService:
                 actor_user_id=actor_user_id,
                 role=role,
                 email=email,
-                actor_is_superadmin=actor_is_superadmin,
             )
 
     async def _create_invite(
@@ -73,28 +70,26 @@ class InviteService:
         actor_user_id: UUID,
         role: MembershipRole,
         email: str,
-        actor_is_superadmin: bool,
     ) -> Invite:
         await self.organisation_service.get_organisation(organisation_id)
         if role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner role cannot be assigned via invite")
 
-        if not actor_is_superadmin:
-            membership_repo = self.membership_service.membership_repository
-            actor_membership = await membership_repo.get_membership(
-                user_id=actor_user_id,
-                organisation_id=organisation_id,
-            )
-            if actor_membership is None or actor_membership.role not in {
-                MembershipRole.OWNER,
-                MembershipRole.ADMIN,
-            }:
-                raise ForbiddenError(detail="You are not allowed to invite users")
-            if (
-                actor_membership.role == MembershipRole.ADMIN
-                and role == MembershipRole.ADMIN
-            ):
-                raise ForbiddenError(detail="Admin cannot assign admin role")
+        membership_repo = self.membership_service.membership_repository
+        actor_membership = await membership_repo.get_membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+        )
+        if actor_membership is None or actor_membership.role not in {
+            MembershipRole.OWNER,
+            MembershipRole.ADMIN,
+        }:
+            raise ForbiddenError(detail="You are not allowed to invite users")
+        if (
+            actor_membership.role == MembershipRole.ADMIN
+            and role == MembershipRole.ADMIN
+        ):
+            raise ForbiddenError(detail="Admin cannot assign admin role")
 
         token = token_urlsafe(32)
         expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL

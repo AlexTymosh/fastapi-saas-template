@@ -24,11 +24,6 @@ class OrganisationAccessService:
         identity: AuthenticatedPrincipal,
         organisation_id: UUID,
     ) -> Organisation:
-        if identity.is_superadmin():
-            return await self.organisation_service.get_organisation(
-                organisation_id=organisation_id
-            )
-
         user = await self.user_service.provision_current_user(identity=identity)
         organisation = await self.organisation_service.get_organisation(
             organisation_id=organisation_id
@@ -49,12 +44,11 @@ class OrganisationAccessService:
             organisation_id=organisation_id
         )
 
-        if not identity.is_superadmin():
-            user = await self.user_service.provision_current_user(identity=identity)
-            await self.membership_service.ensure_user_can_list_organisation_memberships(
-                user_id=user.id,
-                organisation_id=organisation_id,
-            )
+        user = await self.user_service.provision_current_user(identity=identity)
+        await self.membership_service.ensure_user_can_list_organisation_memberships(
+            user_id=user.id,
+            organisation_id=organisation_id,
+        )
 
         return await self.membership_service.list_memberships_for_organisation(
             organisation_id=organisation_id

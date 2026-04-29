@@ -53,7 +53,7 @@ def test_jwt_claim_mapping_rejects_invalid_email_claim() -> None:
         )
 
 
-def test_principal_superadmin_flag_comes_from_roles_claim() -> None:
+def test_principal_preserves_platform_roles_from_roles_claim() -> None:
     principal = AuthenticatedPrincipal.from_unverified_jwt_claims(
         {
             "sub": "kc-super-1",
@@ -62,7 +62,7 @@ def test_principal_superadmin_flag_comes_from_roles_claim() -> None:
         }
     )
 
-    assert principal.is_superadmin() is True
+    assert principal.platform_roles == ["superadmin"]
 
 
 def test_verified_claim_mapping_merges_keycloak_realm_and_client_roles() -> None:
