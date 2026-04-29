@@ -25,9 +25,11 @@ class OrganisationAccessService:
         organisation_id: UUID,
     ) -> Organisation:
         user = await self.user_service.provision_current_user(identity=identity)
+        self.user_service.ensure_user_active(user)
         organisation = await self.organisation_service.get_organisation(
             organisation_id=organisation_id
         )
+        self.organisation_service.ensure_organisation_active(organisation)
         await self.membership_service.ensure_user_has_organisation_access(
             user_id=user.id,
             organisation_id=organisation_id,
@@ -40,11 +42,13 @@ class OrganisationAccessService:
         identity: AuthenticatedPrincipal,
         organisation_id: UUID,
     ) -> list[Membership]:
-        await self.organisation_service.get_organisation(
+        organisation = await self.organisation_service.get_organisation(
             organisation_id=organisation_id
         )
+        self.organisation_service.ensure_organisation_active(organisation)
 
         user = await self.user_service.provision_current_user(identity=identity)
+        self.user_service.ensure_user_active(user)
         await self.membership_service.ensure_user_can_list_organisation_memberships(
             user_id=user.id,
             organisation_id=organisation_id,

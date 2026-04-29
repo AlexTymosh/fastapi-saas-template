@@ -71,7 +71,10 @@ class InviteService:
         role: MembershipRole,
         email: str,
     ) -> Invite:
-        await self.organisation_service.get_organisation(organisation_id)
+        actor = await self.user_service.get_user(actor_user_id)
+        self.user_service.ensure_user_active(actor)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        self.organisation_service.ensure_organisation_active(organisation)
         if role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner role cannot be assigned via invite")
 
@@ -160,6 +163,11 @@ class InviteService:
             )
 
         user = await self.user_service.get_or_create_current_user(identity=identity)
+        self.user_service.ensure_user_active(user)
+        organisation = await self.organisation_service.get_organisation(
+            invite.organisation_id
+        )
+        self.organisation_service.ensure_organisation_active(organisation)
         membership = await self.membership_service.transfer_membership(
             user_id=user.id,
             organisation_id=invite.organisation_id,

@@ -524,3 +524,107 @@ def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_acc
 
     assert response.status_code == 403
     assert owner_sink._tokens_by_email == {}
+
+
+def test_suspended_user_cannot_create_or_accept_invite(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner = authenticated_client_factory(
+        identity=_identity_for("kc-owner-susp", "owner-susp@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner.client)
+    with owner.client as client:
+        created = client.post(
+            "/api/v1/organisations", json={"name": "Org S", "slug": "org-s"}
+        )
+        org_id = created.json()["id"]
+        invited = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "inv-s@example.com", "role": "member"},
+        )
+        assert invited.status_code == 201
+
+    async def _suspend_owner_and_invitee() -> None:
+        async with migrated_session_factory() as session:
+            users = (await session.execute(select(User))).scalars().all()
+            for user in users:
+                if user.external_auth_id in {"kc-owner-susp", "kc-invitee-susp"}:
+                    user.status = "suspended"
+            await session.commit()
+
+    run_async(_suspend_owner_and_invitee())
+
+    with owner.client as client:
+        response = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "x@example.com", "role": "member"},
+        )
+        assert response.status_code == 403
+
+    invitee = authenticated_client_factory(
+        identity=_identity_for("kc-invitee-susp", "inv-s@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    token = owner_sink.token_for_email("inv-s@example.com")
+    with invitee.client as client:
+        accepted = client.post("/api/v1/invites/accept", json={"token": token})
+        assert accepted.status_code == 403
+
+
+def test_suspended_organisation_blocks_invite_flows(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner = authenticated_client_factory(
+        identity=_identity_for("kc-owner-org-susp", "owner-org-susp@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    sink = _override_token_sink(owner.client)
+    with owner.client as client:
+        created = client.post(
+            "/api/v1/organisations", json={"name": "Org SO", "slug": "org-so"}
+        )
+        org_id = created.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "org-invitee@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+
+    async def _suspend_org() -> None:
+        from app.organisations.models.organisation import Organisation
+
+        async with migrated_session_factory() as session:
+            org = (
+                await session.execute(
+                    select(Organisation).where(Organisation.id == UUID(org_id))
+                )
+            ).scalar_one()
+            org.status = "suspended"
+            await session.commit()
+
+    run_async(_suspend_org())
+
+    with owner.client as client:
+        blocked = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "another@example.com", "role": "member"},
+        )
+        assert blocked.status_code == 403
+
+    invitee = authenticated_client_factory(
+        identity=_identity_for("kc-org-invitee", "org-invitee@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    token = sink.token_for_email("org-invitee@example.com")
+    with invitee.client as client:
+        accepted = client.post("/api/v1/invites/accept", json={"token": token})
+        assert accepted.status_code == 403

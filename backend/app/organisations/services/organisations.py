@@ -14,8 +14,9 @@ from app.core.errors.exceptions import (
 )
 from app.memberships.models.membership import MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
-from app.organisations.models.organisation import Organisation
+from app.organisations.models.organisation import Organisation, OrganisationStatus
 from app.organisations.repositories.organisations import OrganisationRepository
+from app.users.services.users import UserService
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
@@ -25,6 +26,12 @@ class OrganisationService:
         self.session = session
         self.organisation_repository = OrganisationRepository(session)
         self.membership_repository = MembershipRepository(session)
+        self.user_service = UserService(session)
+
+    @staticmethod
+    def ensure_organisation_active(organisation: Organisation) -> None:
+        if organisation.status == OrganisationStatus.SUSPENDED:
+            raise ForbiddenError(detail="Organisation is suspended")
 
     @staticmethod
     def normalize_name(raw_name: str) -> str:
@@ -102,6 +109,9 @@ class OrganisationService:
         slug: str,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
+        self.ensure_organisation_active(organisation)
+        actor = await self.user_service.get_user(actor_user_id)
+        self.user_service.ensure_user_active(actor)
         membership = await self.membership_repository.get_membership(
             user_id=actor_user_id,
             organisation_id=organisation_id,
@@ -145,6 +155,9 @@ class OrganisationService:
         actor_user_id: UUID,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
+        self.ensure_organisation_active(organisation)
+        actor = await self.user_service.get_user(actor_user_id)
+        self.user_service.ensure_user_active(actor)
         membership = await self.membership_repository.get_membership(
             user_id=actor_user_id,
             organisation_id=organisation_id,

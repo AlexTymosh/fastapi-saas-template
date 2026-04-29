@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -11,6 +13,11 @@ from app.core.db.mixins import TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from app.memberships.models.membership import Membership
+
+
+class UserStatus(StrEnum):
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
 
 
 class User(UUIDMixin, TimestampMixin, Base):
@@ -39,6 +46,17 @@ class User(UUIDMixin, TimestampMixin, Base):
         default=False,
         server_default=sa.text("false"),
     )
+    status: Mapped[UserStatus] = mapped_column(
+        sa.Enum("active", "suspended", name="user_status", native_enum=False),
+        nullable=False,
+        default=UserStatus.ACTIVE,
+        server_default=UserStatus.ACTIVE.value,
+    )
+    suspended_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True),
+        nullable=True,
+    )
+    suspended_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="user",

@@ -4,8 +4,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedPrincipal
-from app.core.errors.exceptions import ConflictError
-from app.users.models.user import User
+from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.users.models.user import User, UserStatus
 from app.users.repositories.users import UserRepository
 
 
@@ -83,3 +83,14 @@ class UserService:
 
     async def get_me(self, identity: AuthenticatedPrincipal) -> User:
         return await self.provision_current_user(identity)
+
+    async def get_user(self, user_id) -> User:
+        user = await self.user_repository.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError(detail="User not found")
+        return user
+
+    @staticmethod
+    def ensure_user_active(user: User) -> None:
+        if user.status == UserStatus.SUSPENDED:
+            raise ForbiddenError(detail="User is suspended")
