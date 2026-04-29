@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# TODO: Move domain-specific guards out of core in a follow-up refactor.
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ForbiddenError
 from app.organisations.models.organisation import Organisation, OrganisationStatus

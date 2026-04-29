@@ -110,6 +110,9 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
 
     invite_create = paths["/api/v1/organisations/{organisation_id}/invites"]["post"]
     invite_accept = paths["/api/v1/invites/accept"]["post"]
+    invite_resend = paths[
+        "/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend"
+    ]["post"]
 
     create_problem = invite_create["responses"]["403"]["content"]
     assert "application/problem+json" in create_problem
@@ -129,6 +132,11 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
         "schema"
     ]
     assert accept_request["$ref"].endswith("/AcceptInviteRequest")
+
+    assert "429" in invite_resend["responses"]
+    assert "503" in invite_resend["responses"]
+    assert "application/problem+json" in invite_resend["responses"]["429"]["content"]
+    assert "application/problem+json" in invite_resend["responses"]["503"]["content"]
 
 
 def test_openapi_membership_collection_response_has_data_meta_links(

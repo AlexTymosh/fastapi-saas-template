@@ -188,6 +188,9 @@ class InviteService:
                 raise NotFoundError(detail="Invite not found")
             if invite.status != InviteStatus.PENDING:
                 raise ConflictError(detail="Only pending invite can be resent")
+            if self._is_expired(expires_at=invite.expires_at):
+                await self.invite_repository.mark_status(invite, InviteStatus.EXPIRED)
+                raise ConflictError(detail="Invite has expired")
             if actor.role == MembershipRole.MEMBER:
                 raise ForbiddenError(detail="You are not allowed to resend invites")
             if (
