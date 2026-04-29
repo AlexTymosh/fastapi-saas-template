@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access_guards import ensure_organisation_active
+from app.access_control.guards import ensure_organisation_active
 from app.core.errors.exceptions import (
     BadRequestError,
     ConflictError,
@@ -132,20 +132,6 @@ class OrganisationService:
             )
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc
-
-    async def update_slug(
-        self,
-        *,
-        organisation_id: UUID,
-        actor_user_id: UUID,
-        slug: str,
-    ) -> Organisation:
-        # Legacy helper retained while /slug endpoint remains available.
-        return await self.update_organisation_details(
-            organisation_id=organisation_id,
-            actor_user_id=actor_user_id,
-            slug=slug,
-        )
 
     async def soft_delete(
         self,

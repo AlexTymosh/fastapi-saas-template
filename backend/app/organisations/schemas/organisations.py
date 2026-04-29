@@ -86,15 +86,6 @@ class OrganisationDirectoryResponse(BaseModel):
     links: dict[str, str]
 
 
-class UpdateOrganisationSlugRequest(BaseModel):
-    slug: str = Field(min_length=1, max_length=255)
-
-    @field_validator("slug")
-    @classmethod
-    def normalize_slug(cls, value: str) -> str:
-        return normalize_and_validate_slug(value)
-
-
 class OrganisationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

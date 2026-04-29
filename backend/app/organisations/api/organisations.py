@@ -23,7 +23,6 @@ from app.organisations.schemas.organisations import (
     OrganisationDirectoryResponse,
     OrganisationResponse,
     UpdateOrganisationRequest,
-    UpdateOrganisationSlugRequest,
 )
 from app.organisations.services.access import OrganisationAccessService
 from app.organisations.services.onboarding import OnboardingService
@@ -93,27 +92,6 @@ async def update_organisation(
         actor_user_id=user.id,
         name=payload.name,
         slug=payload.slug,
-    )
-    return OrganisationResponse.model_validate(organisation)
-
-
-@router.patch(
-    "/{organisation_id}/slug",
-    response_model=OrganisationResponse,
-    responses=WRITE_ERROR_RESPONSES,
-    name="update_organisation_slug",
-)
-async def update_organisation_slug(
-    organisation_id: UUID,
-    payload: UpdateOrganisationSlugRequest,
-    identity: PrincipalDep,
-    db_session: DbSessionDep,
-) -> OrganisationResponse:
-    # Legacy endpoint retained for backwards compatibility.
-    user = await UserService(db_session).provision_current_user(identity)
-    service = OrganisationService(db_session)
-    organisation = await service.update_slug(
-        organisation_id=organisation_id, actor_user_id=user.id, slug=payload.slug
     )
     return OrganisationResponse.model_validate(organisation)
 

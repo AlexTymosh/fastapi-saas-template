@@ -794,6 +794,40 @@ def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None
     run_async(engine.dispose())
 
 
+def test_platform_role_does_not_bypass_single_organisation_creation_rule(
+    tmp_path,
+) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    auth_provider.set_identity(
+        _identity_for(
+            external_auth_id="kc-platform-admin-onboarding",
+            email="platform-admin-onboarding@example.com",
+            roles=["platform_admin"],
+            email_verified=True,
+        )
+    )
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "First Org", "slug": "platform-admin-first-org"},
+        )
+        assert first_response.status_code == 201
+
+        second_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Second Org", "slug": "platform-admin-second-org"},
+        )
+        assert second_response.status_code == 409
+        assert second_response.headers["content-type"].startswith(
+            "application/problem+json"
+        )
+        assert second_response.json()["error_code"] == "conflict"
+
+    run_async(engine.dispose())
+
+
 def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -817,72 +851,6 @@ def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -
         assert response.headers["content-type"].startswith("application/problem+json")
 
     run_async(engine.dispose())
-
-
-def test_owner_can_update_slug_and_soft_delete_organisation(
-    authenticated_client_factory,
-    migrated_database_url: str,
-) -> None:
-    owner_client_bundle = authenticated_client_factory(
-        identity=_identity_for(
-            external_auth_id="kc-owner-mutate-org",
-            email="owner-mutate-org@example.com",
-        ),
-        database_url=migrated_database_url,
-        redis_url=None,
-    )
-    owner_client = owner_client_bundle.client
-    with owner_client as client:
-        create_response = client.post(
-            "/api/v1/organisations",
-            json={"name": "Mutable Org", "slug": "mutable-org"},
-        )
-        assert create_response.status_code == 201
-        organisation_id = create_response.json()["id"]
-
-        patch_response = client.patch(
-            f"/api/v1/organisations/{organisation_id}/slug",
-            json={"slug": "mutable-org-updated"},
-        )
-        assert patch_response.status_code == 200
-        assert patch_response.json()["slug"] == "mutable-org-updated"
-
-        delete_response = client.delete(f"/api/v1/organisations/{organisation_id}")
-        assert delete_response.status_code == 204
-
-        get_response = client.get(f"/api/v1/organisations/{organisation_id}")
-        assert get_response.status_code == 404
-
-
-def test_update_organisation_slug_invalid_payload_returns_validation_problem(
-    authenticated_client_factory,
-    migrated_database_url: str,
-) -> None:
-    owner_client_bundle = authenticated_client_factory(
-        identity=_identity_for(
-            external_auth_id="kc-owner-invalid-slug",
-            email="owner-invalid-slug@example.com",
-        ),
-        database_url=migrated_database_url,
-        redis_url=None,
-    )
-    owner_client = owner_client_bundle.client
-    with owner_client as client:
-        create_response = client.post(
-            "/api/v1/organisations",
-            json={"name": "Invalid Slug Org", "slug": "invalid-slug-org"},
-        )
-        assert create_response.status_code == 201
-        organisation_id = create_response.json()["id"]
-
-        patch_response = client.patch(
-            f"/api/v1/organisations/{organisation_id}/slug",
-            json={"slug": "Not Valid!"},
-        )
-        assert patch_response.status_code == 422
-        assert patch_response.headers["content-type"].startswith(
-            "application/problem+json"
-        )
 
 
 def test_soft_deleted_organisation_slug_is_released_for_reuse(
