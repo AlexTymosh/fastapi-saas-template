@@ -27,6 +27,7 @@ class OnboardingService:
     ) -> tuple[User, Organisation, Membership]:
         async with self.session.begin():
             user = await self.user_service.get_or_create_current_user(identity)
+            await self.user_service.ensure_user_is_active(user)
             await self.membership_service.ensure_user_can_create_organisation(
                 user_id=user.id
             )

@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.organisations.models.organisation import OrganisationStatus
+
 _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 
@@ -54,5 +56,6 @@ class OrganisationResponse(BaseModel):
     id: UUID
     name: str
     slug: str
+    status: OrganisationStatus
     created_at: datetime
     updated_at: datetime

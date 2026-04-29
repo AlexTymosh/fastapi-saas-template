@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_guards import ensure_organisation_active
 from app.core.errors.exceptions import (
     BadRequestError,
     ConflictError,
@@ -16,6 +17,7 @@ from app.memberships.models.membership import MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 from app.organisations.models.organisation import Organisation
 from app.organisations.repositories.organisations import OrganisationRepository
+from app.users.services.users import UserService
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
@@ -25,6 +27,7 @@ class OrganisationService:
         self.session = session
         self.organisation_repository = OrganisationRepository(session)
         self.membership_repository = MembershipRepository(session)
+        self.user_service = UserService(session)
 
     @staticmethod
     def normalize_name(raw_name: str) -> str:
@@ -102,6 +105,9 @@ class OrganisationService:
         slug: str,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        ensure_organisation_active(organisation)
         membership = await self.membership_repository.get_membership(
             user_id=actor_user_id,
             organisation_id=organisation_id,
@@ -145,6 +151,9 @@ class OrganisationService:
         actor_user_id: UUID,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        ensure_organisation_active(organisation)
         membership = await self.membership_repository.get_membership(
             user_id=actor_user_id,
             organisation_id=organisation_id,

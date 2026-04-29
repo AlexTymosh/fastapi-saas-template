@@ -11,8 +11,8 @@ from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.db import Base, get_db_session
 from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
-from app.organisations.models.organisation import Organisation
-from app.users.models.user import User
+from app.organisations.models.organisation import Organisation, OrganisationStatus
+from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import FakeAuthProvider
 
@@ -270,12 +270,14 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
         )
         assert response.status_code == 201
         assert response.json()["slug"] == "acme-org"
+        assert response.json()["status"] == OrganisationStatus.ACTIVE.value
         organisation_id = response.json()["id"]
 
         me = client.get("/api/v1/users/me")
         assert me.status_code == 200
         payload = me.json()
         assert payload["onboarding_completed"] is True
+        assert payload["status"] == UserStatus.ACTIVE.value
         assert payload["membership"]["organisation_id"] == organisation_id
         assert payload["membership"]["role"] == MembershipRole.OWNER.value
 
@@ -916,3 +918,65 @@ def test_soft_deleted_organisation_slug_is_released_for_reuse(
         )
         assert recreate_response.status_code == 201
         assert recreate_response.json()["slug"] == "reusable-org"
+
+
+def test_suspended_user_cannot_create_organisation(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+
+    async def _suspend() -> None:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            user = result.scalar_one()
+            user.status = UserStatus.SUSPENDED
+            await session.commit()
+
+    run_async(_suspend())
+
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        response = client.post(
+            "/api/v1/organisations", json={"name": "Suspended", "slug": "suspended-org"}
+        )
+        assert response.status_code == 403
+
+
+def test_suspended_organisation_returns_403_for_get(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations", json={"name": "Acme", "slug": "acme-susp"}
+        )
+        organisation_id = create.json()["id"]
+
+    async def _suspend_org() -> None:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(Organisation).where(Organisation.id == UUID(organisation_id))
+            )
+            organisation = result.scalar_one()
+            organisation.status = OrganisationStatus.SUSPENDED
+            await session.commit()
+
+    run_async(_suspend_org())
+
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 403

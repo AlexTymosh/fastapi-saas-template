@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_guards import ensure_organisation_active
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.invites.models.invite import Invite, InviteStatus
@@ -71,7 +72,10 @@ class InviteService:
         role: MembershipRole,
         email: str,
     ) -> Invite:
-        await self.organisation_service.get_organisation(organisation_id)
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        ensure_organisation_active(organisation)
         if role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner role cannot be assigned via invite")
 
@@ -160,6 +164,11 @@ class InviteService:
             )
 
         user = await self.user_service.get_or_create_current_user(identity=identity)
+        await self.user_service.ensure_user_is_active(user)
+        organisation = await self.organisation_service.get_organisation(
+            invite.organisation_id
+        )
+        ensure_organisation_active(organisation)
         membership = await self.membership_service.transfer_membership(
             user_id=user.id,
             organisation_id=invite.organisation_id,

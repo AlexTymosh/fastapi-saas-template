@@ -3,8 +3,9 @@ from __future__ import annotations
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_guards import ensure_user_active
 from app.core.auth import AuthenticatedPrincipal
-from app.core.errors.exceptions import ConflictError
+from app.core.errors.exceptions import ConflictError, NotFoundError
 from app.users.models.user import User
 from app.users.repositories.users import UserRepository
 
@@ -83,3 +84,12 @@ class UserService:
 
     async def get_me(self, identity: AuthenticatedPrincipal) -> User:
         return await self.provision_current_user(identity)
+
+    async def get_user_by_id(self, user_id) -> User:
+        user = await self.user_repository.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError(detail="User not found")
+        return user
+
+    async def ensure_user_is_active(self, user: User) -> None:
+        ensure_user_active(user)

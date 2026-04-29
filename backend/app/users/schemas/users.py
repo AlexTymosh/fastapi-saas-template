@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr
 
 from app.memberships.models.membership import MembershipRole
+from app.users.models.user import UserStatus
 
 
 class MembershipSummary(BaseModel):
@@ -23,6 +24,7 @@ class UserMeResponse(BaseModel):
     first_name: str | None
     last_name: str | None
     onboarding_completed: bool
+    status: UserStatus
     membership: MembershipSummary | None
     created_at: datetime
     updated_at: datetime
