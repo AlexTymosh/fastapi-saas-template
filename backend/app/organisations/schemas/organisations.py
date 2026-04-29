@@ -50,6 +50,29 @@ class UpdateOrganisationSlugRequest(BaseModel):
         return normalize_and_validate_slug(value)
 
 
+class UpdateOrganisationRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    slug: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        name = value.strip()
+        if not name:
+            msg = "Organisation name cannot be blank"
+            raise ValueError(msg)
+        return name
+
+    @field_validator("slug")
+    @classmethod
+    def normalize_slug(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_and_validate_slug(value)
+
+
 class OrganisationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

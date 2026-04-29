@@ -841,8 +841,8 @@ def test_owner_can_update_slug_and_soft_delete_organisation(
         organisation_id = create_response.json()["id"]
 
         patch_response = client.patch(
-            f"/api/v1/organisations/{organisation_id}/slug",
-            json={"slug": "mutable-org-updated"},
+            f"/api/v1/organisations/{organisation_id}",
+            json={"slug": "mutable-org-updated", "name": "Mutable Org Updated"},
         )
         assert patch_response.status_code == 200
         assert patch_response.json()["slug"] == "mutable-org-updated"
@@ -876,7 +876,7 @@ def test_update_organisation_slug_invalid_payload_returns_validation_problem(
         organisation_id = create_response.json()["id"]
 
         patch_response = client.patch(
-            f"/api/v1/organisations/{organisation_id}/slug",
+            f"/api/v1/organisations/{organisation_id}",
             json={"slug": "Not Valid!"},
         )
         assert patch_response.status_code == 422

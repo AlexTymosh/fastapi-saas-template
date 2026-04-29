@@ -77,32 +77,36 @@ class OrganisationService:
             raise NotFoundError(detail="Organisation not found")
         return organisation
 
-    async def update_slug(
+    async def update_organisation_details(
         self,
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
-        slug: str,
+        name: str | None = None,
+        slug: str | None = None,
     ) -> Organisation:
         if self.session.in_transaction():
-            return await self._update_slug(
+            return await self._update_organisation_details(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                name=name,
                 slug=slug,
             )
         async with self.session.begin():
-            return await self._update_slug(
+            return await self._update_organisation_details(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                name=name,
                 slug=slug,
             )
 
-    async def _update_slug(
+    async def _update_organisation_details(
         self,
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
-        slug: str,
+        name: str | None = None,
+        slug: str | None = None,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
@@ -115,14 +119,24 @@ class OrganisationService:
         allowed_roles = {MembershipRole.OWNER, MembershipRole.ADMIN}
         if membership is None or membership.role not in allowed_roles:
             raise ForbiddenError(
-                detail="You are not allowed to update organisation slug"
+                detail="You are not allowed to update this organisation"
             )
 
-        normalized_slug = self.normalize_slug(slug)
+        if name is None and slug is None:
+            raise BadRequestError(detail="At least one field must be provided")
+
+        normalized_name = (
+            organisation.name if name is None else self.normalize_name(name)
+        )
+        normalized_slug = (
+            organisation.slug if slug is None else self.normalize_slug(slug)
+        )
+
         try:
-            return await self.organisation_repository.update_slug(
+            return await self.organisation_repository.update(
                 organisation,
-                normalized_slug,
+                name=normalized_name,
+                slug=normalized_slug,
             )
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc

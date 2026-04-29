@@ -28,3 +28,22 @@ class MembershipCollectionResponse(BaseModel):
     data: list[MembershipResponse]
     meta: MembershipCollectionMeta
     links: dict[str, str]
+
+
+class UpdateMembershipRoleRequest(BaseModel):
+    role: MembershipRole
+
+
+class DirectoryItemResponse(BaseModel):
+    display_name: str
+    role_label: str
+
+
+class DirectoryCollectionMeta(BaseModel):
+    total: int
+
+
+class DirectoryCollectionResponse(BaseModel):
+    data: list[DirectoryItemResponse]
+    meta: DirectoryCollectionMeta
+    links: dict[str, str]

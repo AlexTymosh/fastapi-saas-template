@@ -58,3 +58,36 @@ class OrganisationAccessService:
         return await self.membership_service.list_memberships_for_organisation(
             organisation_id=organisation_id
         )
+
+    async def list_directory_for_member_organisation(
+        self,
+        *,
+        identity: AuthenticatedPrincipal,
+        organisation_id: UUID,
+    ) -> list[Membership]:
+        organisation = await self.organisation_service.get_organisation(
+            organisation_id=organisation_id
+        )
+        ensure_organisation_active(organisation)
+        user = await self.user_service.provision_current_user(identity=identity)
+        await self.user_service.ensure_user_is_active(user)
+        await self.membership_service.ensure_user_has_organisation_access(
+            user_id=user.id,
+            organisation_id=organisation_id,
+        )
+        return await self.membership_service.list_memberships_for_organisation(
+            organisation_id=organisation_id
+        )
+
+    async def ensure_write_access(
+        self,
+        *,
+        identity: AuthenticatedPrincipal,
+        organisation_id: UUID,
+    ) -> None:
+        organisation = await self.organisation_service.get_organisation(
+            organisation_id=organisation_id
+        )
+        ensure_organisation_active(organisation)
+        user = await self.user_service.provision_current_user(identity=identity)
+        await self.user_service.ensure_user_is_active(user)

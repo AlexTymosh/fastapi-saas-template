@@ -10,13 +10,18 @@ from app.core.auth import AuthenticatedPrincipal, require_authenticated_principa
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
 from app.memberships.schemas.memberships import (
+    DirectoryCollectionMeta,
+    DirectoryCollectionResponse,
+    DirectoryItemResponse,
     MembershipCollectionMeta,
     MembershipCollectionResponse,
     MembershipResponse,
+    UpdateMembershipRoleRequest,
 )
 from app.organisations.schemas.organisations import (
     CreateOrganisationRequest,
     OrganisationResponse,
+    UpdateOrganisationRequest,
     UpdateOrganisationSlugRequest,
 )
 from app.organisations.services.access import OrganisationAccessService
@@ -95,6 +100,29 @@ async def update_organisation_slug(
     return OrganisationResponse.model_validate(organisation)
 
 
+@router.patch(
+    "/{organisation_id}",
+    response_model=OrganisationResponse,
+    responses=WRITE_ERROR_RESPONSES,
+    name="update_organisation",
+)
+async def update_organisation(
+    organisation_id: UUID,
+    payload: UpdateOrganisationRequest,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+) -> OrganisationResponse:
+    user = await UserService(db_session).provision_current_user(identity)
+    service = OrganisationService(db_session)
+    organisation = await service.update_organisation_details(
+        organisation_id=organisation_id,
+        actor_user_id=user.id,
+        name=payload.name,
+        slug=payload.slug,
+    )
+    return OrganisationResponse.model_validate(organisation)
+
+
 @router.delete(
     "/{organisation_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -132,4 +160,90 @@ async def list_organisation_memberships(
         data=[MembershipResponse.model_validate(item) for item in memberships],
         meta=MembershipCollectionMeta(total=len(memberships)),
         links={},
+    )
+
+
+@router.get(
+    "/{organisation_id}/directory",
+    response_model=DirectoryCollectionResponse,
+    responses=COMMON_ERROR_RESPONSES,
+    name="list_organisation_directory",
+)
+async def list_organisation_directory(
+    organisation_id: UUID,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+) -> DirectoryCollectionResponse:
+    access_service = OrganisationAccessService(db_session)
+    memberships = await access_service.list_directory_for_member_organisation(
+        identity=identity,
+        organisation_id=organisation_id,
+    )
+    return DirectoryCollectionResponse(
+        data=[
+            DirectoryItemResponse(
+                display_name=(
+                    f"{item.user.first_name} {item.user.last_name}".strip()
+                    if item.user.first_name or item.user.last_name
+                    else "Organisation member"
+                ),
+                role_label="Member",
+            )
+            for item in memberships
+        ],
+        meta=DirectoryCollectionMeta(total=len(memberships)),
+        links={},
+    )
+
+
+@router.patch(
+    "/{organisation_id}/memberships/{membership_id}/role",
+    response_model=MembershipResponse,
+    responses=WRITE_ERROR_RESPONSES,
+    name="change_membership_role",
+)
+async def change_membership_role(
+    organisation_id: UUID,
+    membership_id: UUID,
+    payload: UpdateMembershipRoleRequest,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+) -> MembershipResponse:
+    user = await UserService(db_session).provision_current_user(identity)
+    await OrganisationAccessService(db_session).ensure_write_access(
+        identity=identity,
+        organisation_id=organisation_id,
+    )
+    membership = await OrganisationAccessService(
+        db_session
+    ).membership_service.change_membership_role(
+        organisation_id=organisation_id,
+        actor_user_id=user.id,
+        membership_id=membership_id,
+        role=payload.role,
+    )
+    return MembershipResponse.model_validate(membership)
+
+
+@router.delete(
+    "/{organisation_id}/memberships/{membership_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=WRITE_ERROR_RESPONSES,
+    name="remove_membership",
+)
+async def remove_membership(
+    organisation_id: UUID,
+    membership_id: UUID,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+) -> None:
+    user = await UserService(db_session).provision_current_user(identity)
+    await OrganisationAccessService(db_session).ensure_write_access(
+        identity=identity,
+        organisation_id=organisation_id,
+    )
+    await OrganisationAccessService(db_session).membership_service.remove_membership(
+        organisation_id=organisation_id,
+        actor_user_id=user.id,
+        membership_id=membership_id,
     )

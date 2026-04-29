@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors.exceptions import ConflictError, ForbiddenError
+from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 
@@ -182,3 +182,80 @@ class MembershipService:
     async def _deactivate_membership(self, membership: Membership) -> Membership:
         await self.ensure_owner_invariant_before_deactivation(membership)
         return await self.membership_repository.deactivate_membership(membership)
+
+    async def change_membership_role(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        membership_id: UUID,
+        role: MembershipRole,
+    ) -> Membership:
+        if self.session.in_transaction():
+            return await self._change_membership_role(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
+                role=role,
+            )
+        async with self.session.begin():
+            return await self._change_membership_role(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
+                role=role,
+            )
+
+    async def _change_membership_role(self, **kwargs) -> Membership:
+        organisation_id = kwargs["organisation_id"]
+        actor_user_id = kwargs["actor_user_id"]
+        membership_id = kwargs["membership_id"]
+        role = kwargs["role"]
+        if role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Cannot assign owner role through tenant API")
+        actor = await self.membership_repository.get_membership(
+            user_id=actor_user_id, organisation_id=organisation_id
+        )
+        if actor is None or actor.role != MembershipRole.OWNER:
+            raise ForbiddenError(detail="Only owner can change membership roles")
+        target = await self.membership_repository.get_by_id(membership_id=membership_id)
+        if target is None or target.organisation_id != organisation_id:
+            raise NotFoundError(detail="Membership not found")
+        if target.role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Owner role cannot be changed")
+        return await self.membership_repository.update_role(target, role=role)
+
+    async def remove_membership(
+        self, *, organisation_id: UUID, actor_user_id: UUID, membership_id: UUID
+    ) -> Membership:
+        if self.session.in_transaction():
+            return await self._remove_membership(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
+            )
+        async with self.session.begin():
+            return await self._remove_membership(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
+            )
+
+    async def _remove_membership(
+        self, *, organisation_id: UUID, actor_user_id: UUID, membership_id: UUID
+    ) -> Membership:
+        actor = await self.membership_repository.get_membership(
+            user_id=actor_user_id, organisation_id=organisation_id
+        )
+        if actor is None:
+            raise ForbiddenError(detail="You are not allowed to remove memberships")
+        target = await self.membership_repository.get_by_id(membership_id=membership_id)
+        if target is None or target.organisation_id != organisation_id:
+            raise NotFoundError(detail="Membership not found")
+        if target.role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Owner membership cannot be removed")
+        if actor.role == MembershipRole.MEMBER:
+            raise ForbiddenError(detail="You are not allowed to remove memberships")
+        if actor.role == MembershipRole.ADMIN and target.role != MembershipRole.MEMBER:
+            raise ForbiddenError(detail="Admin can remove members only")
+        return await self.membership_repository.deactivate_membership(target)
