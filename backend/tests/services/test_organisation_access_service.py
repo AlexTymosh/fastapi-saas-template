@@ -67,20 +67,32 @@ def test_list_memberships_for_member_organisation_uses_single_access_use_case() 
     service = OrganisationAccessService(session=AsyncMock())
 
     organisation_id = uuid4()
+    user_id = uuid4()
     identity = _identity()
+
     user = User(
+        id=user_id,
         external_auth_id="kc-2",
         email="member2@example.com",
         email_verified=True,
         first_name="Member",
         last_name="Two",
     )
-    memberships = [Membership(user_id=user.id, organisation_id=organisation_id)]
+
+    memberships = [
+        Membership(
+            user_id=user_id,
+            organisation_id=organisation_id,
+        )
+    ]
 
     service.user_service = AsyncMock()
     service.user_service.provision_current_user = AsyncMock(return_value=user)
+    service.user_service.ensure_user_is_active = AsyncMock()
+
     service.organisation_service = AsyncMock()
     service.organisation_service.get_organisation = AsyncMock()
+
     service.membership_service = AsyncMock()
     service.membership_service.ensure_user_can_list_organisation_memberships = (
         AsyncMock()
@@ -97,18 +109,24 @@ def test_list_memberships_for_member_organisation_uses_single_access_use_case() 
     )
 
     assert result == memberships
+
     service.user_service.provision_current_user.assert_awaited_once_with(
         identity=identity,
     )
+    service.user_service.ensure_user_is_active.assert_awaited_once_with(user)
+
     service.organisation_service.get_organisation.assert_awaited_once_with(
         organisation_id=organisation_id,
     )
+
     service.membership_service.ensure_user_can_list_organisation_memberships.assert_awaited_once_with(
-        user_id=user.id,
+        user_id=user_id,
         organisation_id=organisation_id,
     )
+
     service.membership_service.list_memberships_for_organisation.assert_awaited_once_with(
         organisation_id=organisation_id,
+        actor_user_id=user_id,
     )
 
 
