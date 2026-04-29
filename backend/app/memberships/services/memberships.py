@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors.exceptions import ConflictError, ForbiddenError
+from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 
@@ -58,6 +58,97 @@ class MembershipService:
             raise ConflictError(
                 detail="User already belongs to an organisation"
             ) from exc
+
+    async def change_membership_role(
+        self,
+        *,
+        actor_membership: Membership,
+        target_membership: Membership,
+        role: MembershipRole,
+    ) -> Membership:
+        if self.session.in_transaction():
+            return await self._change_membership_role(
+                actor_membership=actor_membership,
+                target_membership=target_membership,
+                role=role,
+            )
+        async with self.session.begin():
+            return await self._change_membership_role(
+                actor_membership=actor_membership,
+                target_membership=target_membership,
+                role=role,
+            )
+
+    async def _change_membership_role(
+        self,
+        *,
+        actor_membership: Membership,
+        target_membership: Membership,
+        role: MembershipRole,
+    ) -> Membership:
+        if role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Tenant API cannot assign owner role")
+        if target_membership.role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Owner role cannot be modified")
+        if actor_membership.role != MembershipRole.OWNER:
+            raise ForbiddenError(detail="Only owner can change membership roles")
+        return await self.membership_repository.update_role(
+            target_membership, role=role
+        )
+
+    async def remove_membership(
+        self,
+        *,
+        actor_membership: Membership,
+        target_membership: Membership,
+    ) -> Membership:
+        if self.session.in_transaction():
+            return await self._remove_membership(
+                actor_membership=actor_membership,
+                target_membership=target_membership,
+            )
+        async with self.session.begin():
+            return await self._remove_membership(
+                actor_membership=actor_membership,
+                target_membership=target_membership,
+            )
+
+    async def _remove_membership(
+        self,
+        *,
+        actor_membership: Membership,
+        target_membership: Membership,
+    ) -> Membership:
+        if target_membership.role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Owner membership cannot be removed")
+
+        if actor_membership.role == MembershipRole.OWNER:
+            return await self.membership_repository.deactivate_membership(
+                target_membership
+            )
+
+        if actor_membership.role == MembershipRole.ADMIN:
+            if target_membership.role != MembershipRole.MEMBER:
+                raise ForbiddenError(detail="Admin can remove only members")
+            return await self.membership_repository.deactivate_membership(
+                target_membership
+            )
+
+        raise ForbiddenError(detail="You are not allowed to remove memberships")
+
+    async def get_membership_for_organisation(
+        self,
+        *,
+        membership_id: UUID,
+        organisation_id: UUID,
+    ) -> Membership:
+        membership = await self.membership_repository.get_membership_by_id(
+            membership_id=membership_id,
+            organisation_id=organisation_id,
+        )
+        if membership is None:
+            raise NotFoundError(detail="Membership not found")
+        return membership
 
     async def transfer_membership(
         self,

@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.memberships.models.membership import Membership, MembershipRole
 
@@ -34,9 +35,13 @@ class MembershipRepository:
         *,
         organisation_id: UUID,
     ) -> list[Membership]:
-        stmt = select(Membership).where(
-            Membership.organisation_id == organisation_id,
-            Membership.is_active.is_(True),
+        stmt = (
+            select(Membership)
+            .where(
+                Membership.organisation_id == organisation_id,
+                Membership.is_active.is_(True),
+            )
+            .options(selectinload(Membership.user))
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -86,8 +91,36 @@ class MembershipRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_membership_by_id(
+        self,
+        *,
+        membership_id: UUID,
+        organisation_id: UUID,
+    ) -> Membership | None:
+        stmt = (
+            select(Membership)
+            .where(
+                Membership.id == membership_id,
+                Membership.organisation_id == organisation_id,
+                Membership.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def has_any_membership_for_user(self, *, user_id: UUID) -> bool:
         return await self.get_membership_for_user(user_id=user_id) is not None
+
+    async def update_role(
+        self,
+        membership: Membership,
+        *,
+        role: MembershipRole,
+    ) -> Membership:
+        membership.role = role
+        await self.session.flush()
+        return membership
 
     async def deactivate_membership(self, membership: Membership) -> Membership:
         membership.is_active = False

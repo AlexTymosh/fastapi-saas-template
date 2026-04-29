@@ -77,32 +77,36 @@ class OrganisationService:
             raise NotFoundError(detail="Organisation not found")
         return organisation
 
-    async def update_slug(
+    async def update_organisation_details(
         self,
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
-        slug: str,
+        name: str | None = None,
+        slug: str | None = None,
     ) -> Organisation:
         if self.session.in_transaction():
-            return await self._update_slug(
+            return await self._update_organisation_details(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                name=name,
                 slug=slug,
             )
         async with self.session.begin():
-            return await self._update_slug(
+            return await self._update_organisation_details(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                name=name,
                 slug=slug,
             )
 
-    async def _update_slug(
+    async def _update_organisation_details(
         self,
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
-        slug: str,
+        name: str | None = None,
+        slug: str | None = None,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
@@ -115,17 +119,33 @@ class OrganisationService:
         allowed_roles = {MembershipRole.OWNER, MembershipRole.ADMIN}
         if membership is None or membership.role not in allowed_roles:
             raise ForbiddenError(
-                detail="You are not allowed to update organisation slug"
+                detail="You are not allowed to update organisation details"
             )
 
-        normalized_slug = self.normalize_slug(slug)
+        normalized_name = self.normalize_name(name) if name is not None else None
+        normalized_slug = self.normalize_slug(slug) if slug is not None else None
         try:
-            return await self.organisation_repository.update_slug(
+            return await self.organisation_repository.update_details(
                 organisation,
-                normalized_slug,
+                name=normalized_name,
+                slug=normalized_slug,
             )
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc
+
+    async def update_slug(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        slug: str,
+    ) -> Organisation:
+        # Legacy helper retained while /slug endpoint remains available.
+        return await self.update_organisation_details(
+            organisation_id=organisation_id,
+            actor_user_id=actor_user_id,
+            slug=slug,
+        )
 
     async def soft_delete(
         self,

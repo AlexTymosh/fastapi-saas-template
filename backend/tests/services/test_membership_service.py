@@ -149,3 +149,46 @@ def test_transfer_membership_rejects_when_user_is_last_owner() -> None:
                 role=MembershipRole.MEMBER,
             )
         )
+
+
+def test_change_membership_role_owner_can_promote_member() -> None:
+    service = MembershipService(session=_session_stub())
+    service.membership_repository = AsyncMock()
+    actor = Membership(
+        user_id=uuid4(), organisation_id=uuid4(), role=MembershipRole.OWNER
+    )
+    target = Membership(
+        user_id=uuid4(),
+        organisation_id=actor.organisation_id,
+        role=MembershipRole.MEMBER,
+    )
+    service.membership_repository.update_role = AsyncMock(return_value=target)
+
+    run_async(
+        service.change_membership_role(
+            actor_membership=actor,
+            target_membership=target,
+            role=MembershipRole.ADMIN,
+        )
+    )
+
+
+def test_change_membership_role_admin_is_forbidden() -> None:
+    service = MembershipService(session=_session_stub())
+    actor = Membership(
+        user_id=uuid4(), organisation_id=uuid4(), role=MembershipRole.ADMIN
+    )
+    target = Membership(
+        user_id=uuid4(),
+        organisation_id=actor.organisation_id,
+        role=MembershipRole.MEMBER,
+    )
+
+    with pytest.raises(ForbiddenError):
+        run_async(
+            service.change_membership_role(
+                actor_membership=actor,
+                target_membership=target,
+                role=MembershipRole.ADMIN,
+            )
+        )
