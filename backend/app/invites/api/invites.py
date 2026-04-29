@@ -85,3 +85,46 @@ async def accept_invite(
         organisation_id=membership.organisation_id,
         role=membership.role,
     )
+
+
+@router.delete(
+    "/organisations/{organisation_id}/invites/{invite_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=WRITE_ERROR_RESPONSES,
+    name="revoke_organisation_invite",
+)
+async def revoke_invite(
+    organisation_id: UUID,
+    invite_id: UUID,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+) -> None:
+    user = await UserService(db_session).provision_current_user(identity)
+    await InviteService(db_session).revoke_invite(
+        organisation_id=organisation_id,
+        actor_user_id=user.id,
+        invite_id=invite_id,
+    )
+    return None
+
+
+@router.post(
+    "/organisations/{organisation_id}/invites/{invite_id}/resend",
+    response_model=InviteResponse,
+    responses=WRITE_ERROR_RESPONSES,
+    name="resend_organisation_invite",
+)
+async def resend_invite(
+    organisation_id: UUID,
+    invite_id: UUID,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+    token_sink: InviteTokenSinkDep,
+) -> InviteResponse:
+    user = await UserService(db_session).provision_current_user(identity)
+    invite = await InviteService(db_session, token_sink=token_sink).resend_invite(
+        organisation_id=organisation_id,
+        actor_user_id=user.id,
+        invite_id=invite_id,
+    )
+    return InviteResponse.model_validate(invite)

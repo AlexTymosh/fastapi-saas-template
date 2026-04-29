@@ -98,6 +98,12 @@ class InviteService:
 
         token = token_urlsafe(32)
         expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
+        existing_pending = await self.invite_repository.get_pending_invite_by_email(
+            organisation_id=organisation_id,
+            email=email.strip().lower(),
+        )
+        if existing_pending is not None:
+            raise ConflictError(detail="Pending invite already exists for this email")
         invite = await self.invite_repository.create_invite(
             email=email.strip().lower(),
             organisation_id=organisation_id,
@@ -180,3 +186,83 @@ class InviteService:
         await self.invite_repository.mark_status(invite, InviteStatus.ACCEPTED)
 
         return membership
+
+    async def revoke_invite(
+        self, *, organisation_id: UUID, actor_user_id: UUID, invite_id: UUID
+    ) -> None:
+        async with self.session.begin():
+            actor_user = await self.user_service.get_user_by_id(actor_user_id)
+            await self.user_service.ensure_user_is_active(actor_user)
+            organisation = await self.organisation_service.get_organisation(
+                organisation_id
+            )
+            ensure_organisation_active(organisation)
+            actor_membership = (
+                await self.membership_service.membership_repository.get_membership(
+                    user_id=actor_user_id,
+                    organisation_id=organisation_id,
+                )
+            )
+            invite = await self.invite_repository.get_invite_for_organisation(
+                invite_id=invite_id, organisation_id=organisation_id
+            )
+            if invite is None:
+                raise NotFoundError(detail="Invite not found")
+            if (
+                actor_membership is None
+                or actor_membership.role == MembershipRole.MEMBER
+            ):
+                raise ForbiddenError(detail="You are not allowed to revoke invites")
+            if (
+                actor_membership.role == MembershipRole.ADMIN
+                and invite.role == MembershipRole.ADMIN
+            ):
+                raise ForbiddenError(detail="Admin cannot revoke admin invite")
+            if invite.status != InviteStatus.PENDING:
+                raise ConflictError(detail="Only pending invites can be revoked")
+            await self.invite_repository.mark_revoked(
+                invite, revoked_by_user_id=actor_user_id
+            )
+
+    async def resend_invite(
+        self, *, organisation_id: UUID, actor_user_id: UUID, invite_id: UUID
+    ) -> Invite:
+        async with self.session.begin():
+            actor_user = await self.user_service.get_user_by_id(actor_user_id)
+            await self.user_service.ensure_user_is_active(actor_user)
+            organisation = await self.organisation_service.get_organisation(
+                organisation_id
+            )
+            ensure_organisation_active(organisation)
+            actor_membership = (
+                await self.membership_service.membership_repository.get_membership(
+                    user_id=actor_user_id,
+                    organisation_id=organisation_id,
+                )
+            )
+            invite = await self.invite_repository.get_invite_for_organisation(
+                invite_id=invite_id, organisation_id=organisation_id
+            )
+            if invite is None:
+                raise NotFoundError(detail="Invite not found")
+            if (
+                actor_membership is None
+                or actor_membership.role == MembershipRole.MEMBER
+            ):
+                raise ForbiddenError(detail="You are not allowed to resend invites")
+            if (
+                actor_membership.role == MembershipRole.ADMIN
+                and invite.role == MembershipRole.ADMIN
+            ):
+                raise ForbiddenError(detail="Admin cannot resend admin invite")
+            if invite.status != InviteStatus.PENDING:
+                raise ConflictError(detail="Only pending invites can be resent")
+            if self._is_expired(expires_at=invite.expires_at):
+                await self.invite_repository.mark_status(invite, InviteStatus.EXPIRED)
+                raise ConflictError(detail="Invite has expired")
+            token = token_urlsafe(32)
+            invite.token_hash = self._token_hash(token)
+            invite.expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
+            await self.session.flush()
+            await self.token_sink.deliver(invite=invite, raw_token=token)
+            return invite

@@ -9,6 +9,9 @@ from app.core.access_guards import ensure_organisation_active
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
+from app.memberships.repositories.memberships import (
+    MembershipRepository as MembershipRepositoryType,
+)
 from app.organisations.services.organisations import OrganisationService
 from app.users.services.users import UserService
 
@@ -251,6 +254,42 @@ class MembershipService:
         )
         if actor_membership is None:
             raise ForbiddenError(detail="You are not a member of this organisation")
+        return await self.membership_repository.list_memberships_for_organisation(
+            organisation_id=organisation_id,
+        )
+
+    async def list_directory_members_for_user(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+    ) -> list[MembershipRepositoryType.OrganisationDirectoryMember]:
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        ensure_organisation_active(organisation)
+        await self.ensure_user_has_organisation_access(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+        )
+        return await self.membership_repository.list_directory_members_for_organisation(
+            organisation_id=organisation_id,
+        )
+
+    async def list_memberships_for_management(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+    ) -> list[Membership]:
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        ensure_organisation_active(organisation)
+        await self.ensure_user_can_list_organisation_memberships(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+        )
         return await self.membership_repository.list_memberships_for_organisation(
             organisation_id=organisation_id,
         )

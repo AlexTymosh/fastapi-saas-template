@@ -128,26 +128,19 @@ async def get_organisation_directory(
     organisation_id: UUID, identity: PrincipalDep, db_session: DbSessionDep
 ) -> OrganisationDirectoryResponse:
     user = await UserService(db_session).provision_current_user(identity)
-    memberships = await MembershipService(db_session).list_memberships_for_organisation(
+    directory_members = await MembershipService(
+        db_session
+    ).list_directory_members_for_user(
         organisation_id=organisation_id,
         actor_user_id=user.id,
     )
-    data = []
-    for membership in memberships:
-        first_name = (membership.user.first_name or "").strip()
-        last_name = (membership.user.last_name or "").strip()
-        display_name = (
-            f"{first_name} {last_name}".strip()
-            or first_name
-            or last_name
-            or "Organisation member"
+    data = [
+        OrganisationDirectoryItemResponse(
+            display_name=item.display_name,
+            role_label=item.role_label,
         )
-        data.append(
-            OrganisationDirectoryItemResponse(
-                display_name=display_name,
-                role_label="Organisation member",
-            )
-        )
+        for item in directory_members
+    ]
     return OrganisationDirectoryResponse(
         data=data, meta=OrganisationDirectoryMeta(total=len(data)), links={}
     )
@@ -220,9 +213,10 @@ async def delete_organisation(
 async def list_organisation_memberships(
     organisation_id: UUID, identity: PrincipalDep, db_session: DbSessionDep
 ) -> MembershipCollectionResponse:
-    access_service = OrganisationAccessService(db_session)
-    memberships = await access_service.list_memberships_for_member_organisation(
-        identity=identity, organisation_id=organisation_id
+    user = await UserService(db_session).provision_current_user(identity)
+    memberships = await MembershipService(db_session).list_memberships_for_management(
+        organisation_id=organisation_id,
+        actor_user_id=user.id,
     )
 
     return MembershipCollectionResponse(

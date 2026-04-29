@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.invites.models.invite import Invite, InviteStatus
@@ -42,6 +42,40 @@ class InviteRepository:
 
     async def mark_status(self, invite: Invite, status: InviteStatus) -> Invite:
         invite.status = status
+        await self.session.flush()
+        await self.session.refresh(invite)
+        return invite
+
+    async def get_pending_invite_by_email(
+        self, *, organisation_id: UUID, email: str
+    ) -> Invite | None:
+        stmt = (
+            select(Invite)
+            .where(
+                Invite.organisation_id == organisation_id,
+                Invite.status == InviteStatus.PENDING,
+                func.lower(Invite.email) == email.lower(),
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_invite_for_organisation(
+        self, *, invite_id: UUID, organisation_id: UUID
+    ) -> Invite | None:
+        stmt = (
+            select(Invite)
+            .where(Invite.id == invite_id, Invite.organisation_id == organisation_id)
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def mark_revoked(self, invite: Invite, *, revoked_by_user_id: UUID) -> Invite:
+        invite.status = InviteStatus.REVOKED
+        invite.revoked_at = datetime.now(UTC)
+        invite.revoked_by_user_id = revoked_by_user_id
         await self.session.flush()
         await self.session.refresh(invite)
         return invite
