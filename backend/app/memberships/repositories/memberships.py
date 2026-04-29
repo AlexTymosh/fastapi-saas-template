@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.memberships.models.membership import Membership, MembershipRole
+from app.users.models.user import User
 
 
 class MembershipRepository:
@@ -45,6 +46,22 @@ class MembershipRepository:
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_directory_members_for_organisation(
+        self,
+        *,
+        organisation_id: UUID,
+    ) -> list[tuple[str | None, str | None]]:
+        stmt = (
+            select(User.first_name, User.last_name)
+            .join(Membership, Membership.user_id == User.id)
+            .where(
+                Membership.organisation_id == organisation_id,
+                Membership.is_active.is_(True),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return list(result.all())
 
     async def get_membership_for_user(self, *, user_id: UUID) -> Membership | None:
         stmt = (

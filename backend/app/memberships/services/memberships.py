@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +12,12 @@ from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 from app.organisations.services.organisations import OrganisationService
 from app.users.services.users import UserService
+
+
+@dataclass(frozen=True)
+class OrganisationDirectoryMember:
+    display_name: str
+    role_label: str
 
 
 class MembershipService:
@@ -235,7 +242,39 @@ class MembershipService:
             role=role,
         )
 
-    async def list_memberships_for_organisation(
+    async def list_directory_members_for_user(
+        self,
+        *,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+    ) -> list[OrganisationDirectoryMember]:
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        ensure_organisation_active(organisation)
+        actor_membership = await self.membership_repository.get_membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+        )
+        if actor_membership is None:
+            raise ForbiddenError(detail="You are not a member of this organisation")
+        items = (
+            await self.membership_repository.list_directory_members_for_organisation(
+                organisation_id=organisation_id,
+            )
+        )
+        return [
+            OrganisationDirectoryMember(
+                display_name=(
+                    f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
+                    or "Organisation member"
+                ),
+                role_label="Organisation member",
+            )
+            for first_name, last_name in items
+        ]
+
+    async def list_memberships_for_management(
         self,
         *,
         organisation_id: UUID,
@@ -249,8 +288,13 @@ class MembershipService:
             user_id=actor_user_id,
             organisation_id=organisation_id,
         )
-        if actor_membership is None:
-            raise ForbiddenError(detail="You are not a member of this organisation")
+        if actor_membership is None or actor_membership.role not in {
+            MembershipRole.OWNER,
+            MembershipRole.ADMIN,
+        }:
+            raise ForbiddenError(
+                detail="You are not allowed to view organisation memberships"
+            )
         return await self.membership_repository.list_memberships_for_organisation(
             organisation_id=organisation_id,
         )

@@ -20,6 +20,7 @@ class InviteStatus(StrEnum):
     PENDING = "pending"
     ACCEPTED = "accepted"
     EXPIRED = "expired"
+    REVOKED = "revoked"
 
 
 class Invite(UUIDMixin, TimestampMixin, Base):
@@ -52,6 +53,12 @@ class Invite(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
         index=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
     organisation: Mapped[Organisation] = relationship()

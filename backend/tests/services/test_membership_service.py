@@ -220,3 +220,34 @@ def test_change_membership_role_admin_is_forbidden() -> None:
                 role=MembershipRole.ADMIN,
             )
         )
+
+
+def test_directory_service_returns_projection_objects() -> None:
+    service = MembershipService(session=_session_stub())
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(return_value=object())
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=type("Org", (), {"status": "active"})()
+    )
+    service.membership_repository = AsyncMock()
+    service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=uuid4(), organisation_id=uuid4(), role=MembershipRole.MEMBER
+        )
+    )
+    service.membership_repository.list_directory_members_for_organisation = AsyncMock(
+        return_value=[("John", "Doe")]
+    )
+
+    items = run_async(
+        service.list_directory_members_for_user(
+            organisation_id=uuid4(), actor_user_id=uuid4()
+        )
+    )
+
+    assert len(items) == 1
+    assert items[0].display_name == "John Doe"
+    assert items[0].role_label == "Organisation member"
+    assert not isinstance(items[0], Membership)

@@ -94,8 +94,18 @@ def test_openapi_includes_user_organisation_and_invite_endpoints(monkeypatch) ->
     assert "/api/v1/organisations" in paths
     assert "/api/v1/organisations/{organisation_id}" in paths
     assert "/api/v1/organisations/{organisation_id}/memberships" in paths
+    assert "/api/v1/organisations/{organisation_id}/directory" in paths
+    assert (
+        "/api/v1/organisations/{organisation_id}/memberships/{membership_id}/role"
+        in paths
+    )
+    assert (
+        "/api/v1/organisations/{organisation_id}/memberships/{membership_id}" in paths
+    )
     assert "/api/v1/organisations/{organisation_id}/invites" in paths
     assert "/api/v1/invites/accept" in paths
+    assert "/api/v1/organisations/{organisation_id}/invites/{invite_id}" in paths
+    assert "/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend" in paths
     assert "/api/v1/invites/{token}/accept" not in paths
 
     invite_create = paths["/api/v1/organisations/{organisation_id}/invites"]["post"]
