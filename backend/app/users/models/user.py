@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import enum
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from sqlalchemy import Boolean, DateTime, Enum, String
+from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from app.memberships.models.membership import Membership
 
 
-class UserStatus(str, enum.Enum):
+class UserStatus(StrEnum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
 
@@ -47,7 +47,7 @@ class User(UUIDMixin, TimestampMixin, Base):
         server_default=sa.text("false"),
     )
     status: Mapped[UserStatus] = mapped_column(
-        Enum(UserStatus, native_enum=False),
+        String(32),
         nullable=False,
         default=UserStatus.ACTIVE,
         server_default=UserStatus.ACTIVE.value,
