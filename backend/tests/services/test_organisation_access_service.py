@@ -129,8 +129,12 @@ def test_list_memberships_loads_organisation_before_access_check() -> None:
 
     service.organisation_service = AsyncMock()
 
+    organisation = Organisation(name="Sequence Org", slug="sequence-org")
+    organisation.id = organisation_id
+
     async def _load_org(*, organisation_id):
         calls.append("load_organisation")
+        return organisation
 
     service.organisation_service.get_organisation = AsyncMock(side_effect=_load_org)
     service.user_service = AsyncMock()

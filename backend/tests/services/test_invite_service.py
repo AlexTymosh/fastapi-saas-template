@@ -12,6 +12,7 @@ from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.invites import InviteService
 from app.memberships.models.membership import Membership, MembershipRole
+from app.organisations.models.organisation import Organisation
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
@@ -49,6 +50,14 @@ def test_accept_invite_rejects_email_mismatch() -> None:
         )
     )
     service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="actor", email="actor@example.com")
+    )
+    service.user_service.ensure_user_is_active = Mock()
+    service.organisation_service = AsyncMock()
+    organisation = Organisation(name="Acme", slug="acme")
+    organisation.id = uuid4()
+    service.organisation_service.get_organisation = AsyncMock(return_value=organisation)
 
     with pytest.raises(ForbiddenError):
         run_async(
@@ -75,6 +84,11 @@ def test_accept_invite_provisions_missing_projection_user() -> None:
     service.user_service.get_or_create_current_user = AsyncMock(
         return_value=User(external_auth_id="kc-1", email="invited@example.com")
     )
+    service.user_service.ensure_user_is_active = Mock()
+    service.organisation_service = AsyncMock()
+    organisation = Organisation(name="Acme", slug="acme")
+    organisation.id = uuid4()
+    service.organisation_service.get_organisation = AsyncMock(return_value=organisation)
     service.membership_service = AsyncMock()
     service.membership_service.transfer_membership = AsyncMock(
         return_value=Membership(
@@ -153,8 +167,15 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
 
 def test_create_invite_admin_cannot_assign_admin_role() -> None:
     service = _service()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="actor", email="actor@example.com")
+    )
+    service.user_service.ensure_user_is_active = Mock()
     service.organisation_service = AsyncMock()
-    service.organisation_service.get_organisation = AsyncMock()
+    organisation = Organisation(name="Acme", slug="acme")
+    organisation.id = uuid4()
+    service.organisation_service.get_organisation = AsyncMock(return_value=organisation)
     service.membership_service = AsyncMock()
     service.membership_service.membership_repository = AsyncMock()
     service.membership_service.membership_repository.get_membership = AsyncMock(
@@ -178,8 +199,7 @@ def test_create_invite_admin_cannot_assign_admin_role() -> None:
 
 def test_create_invite_rejects_owner_role() -> None:
     service = _service()
-    service.organisation_service = AsyncMock()
-    service.organisation_service.get_organisation = AsyncMock()
+    service.user_service = AsyncMock()
 
     with pytest.raises(ForbiddenError):
         run_async(

@@ -72,12 +72,13 @@ class InviteService:
         role: MembershipRole,
         email: str,
     ) -> Invite:
+        if role == MembershipRole.OWNER:
+            raise ForbiddenError(detail="Owner role cannot be assigned via invite")
+
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
         await self.user_service.ensure_user_is_active(actor_user)
         organisation = await self.organisation_service.get_organisation(organisation_id)
         ensure_organisation_active(organisation)
-        if role == MembershipRole.OWNER:
-            raise ForbiddenError(detail="Owner role cannot be assigned via invite")
 
         membership_repo = self.membership_service.membership_repository
         actor_membership = await membership_repo.get_membership(

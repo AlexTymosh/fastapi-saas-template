@@ -17,57 +17,56 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "users",
-        sa.Column(
-            "status", sa.String(length=32), nullable=False, server_default="active"
-        ),
-    )
-    op.create_check_constraint(
-        "ck_users_status_valid",
-        "users",
-        "status IN ('active', 'suspended')",
-    )
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "status",
+                sa.String(length=32),
+                nullable=False,
+                server_default="active",
+            )
+        )
+        batch_op.add_column(
+            sa.Column("suspended_at", sa.DateTime(timezone=True), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("suspended_reason", sa.String(length=500), nullable=True)
+        )
+        batch_op.create_check_constraint(
+            "ck_users_status_valid",
+            "status IN ('active', 'suspended')",
+        )
 
-    op.add_column(
-        "users", sa.Column("suspended_at", sa.DateTime(timezone=True), nullable=True)
-    )
-    op.add_column(
-        "users", sa.Column("suspended_reason", sa.String(length=500), nullable=True)
-    )
-
-    op.add_column(
-        "organisations",
-        sa.Column(
-            "status",
-            sa.String(length=32),
-            nullable=False,
-            server_default="active",
-        ),
-    )
-    op.create_check_constraint(
-        "ck_organisations_status_valid",
-        "organisations",
-        "status IN ('active', 'suspended')",
-    )
-
-    op.add_column(
-        "organisations",
-        sa.Column("suspended_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "organisations",
-        sa.Column("suspended_reason", sa.String(length=500), nullable=True),
-    )
+    with op.batch_alter_table("organisations") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "status",
+                sa.String(length=32),
+                nullable=False,
+                server_default="active",
+            )
+        )
+        batch_op.add_column(
+            sa.Column("suspended_at", sa.DateTime(timezone=True), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("suspended_reason", sa.String(length=500), nullable=True)
+        )
+        batch_op.create_check_constraint(
+            "ck_organisations_status_valid",
+            "status IN ('active', 'suspended')",
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("organisations", "suspended_reason")
-    op.drop_column("organisations", "suspended_at")
-    op.drop_constraint("ck_organisations_status_valid", "organisations", type_="check")
-    op.drop_column("organisations", "status")
+    with op.batch_alter_table("organisations") as batch_op:
+        batch_op.drop_constraint("ck_organisations_status_valid", type_="check")
+        batch_op.drop_column("suspended_reason")
+        batch_op.drop_column("suspended_at")
+        batch_op.drop_column("status")
 
-    op.drop_column("users", "suspended_reason")
-    op.drop_column("users", "suspended_at")
-    op.drop_constraint("ck_users_status_valid", "users", type_="check")
-    op.drop_column("users", "status")
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.drop_constraint("ck_users_status_valid", type_="check")
+        batch_op.drop_column("suspended_reason")
+        batch_op.drop_column("suspended_at")
+        batch_op.drop_column("status")
