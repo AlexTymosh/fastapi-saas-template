@@ -7,7 +7,7 @@
 1. A user may register without an organisation.
 2. A registered user without active membership is a standalone user.
 3. A standalone active user may create an organisation.
-4. When a user creates an organisation, the backend must:
+4. When a standalone user creates an organisation, the backend must:
    - create or refresh the local user projection;
    - create the organisation;
    - create an active membership for the creator;
@@ -40,15 +40,21 @@ AND no active membership exists
 ### Organisation lifecycle
 
 1. An organisation is created by a standalone user or by a platform-level administrative action.
-2. The creator becomes `owner`.
-3. Organisation ownership cannot be transferred through tenant/business API.
-4. The `owner` cannot be removed through tenant/business API.
-5. The `owner` cannot be demoted to `admin` or `member`.
-6. Only the `owner` may delete the organisation.
-7. `owner` and `admin` may update organisation `name`.
-8. `owner` and `admin` may update organisation `slug`.
-9. A suspended organisation must block ordinary tenant actions.
-10. A deleted organisation must be inaccessible through ordinary tenant endpoints.
+2. If a standalone tenant user creates an organisation, that creator becomes `owner`.
+3. If an organisation is created by a platform-level administrative action, the platform actor must not become a tenant owner automatically.
+4. Platform roles must not create tenant membership implicitly.
+5. Platform creation endpoint must require explicit initial owner assignment (`initial_owner_user_id` or `initial_owner_email`).
+6. A temporarily ownerless organisation is allowed only as a special bootstrap/operational state and must not be the default flow.
+7. Organisation ownership cannot be transferred through tenant/business API.
+8. The `owner` cannot be removed through tenant/business API.
+9. The `owner` cannot be demoted to `admin` or `member`.
+10. Only the `owner` may delete the organisation.
+11. `owner` and `admin` may update organisation `name`.
+12. `owner` and `admin` may update organisation `slug`.
+13. A `member` cannot update organisation `name` or `slug`.
+14. A standalone user cannot update organisation `name` or `slug`.
+15. A suspended organisation must block ordinary tenant actions.
+16. A deleted organisation must be inaccessible through ordinary tenant endpoints.
 
 ### Status model
 
@@ -68,7 +74,7 @@ deleted_at = soft deletion marker
 
 ---
 
-## 3. Membership rules
+## 3. Membership and directory rules
 
 ### Roles
 
@@ -93,6 +99,8 @@ The `owner` may:
 - view organisation;
 - update organisation name;
 - update organisation slug;
+- read organisation directory;
+- read membership management list;
 - invite members;
 - invite admins;
 - promote member to admin;
@@ -115,6 +123,8 @@ The `admin` may:
 - view organisation;
 - update organisation name;
 - update organisation slug;
+- read organisation directory;
+- read membership management list;
 - invite members;
 - remove members.
 
@@ -132,15 +142,75 @@ The `admin` may not:
 
 The `member` may:
 
-- view organisation.
+- view organisation;
+- read organisation directory.
 
 The `member` may not:
 
 - update organisation;
 - invite users;
+- read membership management list;
 - manage memberships;
 - delete organisation;
 - perform platform actions.
+
+### Tenant endpoint concepts
+
+#### A) Organisation directory
+
+```text
+GET /api/v1/organisations/{organisation_id}/directory
+```
+
+Access:
+
+- member: yes;
+- admin: yes;
+- owner: yes.
+
+Purpose:
+
+- Minimal colleague directory for organisation participants.
+- Privacy-aware response, without administrative/internal fields by default.
+
+Allowed example fields:
+
+- `display_name`;
+- `role_label` (public title only, if needed);
+- optional `avatar_url` in the future.
+
+Do not expose by default:
+
+- `internal user_id`;
+- `membership_id`;
+- `email`;
+- system role (`owner`/`admin`/`member`) unless explicitly required by future product logic;
+- `status`;
+- audit/security metadata.
+
+#### B) Membership management list
+
+```text
+GET /api/v1/organisations/{organisation_id}/memberships
+```
+
+Access:
+
+- member: no;
+- admin: yes;
+- owner: yes.
+
+Purpose:
+
+- Administrative view for managing memberships and roles.
+
+May expose:
+
+- `membership_id`;
+- `user_id`;
+- `email`;
+- tenant role;
+- `is_active` / status fields, if required for management.
 
 ---
 
@@ -180,7 +250,7 @@ support_agent
 compliance_officer
 ```
 
-Platform access must be stored in the backend, not treated as a normal organisation membership.
+Platform staff access must be stored in backend data and must not be treated as organisation membership.
 
 Platform actions must go through:
 
@@ -194,48 +264,44 @@ Platform actions must not bypass:
 /api/v1/organisations/*
 ```
 
-### Platform admin
+Example:
 
-May:
+```text
+A platform_admin who is not a member of organisation X
+must receive 403 from:
+GET /api/v1/organisations/{organisation_id}
 
-- suspend/restore users;
-- suspend/restore organisations;
-- manage platform staff;
-- read audit events;
-- perform audited emergency corrections.
-
-### Support agent
-
-May:
-
-- read limited user information;
-- read limited organisation information;
-- help resolve support cases.
-
-Must not:
-
-- suspend users;
-- suspend organisations;
-- manage platform staff;
-- access unrestricted audit events.
-
-### Compliance officer
-
-May:
-
-- read audit events;
-- perform or request GDPR-related workflows;
-- read limited user/organisation information when required.
-
-Must not:
-
-- manage organisation memberships;
-- perform ordinary tenant actions;
-- manage platform staff unless explicitly allowed.
+The same actor may use:
+GET /api/v1/platform/organisations/{organisation_id}
+```
 
 ---
 
 ## 6. Audit rules
+
+Use a shared audit table for tenant and platform sensitive actions:
+
+```text
+audit_events
+- id
+- actor_user_id
+- category
+- action
+- target_type
+- target_id
+- reason
+- metadata_json
+- created_at
+```
+
+Recommended categories:
+
+```text
+tenant
+platform
+security
+compliance
+```
 
 Audit events should be written for:
 

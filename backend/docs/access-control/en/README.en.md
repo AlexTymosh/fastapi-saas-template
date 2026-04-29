@@ -25,6 +25,8 @@ The project uses two separate authorization planes:
    Internal staff act through platform-only endpoints.
 ```
 
+Platform roles are not tenant roles.
+
 Platform roles must not bypass ordinary tenant endpoints.
 
 ```text
@@ -32,11 +34,22 @@ Tenant endpoints:   /api/v1/organisations/*
 Platform endpoints: /api/v1/platform/*
 ```
 
+Example:
+
+```text
+A platform_admin who is not a member of organisation X
+must receive 403 from:
+GET /api/v1/organisations/{organisation_id}
+
+The same actor may use:
+GET /api/v1/platform/organisations/{organisation_id}
+```
+
 ## Documents
 
 | File | Purpose |
 |---|---|
-| `business-rules.md` | Product and domain rules for users, organisations, memberships, invites, and platform staff |
-| `role-matrix.md` | Tenant and platform permission matrices |
-| `platform-access.md` | Platform staff model, permissions, bootstrap, and audit rules |
-| `implementation-plan.md` | Step-by-step code change plan |
+| `business-rules.en.md` | Product and domain rules for users, organisations, memberships, invites, and platform staff |
+| `role-matrix.en.md` | Tenant and platform permission matrices |
+| `platform-access.en.md` | Platform staff model, permissions, bootstrap, and audit rules |
+| `implementation-plan.en.md` | Step-by-step code change plan |
