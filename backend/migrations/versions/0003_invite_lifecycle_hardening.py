@@ -1,17 +1,19 @@
 """invite lifecycle hardening
 
-Revision ID: 0003_invite_lifecycle_hardening
-Revises: 0002_add_user_org_statuses
+Revision ID: 0003
+Revises: 0002
 Create Date: 2026-04-29
 """
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0003_invite_lifecycle_hardening"
-down_revision = "0002_add_user_org_statuses"
-branch_labels = None
-depends_on = None
+revision: str = "0003"
+down_revision: str | None = "0002"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -27,12 +29,20 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
+
+    dialect = op.get_bind().dialect.name
+    create_index_kwargs: dict[str, sa.TextClause] = {}
+    if dialect == "postgresql":
+        create_index_kwargs["postgresql_where"] = sa.text("status = 'pending'")
+    elif dialect == "sqlite":
+        create_index_kwargs["sqlite_where"] = sa.text("status = 'pending'")
+
     op.create_index(
         "uq_invites_org_email_pending",
         "invites",
         [sa.text("organisation_id"), sa.text("lower(email)")],
         unique=True,
-        postgresql_where=sa.text("status = 'pending'"),
+        **create_index_kwargs,
     )
 
 
