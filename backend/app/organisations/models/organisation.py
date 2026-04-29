@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import enum
+from enum import StrEnum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, String
+from sqlalchemy import CheckConstraint, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base
@@ -14,13 +14,19 @@ if TYPE_CHECKING:
     from app.memberships.models.membership import Membership
 
 
-class OrganisationStatus(str, enum.Enum):
+class OrganisationStatus(StrEnum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
 
 
 class Organisation(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "organisations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'suspended')",
+            name="ck_organisations_status_valid",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
@@ -29,7 +35,7 @@ class Organisation(UUIDMixin, TimestampMixin, Base):
         nullable=True,
     )
     status: Mapped[OrganisationStatus] = mapped_column(
-        Enum(OrganisationStatus, native_enum=False),
+        String(32),
         nullable=False,
         default=OrganisationStatus.ACTIVE,
         server_default=OrganisationStatus.ACTIVE.value,
