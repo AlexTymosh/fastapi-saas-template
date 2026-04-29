@@ -298,6 +298,28 @@ def test_admin_and_owner_roles_exist_in_enum() -> None:
     assert MembershipRole.OWNER.value == "owner"
 
 
+def test_unverified_email_cannot_create_organisation(tmp_path) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    auth_provider.set_identity(
+        _identity_for(
+            external_auth_id="kc-unverified",
+            email="unverified@example.com",
+            email_verified=False,
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Blocked Org", "slug": "blocked-unverified"},
+        )
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    run_async(engine.dispose())
+
+
 def test_organisation_slug_conflict_returns_problem_details(tmp_path) -> None:
     app, engine, _, _ = _create_client_and_session_factory(tmp_path)
 

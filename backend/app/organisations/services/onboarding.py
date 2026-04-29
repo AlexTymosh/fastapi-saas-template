@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_guards import ensure_email_verified
 from app.core.auth import AuthenticatedPrincipal
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
@@ -28,6 +29,7 @@ class OnboardingService:
         async with self.session.begin():
             user = await self.user_service.get_or_create_current_user(identity)
             await self.user_service.ensure_user_is_active(user)
+            ensure_email_verified(identity)
             await self.membership_service.ensure_user_can_create_organisation(
                 user_id=user.id
             )

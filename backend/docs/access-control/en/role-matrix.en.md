@@ -74,19 +74,19 @@ compliance_officer
 | Permission / capability | Support agent | Compliance officer | Platform admin |
 |---|---:|---:|---:|
 | `users:read` | No | No | Yes |
-| `users:read_limited` | Yes | Yes | No |
+| `users:read_limited` | Yes | Yes | Yes |
 | `users:suspend` | No | No | Yes |
 | `users:restore` | No | No | Yes |
 | `users:correct_profile` | No | No | Yes |
 | `organisations:read` | No | No | Yes |
-| `organisations:read_limited` | Yes | Yes | No |
+| `organisations:read_limited` | Yes | Yes | Yes |
 | `organisations:suspend` | No | No | Yes |
 | `organisations:restore` | No | No | Yes |
 | `organisations:correct_profile` | No | No | Yes |
 | `organisations:emergency_owner_correction` | No | No | Yes |
 | `platform_staff:manage` | No | No | Yes |
 | `audit:read` | No | Yes | Yes |
-| `audit:read_limited` | Optional, support-case scoped only | No | No |
+| `audit:read_limited` | Optional, support-case scoped only | No | Yes |
 | `gdpr:export` | No | Yes | Yes |
 | `gdpr:erase` | No | With approval / explicit workflow | Yes |
 

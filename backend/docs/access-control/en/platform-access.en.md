@@ -97,16 +97,19 @@ Recommended role mapping:
 ```text
 platform_admin:
 - users:read
+- users:read_limited
 - users:suspend
 - users:restore
 - users:correct_profile
 - organisations:read
+- organisations:read_limited
 - organisations:suspend
 - organisations:restore
 - organisations:correct_profile
 - organisations:emergency_owner_correction
 - platform_staff:manage
 - audit:read
+- audit:read_limited
 - gdpr:export
 - gdpr:erase
 
@@ -119,6 +122,7 @@ compliance_officer:
 - users:read_limited
 - organisations:read_limited
 - audit:read
+- audit:read_limited
 - gdpr:export
 - gdpr:erase (only with approval or explicit future workflow)
 ```

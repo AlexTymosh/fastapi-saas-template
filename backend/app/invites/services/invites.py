@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access_guards import ensure_organisation_active
+from app.core.access_guards import ensure_email_verified, ensure_organisation_active
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.invites.models.invite import Invite, InviteStatus
@@ -163,6 +163,8 @@ class InviteService:
             raise ForbiddenError(
                 detail="Invite email does not match authenticated user"
             )
+
+        ensure_email_verified(identity)
 
         user = await self.user_service.get_or_create_current_user(identity=identity)
         await self.user_service.ensure_user_is_active(user)
