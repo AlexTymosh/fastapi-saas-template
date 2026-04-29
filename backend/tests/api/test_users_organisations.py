@@ -1002,3 +1002,103 @@ def test_suspended_organisation_returns_403_for_get(
     with bundle.client as client:
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
+
+
+def test_directory_response_hides_system_roles_and_sensitive_fields(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner = _identity_for(
+        "kc-dir-owner", "dir-owner@example.com", first_name="John", last_name="Smith"
+    )
+    bundle = authenticated_client_factory(
+        identity=owner, database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Directory Org", "slug": "directory-org"},
+        )
+        assert created.status_code == 201
+        organisation_id = created.json()["id"]
+
+        directory = client.get(f"/api/v1/organisations/{organisation_id}/directory")
+        assert directory.status_code == 200
+        payload = directory.json()
+        assert set(payload.keys()) == {"data", "meta", "links"}
+        item = payload["data"][0]
+        assert item["role_label"] == "Organisation member"
+        assert item["display_name"] == "John Smith"
+        assert "email" not in item
+        assert "user_id" not in item
+        assert "membership_id" not in item
+        assert item["role_label"] not in {
+            "Owner",
+            "Admin",
+            "Member",
+            "owner",
+            "admin",
+            "member",
+        }
+
+
+def test_remove_membership_returns_204_and_deactivates_membership(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner = _identity_for("kc-remove-owner", "remove-owner@example.com")
+    member = _identity_for("kc-remove-member", "remove-member@example.com")
+
+    owner_bundle = authenticated_client_factory(
+        identity=owner, database_url=migrated_database_url, redis_url=None
+    )
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations", json={"name": "Removal Org", "slug": "removal-org"}
+        )
+        assert created.status_code == 201
+        organisation_id = created.json()["id"]
+
+    _provision_user_via_api(
+        authenticated_client_factory,
+        migrated_database_url=migrated_database_url,
+        identity=member,
+    )
+    _insert_membership_with_role(
+        migrated_session_factory,
+        external_auth_id=member.external_auth_id,
+        organisation_id=organisation_id,
+        role=MembershipRole.MEMBER,
+    )
+
+    async def _membership_id() -> UUID:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(Membership.id)
+                .join(User, User.id == Membership.user_id)
+                .where(User.external_auth_id == member.external_auth_id)
+            )
+            return result.scalar_one()
+
+    membership_id = run_async(_membership_id())
+
+    owner_bundle = authenticated_client_factory(
+        identity=owner, database_url=migrated_database_url, redis_url=None
+    )
+    with owner_bundle.client as client:
+        response = client.delete(
+            f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}"
+        )
+        assert response.status_code == 204
+        assert response.content == b""
+
+    async def _membership_active() -> bool:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(Membership.is_active).where(Membership.id == membership_id)
+            )
+            return result.scalar_one()
+
+    assert run_async(_membership_active()) is False
