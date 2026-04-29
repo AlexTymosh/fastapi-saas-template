@@ -154,20 +154,33 @@ def test_transfer_membership_rejects_when_user_is_last_owner() -> None:
 def test_change_membership_role_owner_can_promote_member() -> None:
     service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
-    actor = Membership(
-        user_id=uuid4(), organisation_id=uuid4(), role=MembershipRole.OWNER
-    )
+    organisation_id = uuid4()
+    actor_user_id = uuid4()
     target = Membership(
-        user_id=uuid4(),
-        organisation_id=actor.organisation_id,
-        role=MembershipRole.MEMBER,
+        user_id=uuid4(), organisation_id=organisation_id, role=MembershipRole.MEMBER
     )
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(return_value=object())
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=type("Org", (), {"status": "active"})()
+    )
+    service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+            role=MembershipRole.OWNER,
+        )
+    )
+    service.membership_repository.get_membership_by_id = AsyncMock(return_value=target)
     service.membership_repository.update_role = AsyncMock(return_value=target)
 
     run_async(
         service.change_membership_role(
-            actor_membership=actor,
-            target_membership=target,
+            organisation_id=organisation_id,
+            actor_user_id=actor_user_id,
+            membership_id=uuid4(),
             role=MembershipRole.ADMIN,
         )
     )
@@ -175,20 +188,35 @@ def test_change_membership_role_owner_can_promote_member() -> None:
 
 def test_change_membership_role_admin_is_forbidden() -> None:
     service = MembershipService(session=_session_stub())
-    actor = Membership(
-        user_id=uuid4(), organisation_id=uuid4(), role=MembershipRole.ADMIN
+    service.membership_repository = AsyncMock()
+    organisation_id = uuid4()
+    actor_user_id = uuid4()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(return_value=object())
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=type("Org", (), {"status": "active"})()
     )
-    target = Membership(
-        user_id=uuid4(),
-        organisation_id=actor.organisation_id,
-        role=MembershipRole.MEMBER,
+    service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+            role=MembershipRole.ADMIN,
+        )
+    )
+    service.membership_repository.get_membership_by_id = AsyncMock(
+        return_value=Membership(
+            user_id=uuid4(), organisation_id=organisation_id, role=MembershipRole.MEMBER
+        )
     )
 
     with pytest.raises(ForbiddenError):
         run_async(
             service.change_membership_role(
-                actor_membership=actor,
-                target_membership=target,
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=uuid4(),
                 role=MembershipRole.ADMIN,
             )
         )

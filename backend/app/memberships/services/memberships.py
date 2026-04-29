@@ -5,15 +5,20 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_guards import ensure_organisation_active
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
+from app.organisations.services.organisations import OrganisationService
+from app.users.services.users import UserService
 
 
 class MembershipService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.membership_repository = MembershipRepository(session)
+        self.user_service = UserService(session)
+        self.organisation_service = OrganisationService(session)
 
     async def create_membership(
         self,
@@ -62,30 +67,48 @@ class MembershipService:
     async def change_membership_role(
         self,
         *,
-        actor_membership: Membership,
-        target_membership: Membership,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        membership_id: UUID,
         role: MembershipRole,
     ) -> Membership:
         if self.session.in_transaction():
             return await self._change_membership_role(
-                actor_membership=actor_membership,
-                target_membership=target_membership,
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
                 role=role,
             )
         async with self.session.begin():
             return await self._change_membership_role(
-                actor_membership=actor_membership,
-                target_membership=target_membership,
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
                 role=role,
             )
 
     async def _change_membership_role(
         self,
         *,
-        actor_membership: Membership,
-        target_membership: Membership,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        membership_id: UUID,
         role: MembershipRole,
     ) -> Membership:
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        ensure_organisation_active(organisation)
+        actor_membership = await self.membership_repository.get_membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+        )
+        if actor_membership is None:
+            raise ForbiddenError(detail="You are not a member of this organisation")
+        target_membership = await self.get_membership_for_organisation(
+            membership_id=membership_id,
+            organisation_id=organisation_id,
+        )
         if role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Tenant API cannot assign owner role")
         if target_membership.role == MembershipRole.OWNER:
@@ -99,41 +122,56 @@ class MembershipService:
     async def remove_membership(
         self,
         *,
-        actor_membership: Membership,
-        target_membership: Membership,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        membership_id: UUID,
     ) -> Membership:
         if self.session.in_transaction():
             return await self._remove_membership(
-                actor_membership=actor_membership,
-                target_membership=target_membership,
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
             )
         async with self.session.begin():
             return await self._remove_membership(
-                actor_membership=actor_membership,
-                target_membership=target_membership,
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                membership_id=membership_id,
             )
 
     async def _remove_membership(
         self,
         *,
-        actor_membership: Membership,
-        target_membership: Membership,
+        organisation_id: UUID,
+        actor_user_id: UUID,
+        membership_id: UUID,
     ) -> Membership:
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        ensure_organisation_active(organisation)
+        actor_membership = await self.membership_repository.get_membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+        )
+        if actor_membership is None:
+            raise ForbiddenError(detail="You are not a member of this organisation")
+        target_membership = await self.get_membership_for_organisation(
+            membership_id=membership_id,
+            organisation_id=organisation_id,
+        )
         if target_membership.role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner membership cannot be removed")
-
         if actor_membership.role == MembershipRole.OWNER:
             return await self.membership_repository.deactivate_membership(
                 target_membership
             )
-
         if actor_membership.role == MembershipRole.ADMIN:
             if target_membership.role != MembershipRole.MEMBER:
                 raise ForbiddenError(detail="Admin can remove only members")
             return await self.membership_repository.deactivate_membership(
                 target_membership
             )
-
         raise ForbiddenError(detail="You are not allowed to remove memberships")
 
     async def get_membership_for_organisation(
@@ -199,8 +237,20 @@ class MembershipService:
 
     async def list_memberships_for_organisation(
         self,
+        *,
         organisation_id: UUID,
+        actor_user_id: UUID,
     ) -> list[Membership]:
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        organisation = await self.organisation_service.get_organisation(organisation_id)
+        ensure_organisation_active(organisation)
+        actor_membership = await self.membership_repository.get_membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+        )
+        if actor_membership is None:
+            raise ForbiddenError(detail="You are not a member of this organisation")
         return await self.membership_repository.list_memberships_for_organisation(
             organisation_id=organisation_id,
         )

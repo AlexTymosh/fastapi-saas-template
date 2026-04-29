@@ -56,5 +56,6 @@ class OrganisationAccessService:
         )
 
         return await self.membership_service.list_memberships_for_organisation(
-            organisation_id=organisation_id
+            organisation_id=organisation_id,
+            actor_user_id=user.id,
         )
