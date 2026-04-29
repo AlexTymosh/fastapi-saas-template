@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access_guards import ensure_user_active
+from app.access_control.guards import ensure_user_active
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, NotFoundError
 from app.users.models.user import User

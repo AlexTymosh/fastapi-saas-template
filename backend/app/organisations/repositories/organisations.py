@@ -51,9 +51,6 @@ class OrganisationRepository:
         await self.session.refresh(organisation)
         return organisation
 
-    async def update_slug(self, organisation: Organisation, slug: str) -> Organisation:
-        return await self.update_details(organisation, slug=slug)
-
     async def soft_delete(self, organisation: Organisation) -> Organisation:
         organisation.slug = self._build_deleted_slug(
             organisation_id=organisation.id,
