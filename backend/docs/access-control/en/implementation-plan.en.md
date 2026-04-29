@@ -16,6 +16,8 @@ Platform access:
 - compliance_officer
 ```
 
+Platform roles are not tenant roles. Platform staff access is stored in backend (`platform_staff`) and must not be treated as organisation membership. Platform actors must use `/api/v1/platform/*` and must not bypass `/api/v1/organisations/*`.
+
 ## PR 1 — Remove `superadmin` bypass from tenant flows
 
 Suggested commit:
@@ -133,8 +135,23 @@ Suggested commit:
 ### Endpoints
 
 ```text
+GET    /api/v1/organisations/{organisation_id}/directory
+GET    /api/v1/organisations/{organisation_id}/memberships
 PATCH  /api/v1/organisations/{organisation_id}/memberships/{membership_id}/role
 DELETE /api/v1/organisations/{organisation_id}/memberships/{membership_id}
+```
+
+### Listing rules
+
+```text
+Directory endpoint:
+- member/admin/owner can access
+- privacy-aware output (display_name, optional public label/avatar)
+- no default exposure of internal ids, email, system role, status, or audit metadata
+
+Membership management list:
+- admin/owner only
+- may include membership_id, user_id, email, tenant role, status
 ```
 
 ### Role update rules
@@ -179,6 +196,8 @@ member:
 - owner can remove admin/member
 - admin can remove member only
 - owner cannot be removed
+- member cannot read memberships management list
+- member can read directory
 ```
 
 ---
@@ -213,7 +232,60 @@ POST   /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend
 
 ---
 
-## PR 6 — Add platform staff foundation
+## PR 6 — Add audit trail foundation
+
+Suggested commit:
+
+```text
+🧾 feat(audit): record sensitive tenant and platform actions
+```
+
+### Add table
+
+```text
+audit_events
+- id
+- actor_user_id
+- category
+- action
+- target_type
+- target_id
+- reason
+- metadata_json
+- created_at
+```
+
+### Categories
+
+```text
+tenant
+platform
+security
+compliance
+```
+
+### Audit actions
+
+```text
+organisation_name_changed
+organisation_slug_changed
+organisation_deleted
+member_removed
+membership_role_changed
+invite_created
+invite_revoked
+invite_resent
+user_suspended
+user_restored
+organisation_suspended
+organisation_restored
+platform_staff_created
+platform_staff_removed
+```
+
+---
+
+## PR 7 — Add platform staff foundation
 
 Suggested commit:
 
@@ -262,7 +334,32 @@ require_platform_permission(permission)
 
 ---
 
-## PR 7 — Add platform administration endpoints
+## PR 8 — Add bootstrap command for first platform admin
+
+Suggested commit:
+
+```text
+🔑 chore(platform): add bootstrap command for first platform admin
+```
+
+### Add
+
+```text
+python -m app.commands.create_platform_admin --email <email>
+```
+
+### Rules
+
+```text
+- command must require existing local user
+- creates platform_staff role=platform_admin
+- writes audit event in audit_events
+- no public self-service platform admin creation
+```
+
+---
+
+## PR 9 — Add audited platform administration endpoints
 
 Suggested commit:
 
@@ -283,47 +380,31 @@ PATCH /api/v1/platform/organisations/{organisation_id}
 GET   /api/v1/platform/audit-events
 ```
 
+### Rules
+
+```text
+- all endpoints must require require_platform_permission(permission)
+- all sensitive actions must emit audit_events records
+- platform endpoints must not create implicit tenant membership
+```
+
 ---
 
-## PR 8 — Add audit trail
+## PR 10 — Remove JWT platform roles from authorization path (if still present)
 
 Suggested commit:
 
 ```text
-🧾 feat(audit): record sensitive tenant and platform actions
+🧹 refactor(authz): remove JWT platform roles from authorization path
 ```
 
-### Add table
+### Tasks
 
 ```text
-platform_audit_events
-- id
-- actor_user_id
-- action
-- target_type
-- target_id
-- reason
-- metadata_json
-- created_at
-```
-
-### Audit actions
-
-```text
-organisation_name_changed
-organisation_slug_changed
-organisation_deleted
-member_removed
-membership_role_changed
-invite_created
-invite_revoked
-invite_resent
-user_suspended
-user_restored
-organisation_suspended
-organisation_restored
-platform_staff_created
-platform_staff_removed
+- stop using JWT-only platform role claims as authorization source
+- rely on backend platform_staff + permissions as source of truth
+- keep JWT for authentication only
+- preserve tenant/platform separation tests
 ```
 
 ---
@@ -336,10 +417,13 @@ platform_staff_removed
 [ ] user can exist without organisation
 [ ] user can create organisation and become owner
 [ ] user with active membership cannot create second organisation
+[ ] platform-created organisation requires explicit initial owner assignment
 [ ] owner cannot transfer ownership
 [ ] owner cannot be removed/demoted through tenant API
 [ ] owner/admin can update organisation name
 [ ] owner/admin can update organisation slug
+[ ] owner/admin can access memberships management list
+[ ] member can access organisation directory only (not memberships management list)
 [ ] owner can invite member/admin
 [ ] admin can invite member only
 [ ] owner can remove admin/member
@@ -348,7 +432,8 @@ platform_staff_removed
 [ ] suspended user cannot perform tenant actions
 [ ] suspended organisation blocks tenant actions
 [ ] platform_staff stored in backend
+[ ] require_platform_permission(permission) introduced
+[ ] audit_events introduced for tenant + platform sensitive actions
 [ ] platform actions available only through /api/v1/platform/*
-[ ] platform actions write audit events
-[ ] tests cover role matrix
+[ ] tests cover tenant/platform separation and role matrix
 ```

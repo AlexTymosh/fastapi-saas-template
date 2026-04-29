@@ -59,7 +59,6 @@ async def create_invite(
         actor_user_id=user.id,
         role=payload.role,
         email=payload.email,
-        actor_is_superadmin=identity.is_superadmin(),
     )
     return InviteResponse.model_validate(invite)
 
@@ -86,3 +85,48 @@ async def accept_invite(
         organisation_id=membership.organisation_id,
         role=membership.role,
     )
+
+
+@router.delete(
+    "/organisations/{organisation_id}/invites/{invite_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=WRITE_ERROR_RESPONSES,
+    name="revoke_organisation_invite",
+)
+async def revoke_invite(
+    organisation_id: UUID,
+    invite_id: UUID,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+) -> None:
+    user = await UserService(db_session).provision_current_user(identity)
+    invite_service = InviteService(db_session)
+    await invite_service.revoke_invite(
+        organisation_id=organisation_id,
+        invite_id=invite_id,
+        actor_user_id=user.id,
+    )
+
+
+@router.post(
+    "/organisations/{organisation_id}/invites/{invite_id}/resend",
+    response_model=InviteResponse,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    name="resend_organisation_invite",
+)
+async def resend_invite(
+    organisation_id: UUID,
+    invite_id: UUID,
+    identity: PrincipalDep,
+    db_session: DbSessionDep,
+    token_sink: InviteTokenSinkDep,
+    _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
+) -> InviteResponse:
+    user = await UserService(db_session).provision_current_user(identity)
+    invite_service = InviteService(db_session, token_sink=token_sink)
+    invite = await invite_service.resend_invite(
+        organisation_id=organisation_id,
+        invite_id=invite_id,
+        actor_user_id=user.id,
+    )
+    return InviteResponse.model_validate(invite)

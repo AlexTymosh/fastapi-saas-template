@@ -20,6 +20,10 @@ class MembershipResponse(BaseModel):
     updated_at: datetime
 
 
+class UpdateMembershipRoleRequest(BaseModel):
+    role: MembershipRole
+
+
 class MembershipCollectionMeta(BaseModel):
     total: int
 

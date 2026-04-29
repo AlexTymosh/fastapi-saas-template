@@ -6,12 +6,14 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.invites import InviteService
 from app.memberships.models.membership import Membership, MembershipRole
+from app.organisations.models.organisation import Organisation
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
@@ -49,6 +51,7 @@ def test_accept_invite_rejects_email_mismatch() -> None:
         )
     )
     service.user_service = AsyncMock()
+    service.user_service.ensure_user_is_active = AsyncMock()
 
     with pytest.raises(ForbiddenError):
         run_async(
@@ -74,6 +77,11 @@ def test_accept_invite_provisions_missing_projection_user() -> None:
     service.user_service = AsyncMock()
     service.user_service.get_or_create_current_user = AsyncMock(
         return_value=User(external_auth_id="kc-1", email="invited@example.com")
+    )
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=Organisation(name="Acme", slug="acme")
     )
     service.membership_service = AsyncMock()
     service.membership_service.transfer_membership = AsyncMock(
@@ -109,6 +117,7 @@ def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
     service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
     service.invite_repository.mark_status = AsyncMock()
     service.user_service = AsyncMock()
+    service.user_service.ensure_user_is_active = AsyncMock()
 
     with pytest.raises(ConflictError):
         run_async(
@@ -138,6 +147,7 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
     )
     service.invite_repository.mark_status = AsyncMock()
     service.user_service = AsyncMock()
+    service.user_service.ensure_user_is_active = AsyncMock()
 
     with pytest.raises(ConflictError):
         run_async(
@@ -153,8 +163,15 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
 
 def test_create_invite_admin_cannot_assign_admin_role() -> None:
     service = _service()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="kc-1", email="actor@example.com")
+    )
+    service.user_service.ensure_user_is_active = AsyncMock()
     service.organisation_service = AsyncMock()
-    service.organisation_service.get_organisation = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=Organisation(name="Acme", slug="acme")
+    )
     service.membership_service = AsyncMock()
     service.membership_service.membership_repository = AsyncMock()
     service.membership_service.membership_repository.get_membership = AsyncMock(
@@ -172,13 +189,15 @@ def test_create_invite_admin_cannot_assign_admin_role() -> None:
                 actor_user_id=uuid4(),
                 role=MembershipRole.ADMIN,
                 email="a@example.com",
-                actor_is_superadmin=False,
             )
         )
 
 
 def test_create_invite_rejects_owner_role() -> None:
     service = _service()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock()
+    service.user_service.ensure_user_is_active = AsyncMock()
     service.organisation_service = AsyncMock()
     service.organisation_service.get_organisation = AsyncMock()
 
@@ -189,6 +208,91 @@ def test_create_invite_rejects_owner_role() -> None:
                 actor_user_id=uuid4(),
                 role=MembershipRole.OWNER,
                 email="a@example.com",
-                actor_is_superadmin=True,
+            )
+        )
+
+
+def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> None:
+    service = _service()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="kc-1", email="owner@example.com")
+    )
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=Organisation(name="Acme", slug="acme")
+    )
+    service.membership_service = AsyncMock()
+    service.membership_service.membership_repository = AsyncMock()
+    service.membership_service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=uuid4(),
+            organisation_id=uuid4(),
+            role=MembershipRole.OWNER,
+        )
+    )
+    service.invite_repository = AsyncMock()
+    invite = Invite(
+        email="invited@example.com",
+        organisation_id=uuid4(),
+        role=MembershipRole.MEMBER,
+        status=InviteStatus.PENDING,
+        token_hash="old",
+        expires_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    service.invite_repository.get_invite_for_organisation = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_status = AsyncMock()
+
+    with pytest.raises(ConflictError, match="Invite has expired"):
+        run_async(
+            service.resend_invite(
+                organisation_id=uuid4(),
+                invite_id=uuid4(),
+                actor_user_id=uuid4(),
+            )
+        )
+
+    service.invite_repository.mark_status.assert_awaited_once_with(
+        invite, InviteStatus.EXPIRED
+    )
+    assert invite.token_hash == "old"
+
+
+def test_create_invite_translates_integrity_error_to_conflict() -> None:
+    service = _service()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="kc-1", email="owner@example.com")
+    )
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=Organisation(name="Acme", slug="acme")
+    )
+    service.membership_service = AsyncMock()
+    service.membership_service.membership_repository = AsyncMock()
+    service.membership_service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=uuid4(),
+            organisation_id=uuid4(),
+            role=MembershipRole.OWNER,
+        )
+    )
+    service.invite_repository = AsyncMock()
+    service.invite_repository.get_pending_invite_by_email = AsyncMock(return_value=None)
+    service.invite_repository.create_invite = AsyncMock(
+        side_effect=IntegrityError("stmt", {}, Exception("duplicate"))
+    )
+
+    with pytest.raises(ConflictError, match="Pending invite already exists"):
+        run_async(
+            service.create_invite(
+                organisation_id=uuid4(),
+                actor_user_id=uuid4(),
+                role=MembershipRole.MEMBER,
+                email="invitee@example.com",
             )
         )

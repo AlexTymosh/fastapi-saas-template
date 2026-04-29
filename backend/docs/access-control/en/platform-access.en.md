@@ -68,24 +68,28 @@ suspended
 
 ## 4. Permission mapping
 
-Recommended permissions:
+Recommended permissions (strict enum-like names):
 
 ```text
 users:read
+users:read_limited
 users:suspend
 users:restore
+users:correct_profile
 
 organisations:read
+organisations:read_limited
 organisations:suspend
 organisations:restore
+organisations:correct_profile
+organisations:emergency_owner_correction
 
 platform_staff:manage
 audit:read
+audit:read_limited
 
 gdpr:export
 gdpr:erase
-
-data:correct
 ```
 
 Recommended role mapping:
@@ -93,26 +97,34 @@ Recommended role mapping:
 ```text
 platform_admin:
 - users:read
+- users:read_limited
 - users:suspend
 - users:restore
+- users:correct_profile
 - organisations:read
+- organisations:read_limited
 - organisations:suspend
 - organisations:restore
+- organisations:correct_profile
+- organisations:emergency_owner_correction
 - platform_staff:manage
 - audit:read
+- audit:read_limited
 - gdpr:export
 - gdpr:erase
-- data:correct
 
 support_agent:
-- users:read limited
-- organisations:read limited
+- users:read_limited
+- organisations:read_limited
+- audit:read_limited (only if required for support cases)
 
 compliance_officer:
-- users:read limited
-- organisations:read limited
+- users:read_limited
+- organisations:read_limited
 - audit:read
+- audit:read_limited
 - gdpr:export
+- gdpr:erase (only with approval or explicit future workflow)
 ```
 
 ## 5. Platform actor resolution
@@ -132,7 +144,7 @@ If any check fails, return 403, except missing/invalid JWT which should return 4
 
 ## 6. Endpoint separation
 
-Platform actions must use dedicated routes:
+Platform actors must use dedicated routes:
 
 ```text
 /api/v1/platform/users/*
@@ -143,7 +155,31 @@ Platform actions must use dedicated routes:
 
 Platform actors must not bypass ordinary tenant endpoints.
 
-## 7. Bootstrap first platform admin
+A `platform_admin` who is not a member of organisation X must receive `403` from:
+
+```text
+GET /api/v1/organisations/{organisation_id}
+```
+
+The same actor may use a dedicated platform endpoint:
+
+```text
+GET /api/v1/platform/organisations/{organisation_id}
+```
+
+## 7. Platform-created organisations and initial owner assignment
+
+When a standalone tenant user creates an organisation, that creator becomes `owner`.
+
+When a platform actor creates an organisation through a platform endpoint:
+
+- the platform actor must not become tenant owner automatically;
+- platform roles must not create tenant membership implicitly;
+- the endpoint must require explicit initial owner assignment via `initial_owner_user_id` or `initial_owner_email`.
+
+Ownerless organisation creation is a special bootstrap/operational case and must not be the default path.
+
+## 8. Bootstrap first platform admin
 
 The first platform admin should be created by a management command, not by public API.
 
@@ -163,22 +199,32 @@ Expected behaviour:
 
 Do not allow public self-service creation of `platform_admin`.
 
-## 8. Audit requirements
+## 9. Audit requirements
 
 All platform actions must write audit events.
 
-Recommended table:
+Shared audit table for tenant + platform sensitive actions:
 
 ```text
-platform_audit_events
+audit_events
 - id
 - actor_user_id
+- category
 - action
 - target_type
 - target_id
 - reason
 - metadata_json
 - created_at
+```
+
+Recommended categories:
+
+```text
+tenant
+platform
+security
+compliance
 ```
 
 Recommended audited actions:
@@ -196,7 +242,7 @@ gdpr_export_requested
 gdpr_erasure_requested
 ```
 
-## 9. Emergency owner correction
+## 10. Emergency owner correction
 
 Tenant API must not support ownership transfer.
 
@@ -209,7 +255,7 @@ POST /api/v1/platform/organisations/{organisation_id}/owner-correction
 Requirements:
 
 ```text
-- platform_admin only;
+- organisations:emergency_owner_correction permission;
 - mandatory reason;
 - audit event required;
 - no ordinary tenant endpoint;

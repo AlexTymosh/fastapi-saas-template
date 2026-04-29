@@ -36,8 +36,17 @@ class OrganisationRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def update_slug(self, organisation: Organisation, slug: str) -> Organisation:
-        organisation.slug = slug
+    async def update_details(
+        self,
+        organisation: Organisation,
+        *,
+        name: str | None = None,
+        slug: str | None = None,
+    ) -> Organisation:
+        if name is not None:
+            organisation.name = name
+        if slug is not None:
+            organisation.slug = slug
         await self.session.flush()
         await self.session.refresh(organisation)
         return organisation

@@ -40,15 +40,20 @@ AND no active membership exists
 ### Organisation lifecycle
 
 1. An organisation is created by a standalone user or by a platform-level administrative action.
-2. The creator becomes `owner`.
-3. Organisation ownership cannot be transferred through tenant/business API.
-4. The `owner` cannot be removed through tenant/business API.
-5. The `owner` cannot be demoted to `admin` or `member`.
-6. Only the `owner` may delete the organisation.
-7. `owner` and `admin` may update organisation `name`.
-8. `owner` and `admin` may update organisation `slug`.
-9. A suspended organisation must block ordinary tenant actions.
-10. A deleted organisation must be inaccessible through ordinary tenant endpoints.
+2. If created by a standalone tenant user, the creator becomes `owner`.
+3. If created by a platform-level administrative action:
+   - the platform actor must not become a tenant `owner` automatically;
+   - platform roles must not create tenant membership implicitly;
+   - the endpoint must require explicit initial owner assignment via `initial_owner_user_id` or `initial_owner_email`.
+4. Temporary ownerless creation is a special bootstrap/operational state only and must not be the default.
+5. Organisation ownership cannot be transferred through tenant/business API.
+6. The `owner` cannot be removed through tenant/business API.
+7. The `owner` cannot be demoted to `admin` or `member`.
+8. Only the `owner` may delete the organisation.
+9. `owner` and `admin` may update organisation `name` and `slug`.
+10. `member` and standalone user may not update organisation `name` or `slug`.
+11. A suspended organisation must block ordinary tenant actions.
+12. A deleted organisation must be inaccessible through ordinary tenant endpoints.
 
 ### Status model
 
@@ -91,6 +96,8 @@ member
 The `owner` may:
 
 - view organisation;
+- view organisation directory;
+- view membership management list;
 - update organisation name;
 - update organisation slug;
 - invite members;
@@ -113,6 +120,8 @@ The `owner` may not:
 The `admin` may:
 
 - view organisation;
+- view organisation directory;
+- view membership management list;
 - update organisation name;
 - update organisation slug;
 - invite members;
@@ -132,15 +141,74 @@ The `admin` may not:
 
 The `member` may:
 
-- view organisation.
+- view organisation;
+- view organisation directory.
 
 The `member` may not:
 
-- update organisation;
+- view membership management list;
+- update organisation name or slug;
 - invite users;
 - manage memberships;
 - delete organisation;
 - perform platform actions.
+
+### Directory vs membership management list
+
+#### Organisation directory
+
+Endpoint concept:
+
+```text
+GET /api/v1/organisations/{organisation_id}/directory
+```
+
+Access:
+
+- member: yes
+- admin: yes
+- owner: yes
+
+Purpose: minimal, privacy-aware colleague directory for organisation participants.
+
+Allowed example fields:
+
+- display_name
+- role_label or public title (if needed)
+- optional avatar_url in the future
+
+Do not expose by default:
+
+- internal `user_id`
+- `membership_id`
+- email
+- system membership role (`owner` / `admin` / `member`) unless explicitly required by future product logic
+- status fields
+- audit/security metadata
+
+#### Membership management list
+
+Endpoint concept:
+
+```text
+GET /api/v1/organisations/{organisation_id}/memberships
+```
+
+Access:
+
+- member: no
+- admin: yes
+- owner: yes
+
+Purpose: administrative view for managing memberships and roles.
+
+May expose:
+
+- `membership_id`
+- `user_id`
+- email
+- tenant role
+- `is_active` / status fields (if required for management)
 
 ---
 
@@ -194,6 +262,18 @@ Platform actions must not bypass:
 /api/v1/organisations/*
 ```
 
+A `platform_admin` who is not a member of organisation X must receive `403` from:
+
+```text
+GET /api/v1/organisations/{organisation_id}
+```
+
+The same actor may use:
+
+```text
+GET /api/v1/platform/organisations/{organisation_id}
+```
+
 ### Platform admin
 
 May:
@@ -237,7 +317,7 @@ Must not:
 
 ## 6. Audit rules
 
-Audit events should be written for:
+Audit events (`audit_events`) should be written for:
 
 - organisation name changed;
 - organisation slug changed;

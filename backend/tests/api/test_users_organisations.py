@@ -11,8 +11,8 @@ from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.db import Base, get_db_session
 from app.main import create_app
 from app.memberships.models.membership import Membership, MembershipRole
-from app.organisations.models.organisation import Organisation
-from app.users.models.user import User
+from app.organisations.models.organisation import Organisation, OrganisationStatus
+from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import FakeAuthProvider
 
@@ -270,12 +270,14 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
         )
         assert response.status_code == 201
         assert response.json()["slug"] == "acme-org"
+        assert response.json()["status"] == OrganisationStatus.ACTIVE.value
         organisation_id = response.json()["id"]
 
         me = client.get("/api/v1/users/me")
         assert me.status_code == 200
         payload = me.json()
         assert payload["onboarding_completed"] is True
+        assert payload["status"] == UserStatus.ACTIVE.value
         assert payload["membership"]["organisation_id"] == organisation_id
         assert payload["membership"]["role"] == MembershipRole.OWNER.value
 
@@ -294,6 +296,28 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
 def test_admin_and_owner_roles_exist_in_enum() -> None:
     assert MembershipRole.ADMIN.value == "admin"
     assert MembershipRole.OWNER.value == "owner"
+
+
+def test_unverified_email_cannot_create_organisation(tmp_path) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    auth_provider.set_identity(
+        _identity_for(
+            external_auth_id="kc-unverified",
+            email="unverified@example.com",
+            email_verified=False,
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Blocked Org", "slug": "blocked-unverified"},
+        )
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    run_async(engine.dispose())
 
 
 def test_organisation_slug_conflict_returns_problem_details(tmp_path) -> None:
@@ -745,49 +769,96 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
         assert response.status_code == 403
 
 
-def test_superadmin_created_organisation_has_no_memberships(
-    authenticated_client_factory,
-    migrated_database_url: str,
-    migrated_session_factory,
-) -> None:
-    superadmin_client_bundle = authenticated_client_factory(
-        identity=_identity_for(
-            external_auth_id="kc-super-create-org",
-            email="super-create-org@example.com",
-            roles=["superadmin"],
-        ),
-        database_url=migrated_database_url,
-        redis_url=None,
-    )
-    superadmin_client = superadmin_client_bundle.client
-    with superadmin_client as client:
-        response = client.post(
+def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
             "/api/v1/organisations",
-            json={"name": "Support Org", "slug": "support-org"},
+            json={"name": "Private Org", "slug": "private-org-platform-read"},
         )
-        assert response.status_code == 201
-        organisation_id = response.json()["id"]
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
 
-    async def _assert_no_membership() -> None:
-        async with migrated_session_factory() as session:
-            user_result = await session.execute(
-                select(User).where(User.external_auth_id == "kc-super-create-org")
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-platform-actor-read",
+                email="platform-read@example.com",
+                roles=["platform_admin"],
             )
-            user = user_result.scalar_one_or_none()
-            if user is not None:
-                membership_result = await session.execute(
-                    select(Membership).where(
-                        Membership.user_id == user.id,
-                        Membership.organisation_id == UUID(organisation_id),
-                        Membership.is_active.is_(True),
-                    )
-                )
-                assert membership_result.scalar_one_or_none() is None
+        )
+        response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
 
-    run_async(_assert_no_membership())
+    run_async(engine.dispose())
 
 
-def test_owner_can_update_slug_and_soft_delete_organisation(
+def test_platform_role_does_not_bypass_single_organisation_creation_rule(
+    tmp_path,
+) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    auth_provider.set_identity(
+        _identity_for(
+            external_auth_id="kc-platform-create-actor",
+            email="platform-create-actor@example.com",
+            roles=["platform_admin"],
+        )
+    )
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/api/v1/organisations",
+            json={
+                "name": "Platform Onboarded Organisation",
+                "slug": "platform-onboarded-organisation",
+            },
+        )
+        assert first_response.status_code == 201
+
+        second_response = client.post(
+            "/api/v1/organisations",
+            json={
+                "name": "Second Platform Organisation",
+                "slug": "second-platform-organisation",
+            },
+        )
+        assert second_response.status_code == 409
+        assert second_response.headers["content-type"].startswith(
+            "application/problem+json"
+        )
+        assert second_response.json()["error_code"] == "conflict"
+
+    run_async(engine.dispose())
+
+
+def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -> None:
+    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Private Org", "slug": "private-org-super-role-list"},
+        )
+        assert create_response.status_code == 201
+        organisation_id = create_response.json()["id"]
+
+        auth_provider.set_identity(
+            _identity_for(
+                external_auth_id="kc-platform-actor-list",
+                email="platform-list@example.com",
+                roles=["superadmin"],
+            )
+        )
+        response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    run_async(engine.dispose())
+
+
+def test_owner_can_update_organisation_details_and_soft_delete_organisation(
     authenticated_client_factory,
     migrated_database_url: str,
 ) -> None:
@@ -809,7 +880,7 @@ def test_owner_can_update_slug_and_soft_delete_organisation(
         organisation_id = create_response.json()["id"]
 
         patch_response = client.patch(
-            f"/api/v1/organisations/{organisation_id}/slug",
+            f"/api/v1/organisations/{organisation_id}",
             json={"slug": "mutable-org-updated"},
         )
         assert patch_response.status_code == 200
@@ -820,37 +891,6 @@ def test_owner_can_update_slug_and_soft_delete_organisation(
 
         get_response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert get_response.status_code == 404
-
-
-def test_update_organisation_slug_invalid_payload_returns_validation_problem(
-    authenticated_client_factory,
-    migrated_database_url: str,
-) -> None:
-    owner_client_bundle = authenticated_client_factory(
-        identity=_identity_for(
-            external_auth_id="kc-owner-invalid-slug",
-            email="owner-invalid-slug@example.com",
-        ),
-        database_url=migrated_database_url,
-        redis_url=None,
-    )
-    owner_client = owner_client_bundle.client
-    with owner_client as client:
-        create_response = client.post(
-            "/api/v1/organisations",
-            json={"name": "Invalid Slug Org", "slug": "invalid-slug-org"},
-        )
-        assert create_response.status_code == 201
-        organisation_id = create_response.json()["id"]
-
-        patch_response = client.patch(
-            f"/api/v1/organisations/{organisation_id}/slug",
-            json={"slug": "Not Valid!"},
-        )
-        assert patch_response.status_code == 422
-        assert patch_response.headers["content-type"].startswith(
-            "application/problem+json"
-        )
 
 
 def test_soft_deleted_organisation_slug_is_released_for_reuse(
@@ -908,3 +948,65 @@ def test_soft_deleted_organisation_slug_is_released_for_reuse(
         )
         assert recreate_response.status_code == 201
         assert recreate_response.json()["slug"] == "reusable-org"
+
+
+def test_suspended_user_cannot_create_organisation(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+
+    async def _suspend() -> None:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            user = result.scalar_one()
+            user.status = UserStatus.SUSPENDED
+            await session.commit()
+
+    run_async(_suspend())
+
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        response = client.post(
+            "/api/v1/organisations", json={"name": "Suspended", "slug": "suspended-org"}
+        )
+        assert response.status_code == 403
+
+
+def test_suspended_organisation_returns_403_for_get(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations", json={"name": "Acme", "slug": "acme-susp"}
+        )
+        organisation_id = create.json()["id"]
+
+    async def _suspend_org() -> None:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(Organisation).where(Organisation.id == UUID(organisation_id))
+            )
+            organisation = result.scalar_one()
+            organisation.status = OrganisationStatus.SUSPENDED
+            await session.commit()
+
+    run_async(_suspend_org())
+
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        response = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 403

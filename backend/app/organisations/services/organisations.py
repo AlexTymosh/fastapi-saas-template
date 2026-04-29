@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.access_control.guards import ensure_organisation_active
 from app.core.errors.exceptions import (
     BadRequestError,
     ConflictError,
@@ -16,6 +17,7 @@ from app.memberships.models.membership import MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 from app.organisations.models.organisation import Organisation
 from app.organisations.repositories.organisations import OrganisationRepository
+from app.users.services.users import UserService
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
@@ -25,6 +27,7 @@ class OrganisationService:
         self.session = session
         self.organisation_repository = OrganisationRepository(session)
         self.membership_repository = MembershipRepository(session)
+        self.user_service = UserService(session)
 
     @staticmethod
     def normalize_name(raw_name: str) -> str:
@@ -74,34 +77,41 @@ class OrganisationService:
             raise NotFoundError(detail="Organisation not found")
         return organisation
 
-    async def update_slug(
+    async def update_organisation_details(
         self,
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
-        slug: str,
+        name: str | None = None,
+        slug: str | None = None,
     ) -> Organisation:
         if self.session.in_transaction():
-            return await self._update_slug(
+            return await self._update_organisation_details(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                name=name,
                 slug=slug,
             )
         async with self.session.begin():
-            return await self._update_slug(
+            return await self._update_organisation_details(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                name=name,
                 slug=slug,
             )
 
-    async def _update_slug(
+    async def _update_organisation_details(
         self,
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
-        slug: str,
+        name: str | None = None,
+        slug: str | None = None,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        ensure_organisation_active(organisation)
         membership = await self.membership_repository.get_membership(
             user_id=actor_user_id,
             organisation_id=organisation_id,
@@ -109,14 +119,16 @@ class OrganisationService:
         allowed_roles = {MembershipRole.OWNER, MembershipRole.ADMIN}
         if membership is None or membership.role not in allowed_roles:
             raise ForbiddenError(
-                detail="You are not allowed to update organisation slug"
+                detail="You are not allowed to update organisation details"
             )
 
-        normalized_slug = self.normalize_slug(slug)
+        normalized_name = self.normalize_name(name) if name is not None else None
+        normalized_slug = self.normalize_slug(slug) if slug is not None else None
         try:
-            return await self.organisation_repository.update_slug(
+            return await self.organisation_repository.update_details(
                 organisation,
-                normalized_slug,
+                name=normalized_name,
+                slug=normalized_slug,
             )
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc
@@ -145,6 +157,9 @@ class OrganisationService:
         actor_user_id: UUID,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
+        actor_user = await self.user_service.get_user_by_id(actor_user_id)
+        await self.user_service.ensure_user_is_active(actor_user)
+        ensure_organisation_active(organisation)
         membership = await self.membership_repository.get_membership(
             user_id=actor_user_id,
             organisation_id=organisation_id,
