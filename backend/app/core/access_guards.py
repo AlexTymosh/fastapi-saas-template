@@ -5,6 +5,8 @@ from app.core.errors.exceptions import ForbiddenError
 from app.organisations.models.organisation import Organisation, OrganisationStatus
 from app.users.models.user import User, UserStatus
 
+# TODO: Move domain-specific guards out of core in a follow-up refactor.
+
 
 def ensure_user_active(user: User) -> None:
     if user.status == UserStatus.SUSPENDED:

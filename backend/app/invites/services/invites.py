@@ -195,6 +195,9 @@ class InviteService:
                 and invite.role == MembershipRole.ADMIN
             ):
                 raise ForbiddenError(detail="Admin can resend member invites only")
+            if self._is_expired(expires_at=invite.expires_at):
+                await self.invite_repository.mark_status(invite, InviteStatus.EXPIRED)
+                raise ConflictError(detail="Invite has expired")
             token = token_urlsafe(32)
             invite.token_hash = self._token_hash(token)
             invite.expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL

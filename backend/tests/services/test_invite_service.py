@@ -209,3 +209,55 @@ def test_create_invite_rejects_owner_role() -> None:
                 email="a@example.com",
             )
         )
+
+
+def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> None:
+    service = _service()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="kc-actor", email="actor@example.com")
+    )
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=Organisation(name="Acme", slug="acme")
+    )
+    service.membership_service = AsyncMock()
+    service.membership_service.membership_repository = AsyncMock()
+    service.membership_service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=uuid4(),
+            organisation_id=uuid4(),
+            role=MembershipRole.OWNER,
+        )
+    )
+    service.invite_repository = AsyncMock()
+    invite = Invite(
+        email="invited@example.com",
+        organisation_id=uuid4(),
+        role=MembershipRole.MEMBER,
+        status=InviteStatus.PENDING,
+        token_hash="old-hash",
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    service.invite_repository.get_invite_for_organisation = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_status = AsyncMock()
+    service.session.flush = AsyncMock()
+    service.token_sink = AsyncMock()
+
+    with pytest.raises(ConflictError, match="Invite has expired"):
+        run_async(
+            service.resend_invite(
+                organisation_id=invite.organisation_id,
+                invite_id=invite.id,
+                actor_user_id=uuid4(),
+            )
+        )
+
+    service.invite_repository.mark_status.assert_awaited_once_with(
+        invite, InviteStatus.EXPIRED
+    )
+    service.session.flush.assert_not_awaited()
+    service.token_sink.deliver.assert_not_awaited()
