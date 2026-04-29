@@ -949,6 +949,27 @@ def test_suspended_user_cannot_create_organisation(
             "/api/v1/organisations", json={"name": "Suspended", "slug": "suspended-org"}
         )
         assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_unverified_user_cannot_create_organisation(
+    authenticated_client_factory, migrated_database_url: str
+) -> None:
+    bundle = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-unverified-owner",
+            email="unverified-owner@example.com",
+            email_verified=False,
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with bundle.client as client:
+        response = client.post(
+            "/api/v1/organisations", json={"name": "Unverified", "slug": "unverified"}
+        )
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
 
 
 def test_suspended_organisation_returns_403_for_get(

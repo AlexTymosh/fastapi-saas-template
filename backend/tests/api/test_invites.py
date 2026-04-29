@@ -28,11 +28,13 @@ def _identity_for(
     external_auth_id: str,
     email: str,
     roles: list[str] | None = None,
+    *,
+    email_verified: bool = True,
 ) -> AuthenticatedPrincipal:
     return AuthenticatedPrincipal(
         external_auth_id=external_auth_id,
         email=email,
-        email_verified=True,
+        email_verified=email_verified,
         platform_roles=roles or [],
     )
 
@@ -604,3 +606,43 @@ def test_suspended_organisation_blocks_invite_acceptance(
     with invitee_bundle.client as client:
         response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_unverified_user_cannot_accept_invite(
+    authenticated_client_factory, migrated_database_url: str
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-verify", "owner-verify@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+    with owner_bundle.client as client:
+        create_org = client.post(
+            "/api/v1/organisations", json={"name": "Acme", "slug": "invite-unverified"}
+        )
+        assert create_org.status_code == 201
+        organisation_id = create_org.json()["id"]
+
+        invited = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "invitee-unverified@example.com", "role": "member"},
+        )
+        assert invited.status_code == 201
+
+    token = owner_sink.token_for_email("invitee-unverified@example.com")
+
+    invitee_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-invitee-unverified",
+            "invitee-unverified@example.com",
+            email_verified=False,
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with invitee_bundle.client as client:
+        response = client.post("/api/v1/invites/accept", json={"token": token})
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
