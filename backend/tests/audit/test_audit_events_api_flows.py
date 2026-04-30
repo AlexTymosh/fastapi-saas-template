@@ -110,6 +110,7 @@ def test_invite_resend_writes_audit_event_without_sensitive_metadata(
     assert owner_sink.token_for_email("audit-member-resend@example.com")
     event = _event_by_action(migrated_session_factory, "invite_resent")
     assert event.metadata_json is not None
+    assert event.reason == "stale request"
     assert_metadata_has_no_sensitive_invite_fields(event.metadata_json)
 
 
@@ -166,8 +167,10 @@ def test_invite_revoke_writes_audit_event_without_sensitive_metadata(
             json={"email": "audit-member-revoke@example.com", "role": "member"},
         )
         invite_id = invite.json()["id"]
-        response = client.delete(
-            f"/api/v1/organisations/{organisation_id}/invites/{invite_id}"
+        response = client.request(
+            "DELETE",
+            f"/api/v1/organisations/{organisation_id}/invites/{invite_id}",
+            json={"reason": "  stale request  "},
         )
         assert response.status_code == 204
 
@@ -259,13 +262,16 @@ def test_membership_remove_writes_audit_event(
         membership_id = accept.json()["membership_id"]
 
     with owner_bundle.client as client:
-        response = client.delete(
-            f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}"
+        response = client.request(
+            "DELETE",
+            f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}",
+            json={"reason": "  access revoked  "},
         )
         assert response.status_code == 204
 
     event = _event_by_action(migrated_session_factory, "membership_removed")
     assert event.metadata_json["previous_role"] == "member"
+    assert event.reason == "access revoked"
 
 
 def test_organisation_delete_writes_audit_event(
@@ -285,11 +291,16 @@ def test_organisation_delete_writes_audit_event(
             json={"name": "Audit Org Delete", "slug": "audit-org-delete"},
         )
         organisation_id = create.json()["id"]
-        response = client.delete(f"/api/v1/organisations/{organisation_id}")
+        response = client.request(
+            "DELETE",
+            f"/api/v1/organisations/{organisation_id}",
+            json={"reason": "  tenant closure  "},
+        )
         assert response.status_code == 204
 
     event = _event_by_action(migrated_session_factory, "organisation_deleted")
     assert event.target_type == "organisation"
+    assert event.reason == "tenant closure"
     assert event.metadata_json["soft_delete"] is True
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -15,11 +15,13 @@ from app.memberships.schemas.memberships import (
     MembershipCollectionMeta,
     MembershipCollectionResponse,
     MembershipResponse,
+    RemoveMembershipRequest,
     UpdateMembershipRoleRequest,
 )
 from app.memberships.services.memberships import MembershipService
 from app.organisations.schemas.organisations import (
     CreateOrganisationRequest,
+    DeleteOrganisationRequest,
     OrganisationDirectoryItemResponse,
     OrganisationDirectoryMeta,
     OrganisationDirectoryResponse,
@@ -121,7 +123,7 @@ async def get_organisation_directory(
     data = [
         OrganisationDirectoryItemResponse(
             display_name=item.display_name,
-            role_label=item.role_label,
+            tenant_role=item.tenant_role,
         )
         for item in directory_members
     ]
@@ -168,6 +170,7 @@ async def remove_membership(
     membership_id: UUID,
     identity: PrincipalDep,
     request: Request,
+    payload: Annotated[RemoveMembershipRequest | None, Body(default=None)],
     db_session: DbSessionDep,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
@@ -178,6 +181,7 @@ async def remove_membership(
             actor_user_id=user.id, request=request
         ),
         membership_id=membership_id,
+        reason=payload.reason if payload is not None else None,
     )
     return None
 
@@ -192,6 +196,7 @@ async def delete_organisation(
     organisation_id: UUID,
     identity: PrincipalDep,
     request: Request,
+    payload: Annotated[DeleteOrganisationRequest | None, Body(default=None)],
     db_session: DbSessionDep,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
@@ -202,6 +207,7 @@ async def delete_organisation(
         audit_context=build_audit_context_from_request(
             actor_user_id=user.id, request=request
         ),
+        reason=payload.reason if payload is not None else None,
     )
 
 

@@ -291,7 +291,7 @@ def test_directory_service_returns_projection_objects() -> None:
         )
     )
     service.membership_repository.list_directory_members_for_organisation = AsyncMock(
-        return_value=[("John", "Doe")]
+        return_value=[("John", "Doe", MembershipRole.ADMIN)]
     )
 
     items = run_async(
@@ -302,5 +302,5 @@ def test_directory_service_returns_projection_objects() -> None:
 
     assert len(items) == 1
     assert items[0].display_name == "John Doe"
-    assert items[0].role_label == "Organisation member"
+    assert items[0].tenant_role == MembershipRole.ADMIN
     assert not isinstance(items[0], Membership)

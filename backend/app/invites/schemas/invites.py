@@ -52,3 +52,15 @@ class AcceptInviteResponse(BaseModel):
     membership_id: UUID
     organisation_id: UUID
     role: MembershipRole
+
+
+class RevokeInviteRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None

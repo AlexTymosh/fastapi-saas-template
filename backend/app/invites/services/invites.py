@@ -186,6 +186,7 @@ class InviteService:
         invite_id: UUID,
         actor_user_id: UUID,
         audit_context: AuditContext,
+        reason: str | None = None,
     ) -> None:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -223,6 +224,7 @@ class InviteService:
                 action=AuditAction.INVITE_REVOKED,
                 target_type=AuditTargetType.INVITE,
                 target_id=invite.id,
+                reason=reason,
                 metadata_json={
                     "organisation_id": str(organisation_id),
                     "invite_role": invite.role.value,

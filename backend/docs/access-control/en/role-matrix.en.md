@@ -40,7 +40,7 @@ A standalone user has no tenant role.
 
 | Endpoint | Member | Admin | Owner | Data scope |
 |---|---:|---:|---:|---|
-| `GET /api/v1/organisations/{organisation_id}/directory` | Yes | Yes | Yes | Minimal colleague directory (`display_name`, optional public role label, optional avatar in future). No default exposure of internal `user_id`, `membership_id`, email, system role, statuses, or audit/security metadata. |
+| `GET /api/v1/organisations/{organisation_id}/directory` | Yes | Yes | Yes | Minimal colleague directory (`display_name` and `tenant_role` (`owner`/`admin`/`member`). No default exposure of internal `user_id`, `membership_id`, email, status fields, or audit/security metadata. |
 | `GET /api/v1/organisations/{organisation_id}/memberships` | No | Yes | Yes | Administrative membership view for management: may include `membership_id`, `user_id`, email, tenant role, and status fields. |
 
 ## 4. Invite matrix

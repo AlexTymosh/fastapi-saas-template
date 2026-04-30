@@ -282,6 +282,7 @@ organisation_updated
 organisation_deleted
 membership_removed
 membership_role_changed
+invite_created
 invite_revoked
 invite_resent
 ```
