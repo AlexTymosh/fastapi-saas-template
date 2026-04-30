@@ -1,10 +1,14 @@
 import pytest
 
+from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.audit.services.audit_events import AuditEventService
-from app.core.platform.permissions import PlatformRole
+from app.core.platform.actors import PlatformActor
+from app.core.platform.permissions import PlatformPermission
 from app.organisations.models.organisation import Organisation, OrganisationStatus
+from app.platform.models.platform_staff import PlatformStaffRole
 from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.platform.services.platform_organisations import PlatformOrganisationsService
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
@@ -19,7 +23,7 @@ def _seed_platform_admin(session_factory, *, external_auth_id: str, email: str):
                 )
                 await PlatformStaffRepository(session).create_staff(
                     user_id=user.id,
-                    role=PlatformRole.PLATFORM_ADMIN.value,
+                    role=PlatformStaffRole.PLATFORM_ADMIN.value,
                 )
             return user
 
@@ -306,3 +310,41 @@ def test_platform_org_suspend_rolls_back_on_audit_failure(
             assert updated.status == OrganisationStatus.ACTIVE
 
     run_async(_verify())
+
+
+def test_suspend_organisation_does_not_commit_existing_transaction(
+    migrated_session_factory,
+) -> None:
+    admin = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-platform-org-tx",
+        email="platform-org-tx@example.com",
+    )
+    org = _seed_organisation(migrated_session_factory, name="Juliet", slug="juliet")
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_user_id(admin.id)
+                assert staff is not None
+                db_admin = await UserService(session).get_user_by_id(admin.id)
+                actor = PlatformActor(
+                    user=db_admin,
+                    staff=staff,
+                    permissions=frozenset(PlatformPermission),
+                )
+                result = await PlatformOrganisationsService(
+                    session
+                ).suspend_organisation(
+                    organisation_id=org.id,
+                    actor=actor,
+                    reason="transaction test",
+                    audit_context=AuditContext(actor_user_id=admin.id),
+                )
+                assert result.status == OrganisationStatus.SUSPENDED
+                assert session.in_transaction()
+                db_org = await session.get(Organisation, org.id)
+                assert db_org is not None
+                assert db_org.status == OrganisationStatus.SUSPENDED
+
+    run_async(_run())

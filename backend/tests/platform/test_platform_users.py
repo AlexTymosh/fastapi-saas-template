@@ -1,9 +1,13 @@
 import pytest
 
+from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.audit.services.audit_events import AuditEventService
-from app.core.platform.permissions import PlatformRole
+from app.core.platform.actors import PlatformActor
+from app.core.platform.permissions import PlatformPermission
+from app.platform.models.platform_staff import PlatformStaffRole
 from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.platform.services.platform_users import PlatformUsersService
 from app.users.models.user import User, UserStatus
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
@@ -19,7 +23,7 @@ def _seed_platform_admin(session_factory, *, external_auth_id: str, email: str):
                 )
                 await PlatformStaffRepository(session).create_staff(
                     user_id=user.id,
-                    role=PlatformRole.PLATFORM_ADMIN.value,
+                    role=PlatformStaffRole.PLATFORM_ADMIN.value,
                 )
             return user
 
@@ -118,3 +122,44 @@ def test_suspend_user_rolls_back_on_audit_failure(
             assert event is None
 
     run_async(_verify())
+
+
+def test_suspend_user_does_not_commit_existing_transaction(
+    migrated_session_factory,
+) -> None:
+    admin = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-platform-admin-tx",
+        email="platform-admin-tx@example.com",
+    )
+    target = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-target-user-tx",
+        email="target-user-tx@example.com",
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_user_id(admin.id)
+                assert staff is not None
+                db_admin = await session.get(User, admin.id)
+                assert db_admin is not None
+                actor = PlatformActor(
+                    user=db_admin,
+                    staff=staff,
+                    permissions=frozenset(PlatformPermission),
+                )
+                result = await PlatformUsersService(session).suspend_user(
+                    user_id=target.id,
+                    actor=actor,
+                    reason="transaction test",
+                    audit_context=AuditContext(actor_user_id=admin.id),
+                )
+                assert result.status == UserStatus.SUSPENDED
+                assert session.in_transaction()
+                db_target = await session.get(User, target.id)
+                assert db_target is not None
+                assert db_target.status == UserStatus.SUSPENDED
+
+    run_async(_run())

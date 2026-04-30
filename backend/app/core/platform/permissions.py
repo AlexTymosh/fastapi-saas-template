@@ -2,16 +2,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from app.platform.models.platform_staff import PlatformStaffRole
 
-class PlatformRole(StrEnum):
-    PLATFORM_ADMIN = "platform_admin"
-    SUPPORT_AGENT = "support_agent"
-    COMPLIANCE_OFFICER = "compliance_officer"
-
-
-class PlatformStaffStatus(StrEnum):
-    ACTIVE = "active"
-    SUSPENDED = "suspended"
+PlatformRole = PlatformStaffRole
 
 
 class PlatformPermission(StrEnum):

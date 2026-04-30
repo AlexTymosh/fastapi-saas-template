@@ -1,5 +1,9 @@
 # План реализации Access Control
 
+> Canonical version: `backend/docs/access-control/en/implementation-plan.en.md`.
+> Этот RU-документ синхронизирован по ключевым решениям: `audit_events`, DB-backed `platform_staff`, platform-only endpoints, и игнорирование JWT roles для backend authorization.
+
+
 ## Цель
 
 Удалить концепцию `superadmin` из tenant/business logic и ввести чистое разделение между:
@@ -330,7 +334,7 @@ Suggested commit:
 ### Add table
 
 ```text
-platform_audit_events
+audit_events
 - id
 - actor_user_id
 - action

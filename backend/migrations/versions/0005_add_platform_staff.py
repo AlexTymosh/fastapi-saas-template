@@ -26,8 +26,18 @@ def upgrade() -> None:
         sa.Column("created_by_user_id", sa.Uuid(), nullable=True),
         sa.Column("suspended_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("suspended_reason", sa.String(length=500), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.CheckConstraint(
             "role IN ('platform_admin', 'support_agent', 'compliance_officer')",
             name="ck_platform_staff_role_valid",
