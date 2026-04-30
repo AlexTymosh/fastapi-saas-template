@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.core.auth import AuthenticatedPrincipal
+from app.audit.context import AuditContext
 from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.invites import InviteService
@@ -247,11 +248,13 @@ def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
     service.invite_repository.mark_status = AsyncMock()
 
     with pytest.raises(ConflictError, match="Invite has expired"):
+        actor_user_id = uuid4()
         run_async(
             service.resend_invite(
                 organisation_id=uuid4(),
                 invite_id=uuid4(),
-                actor_user_id=uuid4(),
+                actor_user_id=actor_user_id,
+                audit_context=AuditContext(actor_user_id=actor_user_id),
             )
         )
 

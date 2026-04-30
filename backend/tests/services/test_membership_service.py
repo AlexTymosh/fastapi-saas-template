@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.audit.context import AuditContext
 from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
@@ -176,14 +177,20 @@ def test_change_membership_role_owner_can_promote_member() -> None:
     service.membership_repository.get_membership_by_id = AsyncMock(return_value=target)
     service.membership_repository.update_role = AsyncMock(return_value=target)
 
-    run_async(
-        service.change_membership_role(
-            organisation_id=organisation_id,
-            actor_user_id=actor_user_id,
-            membership_id=uuid4(),
-            role=MembershipRole.ADMIN,
+    with patch("app.memberships.services.memberships.AuditEventService") as audit_service_cls:
+        audit_service_cls.return_value.record_event = AsyncMock()
+
+        run_async(
+            service.change_membership_role(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                audit_context=AuditContext(actor_user_id=actor_user_id),
+                membership_id=uuid4(),
+                role=MembershipRole.ADMIN,
+            )
         )
-    )
+
+    audit_service_cls.return_value.record_event.assert_awaited_once()
 
 
 def test_change_membership_role_admin_is_forbidden() -> None:
@@ -216,6 +223,7 @@ def test_change_membership_role_admin_is_forbidden() -> None:
             service.change_membership_role(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                audit_context=AuditContext(actor_user_id=actor_user_id),
                 membership_id=uuid4(),
                 role=MembershipRole.ADMIN,
             )
