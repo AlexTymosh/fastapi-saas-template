@@ -168,3 +168,51 @@ def test_openapi_membership_collection_response_has_data_meta_links(
 
     meta_schema = spec["components"]["schemas"]["MembershipCollectionMeta"]
     assert "total" in meta_schema["properties"]
+
+
+def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    paths = spec["paths"]
+
+    assert "/api/v1/platform/users" in paths
+    assert "/api/v1/platform/users/{user_id}" in paths
+    assert "/api/v1/platform/users/{user_id}/suspend" in paths
+    assert "/api/v1/platform/users/{user_id}/restore" in paths
+    assert "/api/v1/platform/organisations" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}/suspend" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}/restore" in paths
+    assert "/api/v1/platform/audit-events" in paths
+
+    users_list = paths["/api/v1/platform/users"]["get"]
+    users_schema_ref = users_list["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]["$ref"]
+    assert users_schema_ref.endswith("/PlatformUsersCollectionResponse")
+    assert "403" in users_list["responses"]
+    assert "application/problem+json" in users_list["responses"]["403"]["content"]
+
+    user_suspend = paths["/api/v1/platform/users/{user_id}/suspend"]["post"]
+    assert "403" in user_suspend["responses"]
+    assert "409" in user_suspend["responses"]
+    assert "422" in user_suspend["responses"]
+    assert "application/problem+json" in user_suspend["responses"]["409"]["content"]
+
+    organisations_list = paths["/api/v1/platform/organisations"]["get"]
+    org_schema_ref = organisations_list["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]["$ref"]
+    assert org_schema_ref.endswith("/PlatformOrganisationsCollectionResponse")
+
+    org_restore = paths["/api/v1/platform/organisations/{organisation_id}/restore"][
+        "post"
+    ]
+    assert "403" in org_restore["responses"]
+    assert "409" in org_restore["responses"]
+    assert "422" in org_restore["responses"]

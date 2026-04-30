@@ -29,3 +29,15 @@ class PlatformUserResponse(BaseModel):
     suspended_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class PlatformUsersMeta(BaseModel):
+    total: int
+    limit: int
+    offset: int
+
+
+class PlatformUsersCollectionResponse(BaseModel):
+    data: list[PlatformUserResponse]
+    meta: PlatformUsersMeta
+    links: dict[str, str]
