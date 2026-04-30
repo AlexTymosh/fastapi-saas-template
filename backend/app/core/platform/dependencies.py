@@ -38,8 +38,8 @@ def require_platform_permission(
             raise ForbiddenError(detail="Platform access denied")
         try:
             role = PlatformRole(staff.role)
-        except ValueError as exc:
-            raise ForbiddenError(detail="Platform access denied") from exc
+        except ValueError:
+            raise ForbiddenError(detail="Platform access denied") from None
         role_permissions = ROLE_PERMISSIONS.get(role, frozenset())
         if permission not in role_permissions:
             raise ForbiddenError(detail="Platform access denied")
