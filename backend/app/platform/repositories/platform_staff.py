@@ -3,10 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.platform.models.platform_staff import PlatformStaff
+from app.platform.models.platform_staff import (
+    PlatformStaff,
+    PlatformStaffRole,
+    PlatformStaffStatus,
+)
 
 
 class PlatformStaffRepository:
@@ -26,12 +30,24 @@ class PlatformStaffRepository:
         return result.scalar_one_or_none()
 
     async def list_staff(
-        self, *, limit: int = 100, offset: int = 0
-    ) -> list[PlatformStaff]:
-        result = await self.session.execute(
-            select(PlatformStaff).offset(offset).limit(limit)
+        self, *, limit: int, offset: int
+    ) -> tuple[list[PlatformStaff], int]:
+        rows = (
+            (
+                await self.session.execute(
+                    select(PlatformStaff)
+                    .order_by(PlatformStaff.created_at.desc(), PlatformStaff.id.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
         )
-        return list(result.scalars().all())
+        total = (
+            await self.session.execute(select(func.count()).select_from(PlatformStaff))
+        ).scalar_one()
+        return list(rows), int(total)
 
     async def create_staff(
         self, *, user_id: UUID, role: str, created_by_user_id: UUID | None = None
@@ -39,7 +55,7 @@ class PlatformStaffRepository:
         staff = PlatformStaff(
             user_id=user_id,
             role=role,
-            status="active",
+            status=PlatformStaffStatus.ACTIVE.value,
             created_by_user_id=created_by_user_id,
         )
         self.session.add(staff)
@@ -47,16 +63,40 @@ class PlatformStaffRepository:
         await self.session.refresh(staff)
         return staff
 
-    async def update_status(
-        self, *, staff: PlatformStaff, status: str, suspended_reason: str | None = None
-    ) -> PlatformStaff:
-        staff.status = status
-        if status == "suspended":
-            staff.suspended_at = datetime.now(UTC)
-            staff.suspended_reason = suspended_reason
-        else:
-            staff.suspended_at = None
-            staff.suspended_reason = None
+    async def update_role(self, *, staff: PlatformStaff, role: str) -> PlatformStaff:
+        staff.role = role
         await self.session.flush()
         await self.session.refresh(staff)
         return staff
+
+    async def suspend_staff(
+        self, *, staff: PlatformStaff, reason: str
+    ) -> PlatformStaff:
+        staff.status = PlatformStaffStatus.SUSPENDED.value
+        staff.suspended_at = datetime.now(UTC)
+        staff.suspended_reason = reason
+        await self.session.flush()
+        await self.session.refresh(staff)
+        return staff
+
+    async def restore_staff(self, *, staff: PlatformStaff) -> PlatformStaff:
+        staff.status = PlatformStaffStatus.ACTIVE.value
+        staff.suspended_at = None
+        staff.suspended_reason = None
+        await self.session.flush()
+        await self.session.refresh(staff)
+        return staff
+
+    async def count_active_platform_admins(self) -> int:
+        return int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(PlatformStaff)
+                    .where(
+                        PlatformStaff.role == PlatformStaffRole.PLATFORM_ADMIN.value,
+                        PlatformStaff.status == PlatformStaffStatus.ACTIVE.value,
+                    )
+                )
+            ).scalar_one()
+        )

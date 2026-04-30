@@ -32,6 +32,7 @@ class AuditAction(StrEnum):
     ORGANISATION_RESTORED = "organisation_restored"
     PLATFORM_STAFF_CREATED = "platform_staff_created"
     PLATFORM_STAFF_SUSPENDED = "platform_staff_suspended"
+    PLATFORM_STAFF_ROLE_CHANGED = "platform_staff_role_changed"
     PLATFORM_STAFF_RESTORED = "platform_staff_restored"
 
 
