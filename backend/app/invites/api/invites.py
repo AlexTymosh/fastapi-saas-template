@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -25,6 +25,7 @@ from app.invites.schemas.invites import (
     AcceptInviteResponse,
     CreateInviteRequest,
     InviteResponse,
+    RevokeInviteRequest,
 )
 from app.invites.services.delivery import InviteTokenSink, get_invite_token_sink
 from app.invites.services.invites import InviteService
@@ -105,6 +106,7 @@ async def revoke_invite(
     identity: PrincipalDep,
     request: Request,
     db_session: DbSessionDep,
+    payload: Annotated[RevokeInviteRequest | None, Body(default=None)] = None,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session)
@@ -115,6 +117,7 @@ async def revoke_invite(
         audit_context=build_audit_context_from_request(
             actor_user_id=user.id, request=request
         ),
+        reason=payload.reason if payload else None,
     )
 
 

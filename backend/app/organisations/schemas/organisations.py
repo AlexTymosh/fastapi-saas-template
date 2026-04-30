@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.memberships.models.membership import MembershipRole
 from app.organisations.models.organisation import OrganisationStatus
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
@@ -71,9 +72,25 @@ class UpdateOrganisationRequest(BaseModel):
         return self
 
 
+class OptionalReasonRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class DeleteOrganisationRequest(OptionalReasonRequest):
+    pass
+
+
 class OrganisationDirectoryItemResponse(BaseModel):
     display_name: str
-    role_label: str
+    tenant_role: MembershipRole
 
 
 class OrganisationDirectoryMeta(BaseModel):

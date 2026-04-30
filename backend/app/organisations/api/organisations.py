@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -20,6 +20,7 @@ from app.memberships.schemas.memberships import (
 from app.memberships.services.memberships import MembershipService
 from app.organisations.schemas.organisations import (
     CreateOrganisationRequest,
+    OptionalReasonRequest,
     OrganisationDirectoryItemResponse,
     OrganisationDirectoryMeta,
     OrganisationDirectoryResponse,
@@ -121,7 +122,7 @@ async def get_organisation_directory(
     data = [
         OrganisationDirectoryItemResponse(
             display_name=item.display_name,
-            role_label=item.role_label,
+            tenant_role=item.tenant_role,
         )
         for item in directory_members
     ]
@@ -169,6 +170,7 @@ async def remove_membership(
     identity: PrincipalDep,
     request: Request,
     db_session: DbSessionDep,
+    payload: Annotated[OptionalReasonRequest | None, Body(default=None)] = None,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     await MembershipService(db_session).remove_membership(
@@ -178,6 +180,7 @@ async def remove_membership(
             actor_user_id=user.id, request=request
         ),
         membership_id=membership_id,
+        reason=payload.reason if payload else None,
     )
     return None
 
@@ -193,6 +196,7 @@ async def delete_organisation(
     identity: PrincipalDep,
     request: Request,
     db_session: DbSessionDep,
+    payload: Annotated[OptionalReasonRequest | None, Body(default=None)] = None,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     service = OrganisationService(db_session)
@@ -202,6 +206,7 @@ async def delete_organisation(
         audit_context=build_audit_context_from_request(
             actor_user_id=user.id, request=request
         ),
+        reason=payload.reason if payload else None,
     )
 
 

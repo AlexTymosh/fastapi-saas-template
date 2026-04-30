@@ -51,9 +51,9 @@ class MembershipRepository:
         self,
         *,
         organisation_id: UUID,
-    ) -> list[tuple[str | None, str | None]]:
+    ) -> list[tuple[str | None, str | None, MembershipRole]]:
         stmt = (
-            select(User.first_name, User.last_name)
+            select(User.first_name, User.last_name, Membership.role)
             .join(Membership, Membership.user_id == User.id)
             .where(
                 Membership.organisation_id == organisation_id,

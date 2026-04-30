@@ -20,7 +20,7 @@ from app.users.services.users import UserService
 @dataclass(frozen=True)
 class OrganisationDirectoryMember:
     display_name: str
-    role_label: str
+    tenant_role: MembershipRole
 
 
 class MembershipService:
@@ -167,6 +167,7 @@ class MembershipService:
         actor_user_id: UUID,
         audit_context: AuditContext,
         membership_id: UUID,
+        reason: str | None = None,
     ) -> Membership:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -178,6 +179,7 @@ class MembershipService:
                 actor_user_id=actor_user_id,
                 audit_context=audit_context,
                 membership_id=membership_id,
+                reason=reason,
             )
         async with self.session.begin():
             return await self._remove_membership(
@@ -185,6 +187,7 @@ class MembershipService:
                 actor_user_id=actor_user_id,
                 audit_context=audit_context,
                 membership_id=membership_id,
+                reason=reason,
             )
 
     async def _remove_membership(
@@ -194,6 +197,7 @@ class MembershipService:
         actor_user_id: UUID,
         audit_context: AuditContext,
         membership_id: UUID,
+        reason: str | None = None,
     ) -> Membership:
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
         await self.user_service.ensure_user_is_active(actor_user)
@@ -230,6 +234,7 @@ class MembershipService:
             action=AuditAction.MEMBERSHIP_REMOVED,
             target_type=AuditTargetType.MEMBERSHIP,
             target_id=removed.id,
+            reason=reason,
             metadata_json={
                 "organisation_id": str(organisation_id),
                 "removed_user_id": str(removed.user_id),

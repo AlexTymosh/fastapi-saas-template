@@ -108,3 +108,21 @@ The same actor may use a dedicated platform endpoint:
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
+
+
+## Invite delivery note
+Current invite delivery is best-effort/dev foundation: invite and audit event are persisted first; token delivery failures are logged and do not expose raw tokens. Production should move delivery to outbox/event worker + email provider integration.
+
+
+## Organisation directory contract
+`GET /api/v1/organisations/{organisation_id}/directory` is available for member/admin/owner and returns only `display_name` and `tenant_role` (owner/admin/member). Internal IDs, emails, statuses, and audit/security metadata are not returned.
+
+`GET /api/v1/organisations/{organisation_id}/memberships` remains admin/owner-only management view and may include membership_id, user_id, email, role, status.
+
+
+## Enum storage policy
+Future domain enum-like fields should use explicit string storage with DB check constraints unless there is a strong reason to use SQLAlchemy `Enum(native_enum=False)`.
+
+
+## Reason policy
+Tenant destructive/revocation actions currently accept optional `reason` and write it to audit events. Future platform write actions should require `reason`.

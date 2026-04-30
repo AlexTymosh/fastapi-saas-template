@@ -182,6 +182,7 @@ class OrganisationService:
         organisation_id: UUID,
         actor_user_id: UUID,
         audit_context: AuditContext,
+        reason: str | None = None,
     ) -> Organisation:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -192,12 +193,14 @@ class OrganisationService:
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
                 audit_context=audit_context,
+                reason=reason,
             )
         async with self.session.begin():
             return await self._soft_delete(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
                 audit_context=audit_context,
+                reason=reason,
             )
 
     async def _soft_delete(
@@ -206,6 +209,7 @@ class OrganisationService:
         organisation_id: UUID,
         actor_user_id: UUID,
         audit_context: AuditContext,
+        reason: str | None = None,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
@@ -237,6 +241,7 @@ class OrganisationService:
             action=AuditAction.ORGANISATION_DELETED,
             target_type=AuditTargetType.ORGANISATION,
             target_id=deleted.id,
+            reason=reason,
             metadata_json={
                 "previous_slug": previous_slug,
                 "deleted_slug": deleted.slug,

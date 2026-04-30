@@ -186,6 +186,7 @@ class InviteService:
         invite_id: UUID,
         actor_user_id: UUID,
         audit_context: AuditContext,
+        reason: str | None = None,
     ) -> None:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,

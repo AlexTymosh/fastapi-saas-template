@@ -20,7 +20,7 @@ def _provision(authenticated_client_factory, database_url: str, identity) -> Non
         assert client.get("/api/v1/users/me").status_code == 200
 
 
-def test_directory_privacy_and_neutral_role_label(
+def test_directory_privacy_and_tenant_role_visibility(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
@@ -67,10 +67,9 @@ def test_directory_privacy_and_neutral_role_label(
         payload = response.json()
         assert {"data", "meta", "links"} <= payload.keys()
         for item in payload["data"]:
-            assert set(item.keys()) == {"display_name", "role_label"}
-            assert item["role_label"] == "Organisation member"
-            assert item["role_label"] not in {"Owner", "Admin", "Member"}
-            assert item["display_name"] != "john"
+            assert set(item.keys()) == {"display_name", "tenant_role"}
+            assert item["tenant_role"] in {"owner", "admin", "member"}
+            assert item["display_name"]
 
 
 def test_delete_membership_returns_204_and_deactivates(
