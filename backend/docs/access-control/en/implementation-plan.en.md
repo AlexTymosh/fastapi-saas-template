@@ -239,7 +239,7 @@ POST   /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend
 Suggested commit:
 
 ```text
-🧾 feat(audit): record sensitive tenant and platform actions
+🧾 feat(audit): record sensitive tenant actions
 ```
 
 ### Add table
@@ -269,20 +269,12 @@ compliance
 ### Audit actions
 
 ```text
-organisation_name_changed
-organisation_slug_changed
+organisation_updated
 organisation_deleted
-member_removed
 membership_role_changed
-invite_created
+membership_removed
 invite_revoked
 invite_resent
-user_suspended
-user_restored
-organisation_suspended
-organisation_restored
-platform_staff_created
-platform_staff_removed
 ```
 
 ---
@@ -438,4 +430,13 @@ Suggested commit:
 [ ] audit_events introduced for tenant + platform sensitive actions
 [ ] platform actions available only through /api/v1/platform/*
 [ ] tests cover tenant/platform separation and role matrix
+```
+
+
+### Sequencing contract
+
+```text
+- audit_events must be introduced before any /api/v1/platform/* endpoints
+- existing tenant-sensitive actions must emit audit events now
+- future platform-sensitive actions must reuse the same audit_events table
 ```

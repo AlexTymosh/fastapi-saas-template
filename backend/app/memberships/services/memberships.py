@@ -7,6 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access_control.guards import ensure_organisation_active
+from app.audit.models.audit_event import AuditAction, AuditCategory
+from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
@@ -26,6 +28,7 @@ class MembershipService:
         self.membership_repository = MembershipRepository(session)
         self.user_service = UserService(session)
         self.organisation_service = OrganisationService(session)
+        self.audit_event_service = AuditEventService(session)
 
     async def create_membership(
         self,
@@ -122,9 +125,23 @@ class MembershipService:
             raise ForbiddenError(detail="Owner role cannot be modified")
         if actor_membership.role != MembershipRole.OWNER:
             raise ForbiddenError(detail="Only owner can change membership roles")
-        return await self.membership_repository.update_role(
+        previous_role = target_membership.role
+        updated_membership = await self.membership_repository.update_role(
             target_membership, role=role
         )
+        await self.audit_event_service.record_event(
+            actor_user_id=actor_user_id,
+            category=AuditCategory.TENANT,
+            action=AuditAction.MEMBERSHIP_ROLE_CHANGED,
+            target_type="membership",
+            target_id=updated_membership.id,
+            metadata_json={
+                "organisation_id": str(organisation_id),
+                "old_role": previous_role.value,
+                "new_role": updated_membership.role.value,
+            },
+        )
+        return updated_membership
 
     async def remove_membership(
         self,
@@ -170,15 +187,29 @@ class MembershipService:
         if target_membership.role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner membership cannot be removed")
         if actor_membership.role == MembershipRole.OWNER:
-            return await self.membership_repository.deactivate_membership(
+            removed_membership = await self.membership_repository.deactivate_membership(
                 target_membership
             )
+            await self._record_membership_removed_event(
+                actor_user_id=actor_user_id,
+                organisation_id=organisation_id,
+                membership=removed_membership,
+                previous_role=target_membership.role,
+            )
+            return removed_membership
         if actor_membership.role == MembershipRole.ADMIN:
             if target_membership.role != MembershipRole.MEMBER:
                 raise ForbiddenError(detail="Admin can remove only members")
-            return await self.membership_repository.deactivate_membership(
+            removed_membership = await self.membership_repository.deactivate_membership(
                 target_membership
             )
+            await self._record_membership_removed_event(
+                actor_user_id=actor_user_id,
+                organisation_id=organisation_id,
+                membership=removed_membership,
+                previous_role=target_membership.role,
+            )
+            return removed_membership
         raise ForbiddenError(detail="You are not allowed to remove memberships")
 
     async def get_membership_for_organisation(
@@ -367,3 +398,24 @@ class MembershipService:
     async def _deactivate_membership(self, membership: Membership) -> Membership:
         await self.ensure_owner_invariant_before_deactivation(membership)
         return await self.membership_repository.deactivate_membership(membership)
+
+    async def _record_membership_removed_event(
+        self,
+        *,
+        actor_user_id: UUID,
+        organisation_id: UUID,
+        membership: Membership,
+        previous_role: MembershipRole,
+    ) -> None:
+        await self.audit_event_service.record_event(
+            actor_user_id=actor_user_id,
+            category=AuditCategory.TENANT,
+            action=AuditAction.MEMBERSHIP_REMOVED,
+            target_type="membership",
+            target_id=membership.id,
+            metadata_json={
+                "organisation_id": str(organisation_id),
+                "removed_user_id": str(membership.user_id),
+                "previous_role": previous_role.value,
+            },
+        )

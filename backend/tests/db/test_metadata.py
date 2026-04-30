@@ -8,6 +8,7 @@ def test_metadata_contains_expected_tables() -> None:
     table_names = set(Base.metadata.tables.keys())
 
     assert "users" in table_names
+    assert "audit_events" in table_names
     assert "organisations" in table_names
     assert "memberships" in table_names
     assert "invites" in table_names
