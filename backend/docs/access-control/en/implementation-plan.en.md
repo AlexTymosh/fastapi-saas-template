@@ -254,8 +254,17 @@ audit_events
 - target_id
 - reason
 - metadata_json
+- ip_address
+- user_agent
 - created_at
 ```
+
+Notes:
+
+- `audit_events` must be introduced before any `/api/v1/platform/*` endpoints.
+- current tenant-sensitive actions emit events now; future platform actions will reuse the same table.
+- `category`, `action`, `target_type` are stored as strings in DB; application code validates via Python enums.
+- metadata must stay small and must not include raw tokens, token hashes, full headers, or arbitrary PII.
 
 ### Categories
 
@@ -269,20 +278,12 @@ compliance
 ### Audit actions
 
 ```text
-organisation_name_changed
-organisation_slug_changed
+organisation_updated
 organisation_deleted
-member_removed
+membership_removed
 membership_role_changed
-invite_created
 invite_revoked
 invite_resent
-user_suspended
-user_restored
-organisation_suspended
-organisation_restored
-platform_staff_created
-platform_staff_removed
 ```
 
 ---

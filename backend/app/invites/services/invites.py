@@ -9,6 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access_control.guards import ensure_email_verified, ensure_organisation_active
+from app.audit.context import AuditContext
+from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
+from app.audit.services.audit_events import AuditEventService
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.invites.models.invite import Invite, InviteStatus
@@ -142,7 +145,12 @@ class InviteService:
             return membership
 
     async def revoke_invite(
-        self, *, organisation_id: UUID, invite_id: UUID, actor_user_id: UUID
+        self,
+        *,
+        organisation_id: UUID,
+        invite_id: UUID,
+        actor_user_id: UUID,
+        audit_context: AuditContext,
     ) -> None:
         async with (
             self.session.begin()
@@ -166,12 +174,30 @@ class InviteService:
                 and invite.role == MembershipRole.ADMIN
             ):
                 raise ForbiddenError(detail="Admin can revoke member invites only")
+            previous_status = invite.status
             await self.invite_repository.mark_revoked(
                 invite, revoked_by_user_id=actor_user_id
             )
+            await AuditEventService(self.session).record_event(
+                audit_context=audit_context,
+                category=AuditCategory.TENANT,
+                action=AuditAction.INVITE_REVOKED,
+                target_type=AuditTargetType.INVITE,
+                target_id=invite.id,
+                metadata_json={
+                    "organisation_id": str(organisation_id),
+                    "invite_role": invite.role.value,
+                    "invite_status_before": previous_status.value,
+                },
+            )
 
     async def resend_invite(
-        self, *, organisation_id: UUID, invite_id: UUID, actor_user_id: UUID
+        self,
+        *,
+        organisation_id: UUID,
+        invite_id: UUID,
+        actor_user_id: UUID,
+        audit_context: AuditContext,
     ) -> Invite:
         async with (
             self.session.begin()
@@ -202,6 +228,17 @@ class InviteService:
             invite.token_hash = self._token_hash(token)
             invite.expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
             await self.session.flush()
+            await AuditEventService(self.session).record_event(
+                audit_context=audit_context,
+                category=AuditCategory.TENANT,
+                action=AuditAction.INVITE_RESENT,
+                target_type=AuditTargetType.INVITE,
+                target_id=invite.id,
+                metadata_json={
+                    "organisation_id": str(organisation_id),
+                    "invite_role": invite.role.value,
+                },
+            )
             await self.token_sink.deliver(invite=invite, raw_token=token)
             return invite
 

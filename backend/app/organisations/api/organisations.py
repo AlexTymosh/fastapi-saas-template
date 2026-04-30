@@ -5,7 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
+from app.audit.context import build_audit_context_from_request
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
 from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
@@ -83,6 +85,7 @@ async def update_organisation(
     organisation_id: UUID,
     payload: UpdateOrganisationRequest,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
     user = await UserService(db_session).provision_current_user(identity)
@@ -90,6 +93,9 @@ async def update_organisation(
     organisation = await service.update_organisation_details(
         organisation_id=organisation_id,
         actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
         name=payload.name,
         slug=payload.slug,
     )
@@ -135,12 +141,16 @@ async def change_membership_role(
     membership_id: UUID,
     payload: UpdateMembershipRoleRequest,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
 ) -> MembershipResponse:
     user = await UserService(db_session).provision_current_user(identity)
     membership = await MembershipService(db_session).change_membership_role(
         organisation_id=organisation_id,
         actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
         membership_id=membership_id,
         role=payload.role,
     )
@@ -157,12 +167,16 @@ async def remove_membership(
     organisation_id: UUID,
     membership_id: UUID,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     await MembershipService(db_session).remove_membership(
         organisation_id=organisation_id,
         actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
         membership_id=membership_id,
     )
     return None
@@ -175,11 +189,20 @@ async def remove_membership(
     name="delete_organisation",
 )
 async def delete_organisation(
-    organisation_id: UUID, identity: PrincipalDep, db_session: DbSessionDep
+    organisation_id: UUID,
+    identity: PrincipalDep,
+    request: Request,
+    db_session: DbSessionDep,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     service = OrganisationService(db_session)
-    await service.soft_delete(organisation_id=organisation_id, actor_user_id=user.id)
+    await service.soft_delete(
+        organisation_id=organisation_id,
+        actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
+    )
 
 
 @router.get(

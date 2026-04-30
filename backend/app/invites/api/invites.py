@@ -5,7 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
+from app.audit.context import build_audit_context_from_request
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
 from app.core.errors.openapi import (
@@ -97,6 +99,7 @@ async def revoke_invite(
     organisation_id: UUID,
     invite_id: UUID,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
@@ -105,6 +108,9 @@ async def revoke_invite(
         organisation_id=organisation_id,
         invite_id=invite_id,
         actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
     )
 
 
@@ -118,6 +124,7 @@ async def resend_invite(
     organisation_id: UUID,
     invite_id: UUID,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
     token_sink: InviteTokenSinkDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
@@ -128,5 +135,8 @@ async def resend_invite(
         organisation_id=organisation_id,
         invite_id=invite_id,
         actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
     )
     return InviteResponse.model_validate(invite)
