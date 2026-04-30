@@ -28,6 +28,7 @@ def _service() -> InviteService:
     session = Mock()
     session.begin = Mock(return_value=_transaction_context())
     session.in_transaction = Mock(return_value=False)
+    session.flush = AsyncMock()
     return InviteService(session=session)
 
 
