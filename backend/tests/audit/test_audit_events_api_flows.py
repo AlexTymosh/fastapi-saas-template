@@ -32,6 +32,8 @@ def assert_metadata_has_no_sensitive_invite_fields(metadata: dict[str, object]) 
     assert "token" not in serialized
     assert "token_hash" not in serialized
     assert "email" not in serialized
+    assert "authorization" not in serialized
+    assert "cookie" not in serialized
 
 
 def _events(migrated_session_factory):
@@ -54,7 +56,9 @@ def test_organisation_update_writes_audit_event(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
     owner_bundle = authenticated_client_factory(
-        identity=identity_for("kc-audit-owner-update", "audit-owner-update@example.com"),
+        identity=identity_for(
+            "kc-audit-owner-update", "audit-owner-update@example.com"
+        ),
         database_url=migrated_database_url,
         redis_url=None,
     )
@@ -79,7 +83,9 @@ def test_invite_resend_writes_audit_event_without_sensitive_metadata(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
     owner_bundle = authenticated_client_factory(
-        identity=identity_for("kc-audit-owner-resend", "audit-owner-resend@example.com"),
+        identity=identity_for(
+            "kc-audit-owner-resend", "audit-owner-resend@example.com"
+        ),
         database_url=migrated_database_url,
         redis_url=None,
     )
@@ -107,11 +113,44 @@ def test_invite_resend_writes_audit_event_without_sensitive_metadata(
     assert_metadata_has_no_sensitive_invite_fields(event.metadata_json)
 
 
+def test_invite_create_writes_audit_event_without_sensitive_metadata(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for(
+            "kc-audit-owner-create", "audit-owner-create@example.com"
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Audit Org Create", "slug": "audit-org-create"},
+        )
+        organisation_id = create.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "audit-member-create@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+
+    event = _event_by_action(migrated_session_factory, "invite_created")
+    assert event.metadata_json == {
+        "organisation_id": str(organisation_id),
+        "invite_role": "member",
+    }
+    assert_metadata_has_no_sensitive_invite_fields(event.metadata_json)
+
+
 def test_invite_revoke_writes_audit_event_without_sensitive_metadata(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
     owner_bundle = authenticated_client_factory(
-        identity=identity_for("kc-audit-owner-revoke", "audit-owner-revoke@example.com"),
+        identity=identity_for(
+            "kc-audit-owner-revoke", "audit-owner-revoke@example.com"
+        ),
         database_url=migrated_database_url,
         redis_url=None,
     )
@@ -233,7 +272,9 @@ def test_organisation_delete_writes_audit_event(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
     owner_bundle = authenticated_client_factory(
-        identity=identity_for("kc-audit-owner-delete", "audit-owner-delete@example.com"),
+        identity=identity_for(
+            "kc-audit-owner-delete", "audit-owner-delete@example.com"
+        ),
         database_url=migrated_database_url,
         redis_url=None,
     )
@@ -291,3 +332,76 @@ def test_failed_permission_does_not_write_success_audit_event(
     events = _events(migrated_session_factory)
     assert not [event for event in events if event.action == "organisation_updated"]
     assert not [event for event in events if event.action == "invite_revoked"]
+
+
+def test_noop_organisation_update_does_not_write_audit_event(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for(
+            "kc-audit-owner-noop-org", "audit-owner-noop-org@example.com"
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Noop Org", "slug": "noop-org"},
+        )
+        organisation_id = create.json()["id"]
+        response = client.patch(
+            f"/api/v1/organisations/{organisation_id}",
+            json={"name": "  Noop Org  ", "slug": "NOOP-ORG"},
+        )
+        assert response.status_code == 200
+
+    events = _events(migrated_session_factory)
+    assert not [event for event in events if event.action == "organisation_updated"]
+
+
+def test_noop_membership_role_change_returns_409_without_audit_event(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for(
+            "kc-audit-owner-noop-role", "audit-owner-noop-role@example.com"
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+    member_bundle = authenticated_client_factory(
+        identity=identity_for(
+            "kc-audit-member-noop-role", "audit-member-noop-role@example.com"
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Noop Role Org", "slug": "noop-role-org"},
+        )
+        organisation_id = create.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "audit-member-noop-role@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+
+    raw_token = owner_sink.token_for_email("audit-member-noop-role@example.com")
+    with member_bundle.client as client:
+        accept = client.post("/api/v1/invites/accept", json={"token": raw_token})
+        membership_id = accept.json()["membership_id"]
+
+    with owner_bundle.client as client:
+        response = client.patch(
+            f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}/role",
+            json={"role": "member"},
+        )
+        assert response.status_code == 409
+
+    events = _events(migrated_session_factory)
+    assert not [event for event in events if event.action == "membership_role_changed"]

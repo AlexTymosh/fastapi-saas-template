@@ -23,6 +23,7 @@ class AuditAction(StrEnum):
     ORGANISATION_DELETED = "organisation_deleted"
     MEMBERSHIP_ROLE_CHANGED = "membership_role_changed"
     MEMBERSHIP_REMOVED = "membership_removed"
+    INVITE_CREATED = "invite_created"
     INVITE_REVOKED = "invite_revoked"
     INVITE_RESENT = "invite_resent"
 
