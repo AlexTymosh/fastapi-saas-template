@@ -142,21 +142,28 @@ class OrganisationService:
 
         normalized_name = self.normalize_name(name) if name is not None else None
         normalized_slug = self.normalize_slug(slug) if slug is not None else None
+        has_name_change = (
+            normalized_name is not None and normalized_name != organisation.name
+        )
+        has_slug_change = (
+            normalized_slug is not None and normalized_slug != organisation.slug
+        )
+        if not has_name_change and not has_slug_change:
+            return organisation
         previous_slug = organisation.slug
         previous_name = organisation.name
-        updated = None
         try:
             updated = await self.organisation_repository.update_details(
                 organisation,
-                name=normalized_name,
-                slug=normalized_slug,
+                name=normalized_name if has_name_change else None,
+                slug=normalized_slug if has_slug_change else None,
             )
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc
         changed_fields: list[str] = []
-        if name is not None and updated.name != previous_name:
+        if has_name_change and updated.name != previous_name:
             changed_fields.append("name")
-        if slug is not None and previous_slug != updated.slug:
+        if has_slug_change and previous_slug != updated.slug:
             changed_fields.append("slug")
         metadata: dict[str, object] = {"changed_fields": changed_fields}
         if previous_slug != updated.slug:

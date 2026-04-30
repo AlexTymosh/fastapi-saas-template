@@ -138,6 +138,8 @@ class MembershipService:
             raise ForbiddenError(detail="Tenant API cannot assign owner role")
         if target_membership.role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner role cannot be modified")
+        if target_membership.role == role:
+            raise ConflictError(detail="Membership already has this role")
         if actor_membership.role != MembershipRole.OWNER:
             raise ForbiddenError(detail="Only owner can change membership roles")
         old_role = target_membership.role

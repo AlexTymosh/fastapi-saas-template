@@ -50,6 +50,7 @@ async def create_invite(
     organisation_id: UUID,
     payload: CreateInviteRequest,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
     token_sink: InviteTokenSinkDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
@@ -61,6 +62,9 @@ async def create_invite(
         actor_user_id=user.id,
         role=payload.role,
         email=payload.email,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
     )
     return InviteResponse.model_validate(invite)
 

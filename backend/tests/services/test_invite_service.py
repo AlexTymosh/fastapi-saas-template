@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.core.auth import AuthenticatedPrincipal
 from app.audit.context import AuditContext
+from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.invites import InviteService
@@ -190,6 +190,7 @@ def test_create_invite_admin_cannot_assign_admin_role() -> None:
                 actor_user_id=uuid4(),
                 role=MembershipRole.ADMIN,
                 email="a@example.com",
+                audit_context=AuditContext(actor_user_id=uuid4()),
             )
         )
 
@@ -209,6 +210,7 @@ def test_create_invite_rejects_owner_role() -> None:
                 actor_user_id=uuid4(),
                 role=MembershipRole.OWNER,
                 email="a@example.com",
+                audit_context=AuditContext(actor_user_id=uuid4()),
             )
         )
 
@@ -266,6 +268,7 @@ def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
 
 def test_create_invite_translates_integrity_error_to_conflict() -> None:
     service = _service()
+    actor_user_id = uuid4()
     service.user_service = AsyncMock()
     service.user_service.get_user_by_id = AsyncMock(
         return_value=User(external_auth_id="kc-1", email="owner@example.com")
@@ -294,8 +297,56 @@ def test_create_invite_translates_integrity_error_to_conflict() -> None:
         run_async(
             service.create_invite(
                 organisation_id=uuid4(),
-                actor_user_id=uuid4(),
+                actor_user_id=actor_user_id,
                 role=MembershipRole.MEMBER,
                 email="invitee@example.com",
+                audit_context=AuditContext(actor_user_id=actor_user_id),
             )
         )
+
+
+def test_create_invite_delivery_failure_does_not_raise() -> None:
+    service = _service()
+    organisation_id = uuid4()
+    actor_user_id = uuid4()
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="kc-1", email="owner@example.com")
+    )
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=Organisation(name="Acme", slug="acme")
+    )
+    service.membership_service = AsyncMock()
+    service.membership_service.membership_repository = AsyncMock()
+    service.membership_service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+            role=MembershipRole.OWNER,
+        )
+    )
+    service.invite_repository = AsyncMock()
+    created_invite = Invite(
+        email="invitee@example.com",
+        organisation_id=organisation_id,
+        role=MembershipRole.MEMBER,
+        status=InviteStatus.PENDING,
+        token_hash="hash",
+    )
+    service.invite_repository.get_pending_invite_by_email = AsyncMock(return_value=None)
+    service.invite_repository.create_invite = AsyncMock(return_value=created_invite)
+    service.token_sink = AsyncMock()
+    service.token_sink.deliver = AsyncMock(side_effect=RuntimeError("failed delivery"))
+
+    invite = run_async(
+        service.create_invite(
+            organisation_id=organisation_id,
+            actor_user_id=actor_user_id,
+            role=MembershipRole.MEMBER,
+            email="invitee@example.com",
+            audit_context=AuditContext(actor_user_id=actor_user_id),
+        )
+    )
+    assert invite is created_invite

@@ -14,6 +14,7 @@ from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTarget
 from app.audit.services.audit_events import AuditEventService
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.logging import get_logger
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.repositories.invites import InviteRepository
 from app.invites.services.delivery import InviteTokenSink, NoOpInviteTokenSink
@@ -24,6 +25,7 @@ from app.users.services.users import UserService
 
 
 class InviteService:
+    log = get_logger(__name__)
     @staticmethod
     def _ensure_audit_actor_matches(
         *, actor_user_id: UUID, audit_context: AuditContext
@@ -70,7 +72,14 @@ class InviteService:
         actor_user_id: UUID,
         role: MembershipRole,
         email: str,
+        audit_context: AuditContext,
     ) -> Invite:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id,
+            audit_context=audit_context,
+        )
+        created_invite: Invite | None = None
+        token_to_deliver: str | None = None
         async with (
             self.session.begin()
             if not self.session.in_transaction()
@@ -112,8 +121,33 @@ class InviteService:
                 raise ConflictError(
                     detail="Pending invite already exists for this email"
                 ) from exc
-            await self.token_sink.deliver(invite=invite, raw_token=token)
-            return invite
+            await AuditEventService(self.session).record_event(
+                audit_context=audit_context,
+                category=AuditCategory.TENANT,
+                action=AuditAction.INVITE_CREATED,
+                target_type=AuditTargetType.INVITE,
+                target_id=invite.id,
+                metadata_json={
+                    "organisation_id": str(organisation_id),
+                    "invite_role": invite.role.value,
+                },
+            )
+            created_invite = invite
+            token_to_deliver = token
+        if created_invite is not None and token_to_deliver is not None:
+            try:
+                await self.token_sink.deliver(
+                    invite=created_invite, raw_token=token_to_deliver
+                )
+            except Exception as exc:
+                self.log.warning(
+                    "invite_token_delivery_failed",
+                    event_name="invite_created",
+                    invite_id=str(created_invite.id),
+                    organisation_id=str(organisation_id),
+                    error_type=type(exc).__name__,
+                )
+        return created_invite
 
     async def accept_invite(
         self, *, token: str, identity: AuthenticatedPrincipal
@@ -214,6 +248,8 @@ class InviteService:
             actor_user_id=actor_user_id,
             audit_context=audit_context,
         )
+        resent_invite: Invite | None = None
+        token_to_deliver: str | None = None
         async with (
             self.session.begin()
             if not self.session.in_transaction()
@@ -254,8 +290,22 @@ class InviteService:
                     "invite_role": invite.role.value,
                 },
             )
-            await self.token_sink.deliver(invite=invite, raw_token=token)
-            return invite
+            resent_invite = invite
+            token_to_deliver = token
+        if resent_invite is not None and token_to_deliver is not None:
+            try:
+                await self.token_sink.deliver(
+                    invite=resent_invite, raw_token=token_to_deliver
+                )
+            except Exception as exc:
+                self.log.warning(
+                    "invite_token_delivery_failed",
+                    event_name="invite_resent",
+                    invite_id=str(resent_invite.id),
+                    organisation_id=str(organisation_id),
+                    error_type=type(exc).__name__,
+                )
+        return resent_invite
 
     @staticmethod
     def _normalize_utc(value: datetime | None) -> datetime | None:
