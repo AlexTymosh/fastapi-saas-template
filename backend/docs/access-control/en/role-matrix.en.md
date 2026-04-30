@@ -110,3 +110,8 @@ GET /api/v1/platform/organisations/{organisation_id}
 ```
 
 - Platform matrix is now enforced by backend `platform_staff` role-to-permission mapping.
+
+- Platform access is DB-backed via `platform_staff`; JWT roles are ignored by backend authorization.
+- Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
+- Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
+- Last-platform-admin hardening is deferred to future platform staff-management stage.

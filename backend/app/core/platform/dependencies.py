@@ -13,6 +13,7 @@ from app.core.platform.actors import PlatformActor
 from app.core.platform.permissions import (
     ROLE_PERMISSIONS,
     PlatformPermission,
+    PlatformRole,
     PlatformStaffStatus,
 )
 from app.platform.repositories.platform_staff import PlatformStaffRepository
@@ -35,7 +36,11 @@ def require_platform_permission(
         staff = await PlatformStaffRepository(db_session).get_by_user_id(user.id)
         if staff is None or staff.status != PlatformStaffStatus.ACTIVE.value:
             raise ForbiddenError(detail="Platform access denied")
-        role_permissions = ROLE_PERMISSIONS.get(staff.role, frozenset())
+        try:
+            role = PlatformRole(staff.role)
+        except ValueError:
+            raise ForbiddenError(detail="Platform access denied") from None
+        role_permissions = ROLE_PERMISSIONS.get(role, frozenset())
         if permission not in role_permissions:
             raise ForbiddenError(detail="Platform access denied")
         return PlatformActor(user=user, staff=staff, permissions=role_permissions)
