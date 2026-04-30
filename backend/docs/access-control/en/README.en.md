@@ -26,6 +26,7 @@ The project uses two separate authorization planes:
 ```
 
 Platform roles are not tenant roles and must not bypass ordinary tenant endpoints.
+External JWT roles are not a backend authorization source.
 
 ```text
 Tenant endpoints:   /api/v1/organisations/*
@@ -43,6 +44,13 @@ The same actor may access:
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
+
+Authorization source of truth:
+
+- JWT is identity-only (`sub`, email, profile claims).
+- Tenant authorization uses local user projection + user status + organisation membership + explicit permission dependencies.
+- Future platform authorization uses backend `platform_staff` table.
+- `superadmin`, `platform_admin`, or any external JWT role must not grant tenant or platform permissions in backend logic.
 
 ## Documents
 

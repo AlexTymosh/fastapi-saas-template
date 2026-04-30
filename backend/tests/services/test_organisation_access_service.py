@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from app.core.auth import AuthenticatedPrincipal
-from app.memberships.models.membership import Membership
 from app.organisations.models.organisation import Organisation
 from app.organisations.services.access import OrganisationAccessService
 from app.users.models.user import User
@@ -63,116 +62,6 @@ def test_get_organisation_for_member_provisions_and_checks_access() -> None:
     )
 
 
-def test_list_memberships_for_member_organisation_uses_single_access_use_case() -> None:
+def test_legacy_list_memberships_use_case_is_removed() -> None:
     service = OrganisationAccessService(session=AsyncMock())
-
-    organisation_id = uuid4()
-    user_id = uuid4()
-    identity = _identity()
-
-    user = User(
-        id=user_id,
-        external_auth_id="kc-2",
-        email="member2@example.com",
-        email_verified=True,
-        first_name="Member",
-        last_name="Two",
-    )
-
-    memberships = [
-        Membership(
-            user_id=user_id,
-            organisation_id=organisation_id,
-        )
-    ]
-
-    service.user_service = AsyncMock()
-    service.user_service.provision_current_user = AsyncMock(return_value=user)
-    service.user_service.ensure_user_is_active = AsyncMock()
-
-    service.organisation_service = AsyncMock()
-    service.organisation_service.get_organisation = AsyncMock()
-
-    service.membership_service = AsyncMock()
-    service.membership_service.ensure_user_can_list_organisation_memberships = (
-        AsyncMock()
-    )
-    service.membership_service.list_memberships_for_organisation = AsyncMock(
-        return_value=memberships
-    )
-
-    result = run_async(
-        service.list_memberships_for_member_organisation(
-            identity=identity,
-            organisation_id=organisation_id,
-        )
-    )
-
-    assert result == memberships
-
-    service.user_service.provision_current_user.assert_awaited_once_with(
-        identity=identity,
-    )
-    service.user_service.ensure_user_is_active.assert_awaited_once_with(user)
-
-    service.organisation_service.get_organisation.assert_awaited_once_with(
-        organisation_id=organisation_id,
-    )
-
-    service.membership_service.ensure_user_can_list_organisation_memberships.assert_awaited_once_with(
-        user_id=user_id,
-        organisation_id=organisation_id,
-    )
-
-    service.membership_service.list_memberships_for_organisation.assert_awaited_once_with(
-        organisation_id=organisation_id,
-        actor_user_id=user_id,
-    )
-
-
-def test_list_memberships_loads_organisation_before_access_check() -> None:
-    service = OrganisationAccessService(session=AsyncMock())
-
-    organisation_id = uuid4()
-    identity = _identity()
-    user = User(
-        external_auth_id="kc-sequence",
-        email="sequence@example.com",
-        email_verified=True,
-        first_name="Sequence",
-        last_name="User",
-    )
-
-    calls: list[str] = []
-
-    service.organisation_service = AsyncMock()
-
-    async def _load_org(*, organisation_id):
-        calls.append("load_organisation")
-        org = Organisation(name="Sequence Org", slug="sequence-org")
-        org.id = organisation_id
-        return org
-
-    service.organisation_service.get_organisation = AsyncMock(side_effect=_load_org)
-    service.user_service = AsyncMock()
-    service.user_service.provision_current_user = AsyncMock(return_value=user)
-    service.membership_service = AsyncMock()
-
-    async def _check_access(*, user_id, organisation_id):
-        calls.append("check_access")
-
-    service.membership_service.ensure_user_can_list_organisation_memberships = (
-        AsyncMock(side_effect=_check_access)
-    )
-    service.membership_service.list_memberships_for_organisation = AsyncMock(
-        return_value=[]
-    )
-
-    run_async(
-        service.list_memberships_for_member_organisation(
-            identity=identity,
-            organisation_id=organisation_id,
-        )
-    )
-
-    assert calls == ["load_organisation", "check_access"]
+    assert not hasattr(service, "list_memberships_for_member_organisation")

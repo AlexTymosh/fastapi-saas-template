@@ -26,6 +26,8 @@ Keycloak handles:
 - optional MFA;
 - JWT issuance.
 
+JWT claims are identity input only. Backend authorization must not trust external JWT roles.
+
 The backend handles:
 
 - local user projection;
@@ -33,6 +35,8 @@ The backend handles:
 - platform staff access;
 - permissions;
 - audit trail.
+
+`superadmin`, `platform_admin`, `realm_access.roles`, `resource_access.*.roles`, and similar JWT role claims must not grant backend tenant/platform permissions by themselves.
 
 ## 3. Backend source of truth
 

@@ -53,7 +53,7 @@ def test_jwt_claim_mapping_rejects_invalid_email_claim() -> None:
         )
 
 
-def test_principal_platform_roles_come_from_roles_claim() -> None:
+def test_jwt_direct_roles_are_ignored_by_authenticated_principal() -> None:
     principal = AuthenticatedPrincipal.from_unverified_jwt_claims(
         {
             "sub": "kc-super-1",
@@ -62,10 +62,10 @@ def test_principal_platform_roles_come_from_roles_claim() -> None:
         }
     )
 
-    assert principal.platform_roles == ["superadmin"]
+    assert not hasattr(principal, "platform_roles")
 
 
-def test_verified_claim_mapping_merges_keycloak_realm_and_client_roles() -> None:
+def test_verified_claim_mapping_ignores_realm_and_client_roles() -> None:
     principal = AuthenticatedPrincipal.from_verified_jwt_claims(
         {
             "sub": "kc-user-claims-roles",
@@ -77,4 +77,5 @@ def test_verified_claim_mapping_merges_keycloak_realm_and_client_roles() -> None
         resource_client_id="fastapi-web",
     )
 
-    assert principal.platform_roles == ["member", "admin", "editor"]
+    assert principal.external_auth_id == "kc-user-claims-roles"
+    assert not hasattr(principal, "platform_roles")
