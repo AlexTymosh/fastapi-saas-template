@@ -1,5 +1,7 @@
 # План реализации Access Control
 
+> Canonical version: `backend/docs/access-control/en/implementation-plan.en.md`.
+
 ## Цель
 
 Удалить концепцию `superadmin` из tenant/business logic и ввести чистое разделение между:
@@ -15,6 +17,8 @@ Platform access:
 - support_agent
 - compliance_officer
 ```
+
+Platform-роли не являются tenant-ролями. Backend авторизует platform-доступ только по таблице `platform_staff`; JWT roles игнорируются как источник platform authorization. Platform actors работают только через `/api/v1/platform/*` и не получают bypass для `/api/v1/organisations/*`.
 
 ## PR 1 — Remove `superadmin` bypass from tenant flows
 
@@ -286,7 +290,53 @@ require_platform_permission(permission)
 
 ---
 
-## PR 7 — Add platform administration endpoints
+## PR 7 — Add audit trail
+
+Suggested commit:
+
+```text
+🧾 feat(audit): record sensitive tenant and platform actions
+```
+
+### Add table
+
+```text
+audit_events
+- id
+- actor_user_id
+- category
+- action
+- target_type
+- target_id
+- reason
+- metadata_json
+- ip_address
+- user_agent
+- created_at
+```
+
+### Audit actions
+
+```text
+organisation_name_changed
+organisation_slug_changed
+organisation_deleted
+member_removed
+membership_role_changed
+invite_created
+invite_revoked
+invite_resent
+user_suspended
+user_restored
+organisation_suspended
+organisation_restored
+platform_staff_created
+platform_staff_removed
+```
+
+---
+
+## PR 8 — Add platform administration endpoints
 
 Suggested commit:
 
@@ -315,49 +365,6 @@ GET   /api/v1/platform/audit-events
 - support_agent cannot suspend user
 - platform_admin can suspend organisation
 - suspended organisation blocks tenant actions
-```
-
----
-
-## PR 8 — Add audit trail
-
-Suggested commit:
-
-```text
-🧾 feat(audit): record sensitive tenant and platform actions
-```
-
-### Add table
-
-```text
-platform_audit_events
-- id
-- actor_user_id
-- action
-- target_type
-- target_id
-- reason
-- metadata_json
-- created_at
-```
-
-### Audit actions
-
-```text
-organisation_name_changed
-organisation_slug_changed
-organisation_deleted
-member_removed
-membership_role_changed
-invite_created
-invite_revoked
-invite_resent
-user_suspended
-user_restored
-organisation_suspended
-organisation_restored
-platform_staff_created
-platform_staff_removed
 ```
 
 ### Tests

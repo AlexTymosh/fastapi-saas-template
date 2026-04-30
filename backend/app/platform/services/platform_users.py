@@ -38,13 +38,7 @@ class PlatformUsersService:
 
     async def _run_write(self, operation: Callable[[], Awaitable[User]]) -> User:
         if self.session.in_transaction():
-            try:
-                result = await operation()
-                await self.session.commit()
-                return result
-            except Exception:
-                await self.session.rollback()
-                raise
+            return await operation()
         async with self.session.begin():
             return await operation()
 

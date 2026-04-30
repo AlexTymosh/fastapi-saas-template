@@ -14,8 +14,8 @@ from app.core.platform.permissions import (
     ROLE_PERMISSIONS,
     PlatformPermission,
     PlatformRole,
-    PlatformStaffStatus,
 )
+from app.platform.models.platform_staff import PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.users.models.user import UserStatus
 from app.users.services.users import UserService

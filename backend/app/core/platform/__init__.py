@@ -3,8 +3,8 @@ from app.core.platform.dependencies import require_platform_permission
 from app.core.platform.permissions import (
     PlatformPermission,
     PlatformRole,
-    PlatformStaffStatus,
 )
+from app.platform.models.platform_staff import PlatformStaffStatus
 
 __all__ = [
     "PlatformActor",

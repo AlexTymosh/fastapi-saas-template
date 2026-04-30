@@ -1,9 +1,12 @@
 import pytest
 
+from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.audit.services.audit_events import AuditEventService
+from app.core.platform.actors import PlatformActor
 from app.core.platform.permissions import PlatformRole
 from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.platform.services.platform_users import PlatformUsersService
 from app.users.models.user import User, UserStatus
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
@@ -118,3 +121,40 @@ def test_suspend_user_rolls_back_on_audit_failure(
             assert event is None
 
     run_async(_verify())
+
+
+def test_suspend_user_keeps_external_transaction_open(
+    migrated_session_factory,
+) -> None:
+    admin = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-platform-admin-tx",
+        email="platform-admin-tx@example.com",
+    )
+    target = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-target-user-tx",
+        email="target-user-tx@example.com",
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_user_id(admin.id)
+                assert staff is not None
+                actor = PlatformActor(
+                    user=admin,
+                    staff=staff,
+                    permissions=frozenset(),
+                )
+                service = PlatformUsersService(session)
+                assert session.in_transaction()
+                await service.suspend_user(
+                    user_id=target.id,
+                    actor=actor,
+                    reason="tx ownership",
+                    audit_context=AuditContext(actor_user_id=admin.id),
+                )
+                assert session.in_transaction()
+
+    run_async(_run())
