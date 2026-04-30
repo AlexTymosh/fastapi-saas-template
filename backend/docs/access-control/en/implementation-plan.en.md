@@ -244,6 +244,8 @@ Suggested commit:
 
 ### Add table
 
+`audit_events` must be introduced before any `/api/v1/platform/*` endpoints. Tenant-sensitive actions should emit audit events immediately, and future platform-sensitive actions must reuse the same table.
+
 ```text
 audit_events
 - id
