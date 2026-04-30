@@ -189,6 +189,10 @@ def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
     assert "/api/v1/platform/organisations/{organisation_id}/suspend" in paths
     assert "/api/v1/platform/organisations/{organisation_id}/restore" in paths
     assert "/api/v1/platform/audit-events" in paths
+    assert "/api/v1/platform/staff" in paths
+    assert "/api/v1/platform/staff/{staff_id}/role" in paths
+    assert "/api/v1/platform/staff/{staff_id}/suspend" in paths
+    assert "/api/v1/platform/staff/{staff_id}/restore" in paths
 
 
 def test_openapi_platform_collection_and_errors_contract(monkeypatch) -> None:
