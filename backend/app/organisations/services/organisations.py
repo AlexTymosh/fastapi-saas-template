@@ -144,6 +144,10 @@ class OrganisationService:
         normalized_slug = self.normalize_slug(slug) if slug is not None else None
         previous_slug = organisation.slug
         previous_name = organisation.name
+        name_changed = normalized_name is not None and normalized_name != previous_name
+        slug_changed = normalized_slug is not None and normalized_slug != previous_slug
+        if not name_changed and not slug_changed:
+            return organisation
         updated = None
         try:
             updated = await self.organisation_repository.update_details(
@@ -154,12 +158,12 @@ class OrganisationService:
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc
         changed_fields: list[str] = []
-        if name is not None and updated.name != previous_name:
+        if name_changed:
             changed_fields.append("name")
-        if slug is not None and previous_slug != updated.slug:
+        if slug_changed:
             changed_fields.append("slug")
         metadata: dict[str, object] = {"changed_fields": changed_fields}
-        if previous_slug != updated.slug:
+        if slug_changed:
             metadata["old_slug"] = previous_slug
             metadata["new_slug"] = updated.slug
         await AuditEventService(self.session).record_event(
