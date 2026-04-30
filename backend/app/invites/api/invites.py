@@ -105,8 +105,8 @@ async def revoke_invite(
     invite_id: UUID,
     identity: PrincipalDep,
     request: Request,
-    payload: Annotated[RevokeInviteRequest | None, Body(default=None)],
     db_session: DbSessionDep,
+    payload: Annotated[RevokeInviteRequest | None, Body()] = None,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session)

@@ -170,8 +170,8 @@ async def remove_membership(
     membership_id: UUID,
     identity: PrincipalDep,
     request: Request,
-    payload: Annotated[RemoveMembershipRequest | None, Body(default=None)],
     db_session: DbSessionDep,
+    payload: Annotated[RemoveMembershipRequest | None, Body()] = None,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     await MembershipService(db_session).remove_membership(
@@ -196,8 +196,8 @@ async def delete_organisation(
     organisation_id: UUID,
     identity: PrincipalDep,
     request: Request,
-    payload: Annotated[DeleteOrganisationRequest | None, Body(default=None)],
     db_session: DbSessionDep,
+    payload: Annotated[DeleteOrganisationRequest | None, Body()] = None,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     service = OrganisationService(db_session)

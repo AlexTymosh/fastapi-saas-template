@@ -110,7 +110,7 @@ def test_invite_resend_writes_audit_event_without_sensitive_metadata(
     assert owner_sink.token_for_email("audit-member-resend@example.com")
     event = _event_by_action(migrated_session_factory, "invite_resent")
     assert event.metadata_json is not None
-    assert event.reason == "stale request"
+    assert event.reason is None
     assert_metadata_has_no_sensitive_invite_fields(event.metadata_json)
 
 
