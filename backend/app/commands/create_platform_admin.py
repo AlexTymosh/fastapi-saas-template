@@ -14,7 +14,7 @@ from app.users.models.user import UserStatus
 from app.users.repositories.users import UserRepository
 
 
-async def _run(email: str) -> None:
+async def create_platform_admin_by_email(email: str) -> None:
     async with get_session_factory()() as session:
         async with session.begin():
             user = await UserRepository(session).get_by_email(email)
@@ -50,8 +50,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--email", required=True)
     args = parser.parse_args()
-    asyncio.run(_run(args.email))
+    asyncio.run(create_platform_admin_by_email(args.email))
 
 
 if __name__ == "__main__":
     main()
+
+
+# Backward-compatible alias for existing imports in tests/scripts.
+_run = create_platform_admin_by_email

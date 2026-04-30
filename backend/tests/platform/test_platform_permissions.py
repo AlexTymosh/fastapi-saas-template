@@ -1,31 +1,142 @@
+from app.core.platform.permissions import PlatformRole
+from app.organisations.models.organisation import Organisation
+from app.platform.models.platform_staff import PlatformStaffStatus
+from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.users.models.user import UserStatus
+from app.users.services.users import UserService
+from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 
 
-def test_jwt_platform_admin_without_platform_staff_gets_403(
-    authenticated_client_factory, migrated_database_url
-) -> None:
-    bundle = authenticated_client_factory(
-        identity=identity_for(
-            "kc-platform-no-staff",
-            "platform-no-staff@example.com",
-            roles=["platform_admin"],
-        ),
-        database_url=migrated_database_url,
-    )
-    response = bundle.client.get("/api/v1/platform/users")
-    assert response.status_code == 403
+def _seed_platform_staff(
+    session_factory,
+    *,
+    external_auth_id: str,
+    email: str,
+    role: str,
+    user_status: UserStatus = UserStatus.ACTIVE,
+    staff_status: PlatformStaffStatus = PlatformStaffStatus.ACTIVE,
+):
+    async def _run():
+        async with session_factory() as session:
+            async with session.begin():
+                user = await UserService(session).provision_current_user(
+                    identity_for(external_auth_id, email)
+                )
+                user.status = user_status
+                await PlatformStaffRepository(session).create_staff(
+                    user_id=user.id, role=role, status=staff_status.value
+                )
+            return user
+
+    return run_async(_run())
 
 
-def test_jwt_superadmin_without_platform_staff_gets_403(
-    authenticated_client_factory, migrated_database_url
-) -> None:
-    bundle = authenticated_client_factory(
-        identity=identity_for(
-            "kc-superadmin-no-staff",
-            "superadmin-no-staff@example.com",
-            roles=["superadmin"],
-        ),
+def test_permission_matrix_core(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+):
+    suspended_user = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-su",
+        email="su@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+        user_status=UserStatus.SUSPENDED,
+    )
+    suspended_staff = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-ss",
+        email="ss@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+        staff_status=PlatformStaffStatus.SUSPENDED,
+    )
+    invalid_role = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-ir",
+        email="ir@example.com",
+        role="invalid_role",
+    )
+    support = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-support",
+        email="support@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+    compliance = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-comp",
+        email="comp@example.com",
+        role=PlatformRole.COMPLIANCE_OFFICER.value,
+    )
+    admin = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-admin",
+        email="admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _seed_org():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                org = Organisation(name="Zulu", slug="zulu")
+                session.add(org)
+            return org
+
+    org = run_async(_seed_org())
+
+    for user in (suspended_user, suspended_staff, invalid_role):
+        bundle = authenticated_client_factory(
+            identity=identity_for(user.external_auth_id, user.email),
+            database_url=migrated_database_url,
+        )
+        assert bundle.client.get("/api/v1/platform/users").status_code == 403
+
+    support_bundle = authenticated_client_factory(
+        identity=identity_for(support.external_auth_id, support.email),
         database_url=migrated_database_url,
     )
-    response = bundle.client.get("/api/v1/platform/users")
-    assert response.status_code == 403
+    assert (
+        support_bundle.client.post(
+            f"/api/v1/platform/users/{admin.id}/suspend", json={"reason": "r"}
+        ).status_code
+        == 403
+    )
+    assert (
+        support_bundle.client.post(
+            f"/api/v1/platform/organisations/{org.id}/suspend", json={"reason": "r"}
+        ).status_code
+        == 403
+    )
+
+    comp_bundle = authenticated_client_factory(
+        identity=identity_for(compliance.external_auth_id, compliance.email),
+        database_url=migrated_database_url,
+    )
+    assert (
+        comp_bundle.client.post(
+            f"/api/v1/platform/users/{admin.id}/suspend", json={"reason": "r"}
+        ).status_code
+        == 403
+    )
+    assert (
+        comp_bundle.client.post(
+            f"/api/v1/platform/organisations/{org.id}/suspend", json={"reason": "r"}
+        ).status_code
+        == 403
+    )
+    assert comp_bundle.client.get("/api/v1/platform/audit-events").status_code == 200
+
+    admin_bundle = authenticated_client_factory(
+        identity=identity_for(admin.external_auth_id, admin.email),
+        database_url=migrated_database_url,
+    )
+    assert admin_bundle.client.get(f"/api/v1/organisations/{org.id}").status_code == 403
+    assert (
+        admin_bundle.client.get(f"/api/v1/platform/organisations/{org.id}").status_code
+        == 200
+    )
+
+    regular_bundle = authenticated_client_factory(
+        identity=identity_for("kc-regular-p", "regular-p@example.com"),
+        database_url=migrated_database_url,
+    )
+    assert regular_bundle.client.get("/api/v1/platform/users").status_code == 403

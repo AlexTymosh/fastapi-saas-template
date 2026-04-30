@@ -1,3 +1,5 @@
+import pytest
+
 from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.audit.services.audit_events import AuditEventService
 from app.core.platform.permissions import PlatformRole
@@ -94,16 +96,25 @@ def test_suspend_user_rolls_back_on_audit_failure(
         ),
         database_url=migrated_database_url,
     )
-    response = bundle.client.post(
-        f"/api/v1/platform/users/{target.id}/suspend",
-        json={"reason": "incident investigation"},
-    )
-    assert response.status_code >= 500
+    with pytest.raises(RuntimeError, match="audit failed"):
+        bundle.client.post(
+            f"/api/v1/platform/users/{target.id}/suspend",
+            json={"reason": "incident investigation"},
+        )
 
     async def _verify():
         async with migrated_session_factory() as session:
             updated = await session.get(User, target.id)
             assert updated is not None
             assert updated.status == UserStatus.ACTIVE
+            event = (
+                await session.execute(
+                    AuditEvent.__table__.select().where(
+                        AuditEvent.action == AuditAction.USER_SUSPENDED.value,
+                        AuditEvent.target_id == target.id,
+                    )
+                )
+            ).first()
+            assert event is None
 
     run_async(_verify())
