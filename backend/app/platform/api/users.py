@@ -15,6 +15,10 @@ from app.core.platform import (
     PlatformPermission,
     require_platform_permission,
 )
+from app.core.platform.write_context import (
+    PlatformWriteContext,
+    require_platform_write_context,
+)
 from app.platform.schemas.platform_users import (
     PlatformUserResponse,
     PlatformUsersCollectionResponse,
@@ -71,19 +75,18 @@ async def get_platform_user(
 async def suspend_platform_user(
     user_id: UUID,
     payload: ReasonRequest,
-    actor: Annotated[
-        PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.USERS_SUSPEND)),
+    context: Annotated[
+        PlatformWriteContext,
+        Depends(require_platform_write_context(PlatformPermission.USERS_SUSPEND)),
     ],
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformUserResponse:
-    user = await PlatformUsersService(db_session).suspend_user(
+    user = await PlatformUsersService(context.session).suspend_user(
         user_id=user_id,
-        actor=actor,
+        actor=context.actor,
         reason=payload.reason,
         audit_context=build_audit_context_from_request(
-            actor_user_id=actor.user.id, request=request
+            actor_user_id=context.actor.user.id, request=request
         ),
     )
     return PlatformUserResponse.model_validate(user)
@@ -97,19 +100,18 @@ async def suspend_platform_user(
 async def restore_platform_user(
     user_id: UUID,
     payload: ReasonRequest,
-    actor: Annotated[
-        PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.USERS_RESTORE)),
+    context: Annotated[
+        PlatformWriteContext,
+        Depends(require_platform_write_context(PlatformPermission.USERS_RESTORE)),
     ],
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformUserResponse:
-    user = await PlatformUsersService(db_session).restore_user(
+    user = await PlatformUsersService(context.session).restore_user(
         user_id=user_id,
-        actor=actor,
+        actor=context.actor,
         reason=payload.reason,
         audit_context=build_audit_context_from_request(
-            actor_user_id=actor.user.id, request=request
+            actor_user_id=context.actor.user.id, request=request
         ),
     )
     return PlatformUserResponse.model_validate(user)

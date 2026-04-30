@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -36,12 +35,6 @@ class PlatformUsersService:
             raise NotFoundError(detail="User not found")
         return user
 
-    async def _run_write(self, operation: Callable[[], Awaitable[User]]) -> User:
-        if self.session.in_transaction():
-            return await operation()
-        async with self.session.begin():
-            return await operation()
-
     async def suspend_user(
         self,
         *,
@@ -50,10 +43,11 @@ class PlatformUsersService:
         reason: str,
         audit_context: AuditContext,
     ) -> User:
-        return await self._run_write(
-            lambda: self._suspend_user(
-                user_id=user_id, actor=actor, reason=reason, audit_context=audit_context
-            )
+        return await self._suspend_user(
+            user_id=user_id,
+            actor=actor,
+            reason=reason,
+            audit_context=audit_context,
         )
 
     async def _suspend_user(
@@ -91,10 +85,11 @@ class PlatformUsersService:
         reason: str,
         audit_context: AuditContext,
     ) -> User:
-        return await self._run_write(
-            lambda: self._restore_user(
-                user_id=user_id, actor=actor, reason=reason, audit_context=audit_context
-            )
+        return await self._restore_user(
+            user_id=user_id,
+            actor=actor,
+            reason=reason,
+            audit_context=audit_context,
         )
 
     async def _restore_user(

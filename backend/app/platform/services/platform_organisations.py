@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -44,14 +43,6 @@ class PlatformOrganisationsService:
             raise NotFoundError(detail="Organisation not found")
         return org
 
-    async def _run_write(
-        self, operation: Callable[[], Awaitable[Organisation]]
-    ) -> Organisation:
-        if self.session.in_transaction():
-            return await operation()
-        async with self.session.begin():
-            return await operation()
-
     async def suspend_organisation(
         self,
         *,
@@ -60,13 +51,11 @@ class PlatformOrganisationsService:
         reason: str,
         audit_context: AuditContext,
     ) -> Organisation:
-        return await self._run_write(
-            lambda: self._suspend_organisation(
-                organisation_id=organisation_id,
-                actor=actor,
-                reason=reason,
-                audit_context=audit_context,
-            )
+        return await self._suspend_organisation(
+            organisation_id=organisation_id,
+            actor=actor,
+            reason=reason,
+            audit_context=audit_context,
         )
 
     async def _suspend_organisation(
@@ -103,13 +92,11 @@ class PlatformOrganisationsService:
         reason: str,
         audit_context: AuditContext,
     ) -> Organisation:
-        return await self._run_write(
-            lambda: self._restore_organisation(
-                organisation_id=organisation_id,
-                actor=actor,
-                reason=reason,
-                audit_context=audit_context,
-            )
+        return await self._restore_organisation(
+            organisation_id=organisation_id,
+            actor=actor,
+            reason=reason,
+            audit_context=audit_context,
         )
 
     async def _restore_organisation(
@@ -148,15 +135,13 @@ class PlatformOrganisationsService:
         reason: str,
         audit_context: AuditContext,
     ) -> Organisation:
-        return await self._run_write(
-            lambda: self._correct_organisation_profile(
-                organisation_id=organisation_id,
-                actor=actor,
-                name=name,
-                slug=slug,
-                reason=reason,
-                audit_context=audit_context,
-            )
+        return await self._correct_organisation_profile(
+            organisation_id=organisation_id,
+            actor=actor,
+            name=name,
+            slug=slug,
+            reason=reason,
+            audit_context=audit_context,
         )
 
     async def _correct_organisation_profile(
