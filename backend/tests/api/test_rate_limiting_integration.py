@@ -36,7 +36,6 @@ async def test_real_redis_rate_limiter_blocks_after_threshold(
             external_auth_id=f"integration-user-{test_suffix}",
             email="integration-user@example.com",
             email_verified=True,
-            platform_roles=[],
         )
 
     app.dependency_overrides[get_authenticated_principal] = _principal

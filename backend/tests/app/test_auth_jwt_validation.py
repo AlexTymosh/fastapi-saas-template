@@ -175,7 +175,7 @@ def test_valid_keycloak_like_claims_map_to_authenticated_principal() -> None:
     assert principal.email_verified is True
     assert principal.first_name == "Claim"
     assert principal.last_name == "User"
-    assert principal.platform_roles == ["member", "org-admin"]
+    assert not hasattr(principal, "platform_roles")
 
 
 def test_valid_token_uses_api_audience_and_web_client_roles_split() -> None:
@@ -206,7 +206,7 @@ def test_valid_token_uses_api_audience_and_web_client_roles_split() -> None:
     )
 
     assert claims["aud"] == "fastapi-api"
-    assert principal.platform_roles == ["viewer"]
+    assert not hasattr(principal, "platform_roles")
 
 
 def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
@@ -248,7 +248,7 @@ def test_authenticated_principal_uses_auth_client_id_for_resource_roles(
     principal = run_async(get_authenticated_principal(request))
 
     assert principal is not None
-    assert principal.platform_roles == ["org-admin"]
+    assert not hasattr(principal, "platform_roles")
 
     reset_settings_cache()
 

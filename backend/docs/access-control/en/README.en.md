@@ -52,3 +52,8 @@ GET /api/v1/platform/organisations/{organisation_id}
 | `role-matrix.en.md` | Tenant and platform permission matrices |
 | `platform-access.en.md` | Platform staff model, permissions, bootstrap, and audit rules |
 | `implementation-plan.en.md` | Step-by-step code change plan |
+
+
+## Authorization source boundary
+
+JWT is an identity source only. Backend authorization must rely on local data (user status, organisation membership, and future `platform_staff`), not external JWT roles. Claims like `superadmin` or `platform_admin` must not grant tenant or platform access by themselves.

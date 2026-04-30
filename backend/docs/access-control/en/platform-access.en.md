@@ -261,3 +261,15 @@ Requirements:
 - no ordinary tenant endpoint;
 - preferably two-person approval in future.
 ```
+
+
+## Suspended user boundary
+
+- suspended user may still access `/api/v1/users/me` for identity/profile visibility;
+- suspended user must not perform tenant actions;
+- suspended user must not perform platform actions.
+
+
+## JWT roles boundary
+
+External JWT roles are not a backend authorization source. Claims like `superadmin`, `platform_admin`, `realm_access.roles`, `resource_access`, or direct `roles` must not grant tenant or platform permissions in backend authorization. Future platform authorization must use backend `platform_staff` records.

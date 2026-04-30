@@ -92,7 +92,6 @@ async def _principal() -> AuthenticatedPrincipal:
         external_auth_id="user-a",
         email="user-a@example.com",
         email_verified=True,
-        platform_roles=[],
     )
 
 

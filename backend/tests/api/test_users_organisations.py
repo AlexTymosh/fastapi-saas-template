@@ -30,8 +30,6 @@ def _identity() -> AuthenticatedPrincipal:
 def _identity_for(
     external_auth_id: str,
     email: str,
-    *,
-    roles: list[str] | None = None,
     email_verified: bool = True,
     first_name: str = "Test",
     last_name: str = "User",
@@ -42,7 +40,6 @@ def _identity_for(
         email_verified=email_verified,
         first_name=first_name,
         last_name=last_name,
-        platform_roles=roles or [],
     )
 
 
@@ -784,7 +781,6 @@ def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None
             _identity_for(
                 external_auth_id="kc-platform-actor-read",
                 email="platform-read@example.com",
-                roles=["platform_admin"],
             )
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}")
@@ -803,7 +799,6 @@ def test_platform_role_does_not_bypass_single_organisation_creation_rule(
         _identity_for(
             external_auth_id="kc-platform-create-actor",
             email="platform-create-actor@example.com",
-            roles=["platform_admin"],
         )
     )
 
@@ -848,7 +843,6 @@ def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -
             _identity_for(
                 external_auth_id="kc-platform-actor-list",
                 email="platform-list@example.com",
-                roles=["superadmin"],
             )
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")

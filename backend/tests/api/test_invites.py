@@ -35,7 +35,6 @@ def _identity_for(
         external_auth_id=external_auth_id,
         email=email,
         email_verified=email_verified,
-        platform_roles=roles or [],
     )
 
 
@@ -218,7 +217,6 @@ def test_superadmin_role_cannot_invite_without_membership(
         identity=_identity_for(
             "kc-super",
             "super@example.com",
-            roles=["superadmin"],
         ),
         database_url=migrated_database_url,
         redis_url=None,
