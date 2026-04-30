@@ -5,7 +5,9 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from app.audit.models.audit_event import AuditEvent
 from app.core.auth import AuthenticatedPrincipal
+from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.delivery import get_invite_token_sink
 from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation, OrganisationStatus
@@ -22,6 +24,11 @@ class InMemoryInviteTokenSink:
 
     def token_for_email(self, email: str) -> str:
         return self._tokens_by_email[email.lower()]
+
+
+class FailingInviteTokenSink:
+    async def deliver(self, *, invite, raw_token: str) -> None:
+        raise RuntimeError("delivery unavailable")
 
 
 def _identity_for(
@@ -471,6 +478,123 @@ def test_create_invite_returns_single_resource_contract(
     assert body["organisation_id"] == organisation_id
     assert body["role"] == invite_role
     assert body["status"] == "pending"
+
+
+def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-delivery-fail", "owner-delivery@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_bundle.client.app.dependency_overrides[get_invite_token_sink] = (
+        lambda: FailingInviteTokenSink()
+    )
+
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Delivery Fail Org", "slug": "delivery-fail-org"},
+        )
+        organisation_id = create.json()["id"]
+        response = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "delivery-fail@example.com", "role": "member"},
+        )
+        assert response.status_code == 201
+        invite_id = response.json()["id"]
+
+    async def _assert_state() -> None:
+        async with migrated_session_factory() as session:
+            invite_result = await session.execute(
+                select(Invite).where(Invite.id == UUID(invite_id))
+            )
+            invite = invite_result.scalar_one()
+            assert invite.status == InviteStatus.PENDING
+
+            events_result = await session.execute(
+                select(AuditEvent).where(AuditEvent.target_id == invite.id)
+            )
+            events = list(events_result.scalars().all())
+            created_event = next(
+                event for event in events if event.action == "invite_created"
+            )
+            assert created_event.metadata_json == {
+                "organisation_id": organisation_id,
+                "invite_role": "member",
+            }
+            metadata = str(created_event.metadata_json).lower()
+            assert "token" not in metadata
+            assert "token_hash" not in metadata
+            assert "email" not in metadata
+
+    run_async(_assert_state())
+
+
+def test_resend_invite_delivery_failure_keeps_token_hash_and_audit_event(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-owner-resend-delivery-fail", "owner-resend-delivery@example.com"
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Resend Delivery Fail", "slug": "resend-delivery-fail"},
+        )
+        organisation_id = create.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "resend-delivery-fail@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+        invite_id = invite.json()["id"]
+
+    raw_token = owner_sink.token_for_email("resend-delivery-fail@example.com")
+    old_token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
+    owner_bundle.client.app.dependency_overrides[get_invite_token_sink] = (
+        lambda: FailingInviteTokenSink()
+    )
+
+    with owner_bundle.client as client:
+        response = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend"
+        )
+        assert response.status_code == 200
+
+    async def _assert_state() -> None:
+        async with migrated_session_factory() as session:
+            invite_result = await session.execute(
+                select(Invite).where(Invite.id == UUID(invite_id))
+            )
+            invite = invite_result.scalar_one()
+            assert invite.status == InviteStatus.PENDING
+            assert invite.token_hash != old_token_hash
+
+            events_result = await session.execute(
+                select(AuditEvent).where(AuditEvent.target_id == invite.id)
+            )
+            events = list(events_result.scalars().all())
+            resent_event = next(
+                event for event in events if event.action == "invite_resent"
+            )
+            metadata = str(resent_event.metadata_json).lower()
+            assert "token" not in metadata
+            assert "token_hash" not in metadata
+            assert "email" not in metadata
+
+    run_async(_assert_state())
 
 
 def test_create_invite_returns_404_for_missing_organisation(

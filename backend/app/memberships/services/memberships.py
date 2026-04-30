@@ -140,6 +140,8 @@ class MembershipService:
             raise ForbiddenError(detail="Owner role cannot be modified")
         if actor_membership.role != MembershipRole.OWNER:
             raise ForbiddenError(detail="Only owner can change membership roles")
+        if target_membership.role == role:
+            raise ConflictError(detail="Membership already has this role")
         old_role = target_membership.role
         updated = await self.membership_repository.update_role(
             target_membership, role=role
