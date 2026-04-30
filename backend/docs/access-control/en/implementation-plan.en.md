@@ -239,7 +239,7 @@ POST   /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend
 Suggested commit:
 
 ```text
-🧾 feat(audit): record sensitive tenant and platform actions
+🧾 feat(audit): record sensitive tenant actions
 ```
 
 ### Add table
@@ -269,12 +269,10 @@ compliance
 ### Audit actions
 
 ```text
-organisation_name_changed
-organisation_slug_changed
+organisation_updated
 organisation_deleted
-member_removed
 membership_role_changed
-invite_created
+membership_removed
 invite_revoked
 invite_resent
 user_suspended
