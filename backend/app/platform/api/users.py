@@ -13,7 +13,9 @@ from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSE
 from app.core.platform import (
     PlatformActor,
     PlatformPermission,
+    PlatformWriteContext,
     require_platform_permission,
+    require_platform_write_context,
 )
 from app.platform.schemas.platform_users import (
     PlatformUserResponse,
@@ -71,14 +73,14 @@ async def get_platform_user(
 async def suspend_platform_user(
     user_id: UUID,
     payload: ReasonRequest,
-    actor: Annotated[
-        PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.USERS_SUSPEND)),
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(require_platform_write_context(PlatformPermission.USERS_SUSPEND)),
     ],
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformUserResponse:
-    user = await PlatformUsersService(db_session).suspend_user(
+    actor = write_context.actor
+    user = await PlatformUsersService(write_context.session).suspend_user(
         user_id=user_id,
         actor=actor,
         reason=payload.reason,
@@ -97,14 +99,14 @@ async def suspend_platform_user(
 async def restore_platform_user(
     user_id: UUID,
     payload: ReasonRequest,
-    actor: Annotated[
-        PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.USERS_RESTORE)),
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(require_platform_write_context(PlatformPermission.USERS_RESTORE)),
     ],
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformUserResponse:
-    user = await PlatformUsersService(db_session).restore_user(
+    actor = write_context.actor
+    user = await PlatformUsersService(write_context.session).restore_user(
         user_id=user_id,
         actor=actor,
         reason=payload.reason,

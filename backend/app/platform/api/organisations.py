@@ -13,7 +13,9 @@ from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSE
 from app.core.platform import (
     PlatformActor,
     PlatformPermission,
+    PlatformWriteContext,
     require_platform_permission,
+    require_platform_write_context,
 )
 from app.platform.schemas.platform_organisations import (
     PlatformOrganisationPatchRequest,
@@ -80,14 +82,18 @@ async def get_platform_org(
 async def suspend_platform_org(
     organisation_id: UUID,
     payload: ReasonRequest,
-    actor: Annotated[
-        PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.ORGANISATIONS_SUSPEND)),
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(
+            require_platform_write_context(PlatformPermission.ORGANISATIONS_SUSPEND)
+        ),
     ],
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformOrganisationResponse:
-    org = await PlatformOrganisationsService(db_session).suspend_organisation(
+    actor = write_context.actor
+    org = await PlatformOrganisationsService(
+        write_context.session
+    ).suspend_organisation(
         organisation_id=organisation_id,
         actor=actor,
         reason=payload.reason,
@@ -106,14 +112,18 @@ async def suspend_platform_org(
 async def restore_platform_org(
     organisation_id: UUID,
     payload: ReasonRequest,
-    actor: Annotated[
-        PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.ORGANISATIONS_RESTORE)),
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(
+            require_platform_write_context(PlatformPermission.ORGANISATIONS_RESTORE)
+        ),
     ],
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformOrganisationResponse:
-    org = await PlatformOrganisationsService(db_session).restore_organisation(
+    actor = write_context.actor
+    org = await PlatformOrganisationsService(
+        write_context.session
+    ).restore_organisation(
         organisation_id=organisation_id,
         actor=actor,
         reason=payload.reason,
@@ -132,18 +142,20 @@ async def restore_platform_org(
 async def patch_platform_org(
     organisation_id: UUID,
     payload: PlatformOrganisationPatchRequest,
-    actor: Annotated[
-        PlatformActor,
+    write_context: Annotated[
+        PlatformWriteContext,
         Depends(
-            require_platform_permission(
+            require_platform_write_context(
                 PlatformPermission.ORGANISATIONS_CORRECT_PROFILE
             )
         ),
     ],
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformOrganisationResponse:
-    org = await PlatformOrganisationsService(db_session).correct_organisation_profile(
+    actor = write_context.actor
+    org = await PlatformOrganisationsService(
+        write_context.session
+    ).correct_organisation_profile(
         organisation_id=organisation_id,
         actor=actor,
         name=payload.name,
