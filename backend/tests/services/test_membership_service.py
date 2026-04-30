@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.audit.context import AuditContext
 from app.core.errors.exceptions import ConflictError, ForbiddenError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
@@ -176,14 +177,22 @@ def test_change_membership_role_owner_can_promote_member() -> None:
     service.membership_repository.get_membership_by_id = AsyncMock(return_value=target)
     service.membership_repository.update_role = AsyncMock(return_value=target)
 
-    run_async(
-        service.change_membership_role(
-            organisation_id=organisation_id,
-            actor_user_id=actor_user_id,
-            membership_id=uuid4(),
-            role=MembershipRole.ADMIN,
+    with patch(
+        "app.memberships.services.memberships.AuditEventService"
+    ) as audit_service_cls:
+        audit_service_cls.return_value.record_event = AsyncMock()
+
+        run_async(
+            service.change_membership_role(
+                organisation_id=organisation_id,
+                actor_user_id=actor_user_id,
+                audit_context=AuditContext(actor_user_id=actor_user_id),
+                membership_id=uuid4(),
+                role=MembershipRole.ADMIN,
+            )
         )
-    )
+
+    audit_service_cls.return_value.record_event.assert_awaited_once()
 
 
 def test_change_membership_role_admin_is_forbidden() -> None:
@@ -216,10 +225,54 @@ def test_change_membership_role_admin_is_forbidden() -> None:
             service.change_membership_role(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                audit_context=AuditContext(actor_user_id=actor_user_id),
                 membership_id=uuid4(),
                 role=MembershipRole.ADMIN,
             )
         )
+
+
+def test_change_membership_role_rejects_noop_without_audit_event() -> None:
+    service = MembershipService(session=_session_stub())
+    service.membership_repository = AsyncMock()
+    organisation_id = uuid4()
+    actor_user_id = uuid4()
+    target = Membership(
+        user_id=uuid4(), organisation_id=organisation_id, role=MembershipRole.MEMBER
+    )
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(return_value=object())
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=type("Org", (), {"status": "active"})()
+    )
+    service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+            role=MembershipRole.OWNER,
+        )
+    )
+    service.membership_repository.get_membership_by_id = AsyncMock(return_value=target)
+
+    with patch(
+        "app.memberships.services.memberships.AuditEventService"
+    ) as audit_service_cls:
+        audit_service_cls.return_value.record_event = AsyncMock()
+        with pytest.raises(ConflictError, match="already has this role"):
+            run_async(
+                service.change_membership_role(
+                    organisation_id=organisation_id,
+                    actor_user_id=actor_user_id,
+                    audit_context=AuditContext(actor_user_id=actor_user_id),
+                    membership_id=uuid4(),
+                    role=MembershipRole.MEMBER,
+                )
+            )
+
+    service.membership_repository.update_role.assert_not_called()
+    audit_service_cls.return_value.record_event.assert_not_called()
 
 
 def test_directory_service_returns_projection_objects() -> None:
@@ -238,7 +291,7 @@ def test_directory_service_returns_projection_objects() -> None:
         )
     )
     service.membership_repository.list_directory_members_for_organisation = AsyncMock(
-        return_value=[("John", "Doe")]
+        return_value=[("John", "Doe", MembershipRole.ADMIN)]
     )
 
     items = run_async(
@@ -249,5 +302,5 @@ def test_directory_service_returns_projection_objects() -> None:
 
     assert len(items) == 1
     assert items[0].display_name == "John Doe"
-    assert items[0].role_label == "Organisation member"
+    assert items[0].tenant_role == MembershipRole.ADMIN
     assert not isinstance(items[0], Membership)

@@ -1,0 +1,31 @@
+from datetime import datetime
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict
+
+
+class PlatformAuditEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    actor_user_id: UUID | None
+    category: str
+    action: str
+    target_type: str
+    target_id: UUID | None
+    reason: str | None
+    metadata_json: dict[str, object] | None
+    ip_address: str | None
+    user_agent: str | None
+    created_at: datetime
+
+
+class PlatformAuditEventsMeta(BaseModel):
+    total: int
+    limit: int
+    offset: int
+
+
+class PlatformAuditEventsCollectionResponse(BaseModel):
+    data: list[PlatformAuditEventResponse]
+    meta: PlatformAuditEventsMeta
+    links: dict[str, str]

@@ -5,7 +5,9 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from app.audit.models.audit_event import AuditEvent
 from app.core.auth import AuthenticatedPrincipal
+from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.delivery import get_invite_token_sink
 from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation, OrganisationStatus
@@ -22,6 +24,11 @@ class InMemoryInviteTokenSink:
 
     def token_for_email(self, email: str) -> str:
         return self._tokens_by_email[email.lower()]
+
+
+class FailingInviteTokenSink:
+    async def deliver(self, *, invite, raw_token: str) -> None:
+        raise RuntimeError("delivery unavailable")
 
 
 def _identity_for(
@@ -45,6 +52,12 @@ def _override_token_sink(test_client) -> InMemoryInviteTokenSink:
     sink = InMemoryInviteTokenSink()
     test_client.app.dependency_overrides[get_invite_token_sink] = lambda: sink
     return sink
+
+
+def _override_failing_token_sink(test_client) -> None:
+    test_client.app.dependency_overrides[get_invite_token_sink] = lambda: (
+        FailingInviteTokenSink()
+    )
 
 
 def test_invite_accept_transfers_membership(
@@ -471,6 +484,110 @@ def test_create_invite_returns_single_resource_contract(
     assert body["organisation_id"] == organisation_id
     assert body["role"] == invite_role
     assert body["status"] == "pending"
+
+
+def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-create-fail", "owner-create-fail@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    _override_failing_token_sink(owner_bundle.client)
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Acme", "slug": "invite-create-fail"},
+        )
+        organisation_id = created.json()["id"]
+        response = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "invitee-create-fail@example.com", "role": "member"},
+        )
+        assert response.status_code == 201
+        invite_id = response.json()["id"]
+
+    async def _assert_persisted() -> None:
+        async with migrated_session_factory() as session:
+            invite_result = await session.execute(
+                select(Invite).where(Invite.id == UUID(invite_id))
+            )
+            invite = invite_result.scalar_one()
+            assert invite.status == InviteStatus.PENDING
+            audit_result = await session.execute(
+                select(AuditEvent).where(
+                    AuditEvent.target_id == invite.id,
+                    AuditEvent.action == "invite_created",
+                )
+            )
+            event = audit_result.scalar_one()
+            assert event.metadata_json == {
+                "organisation_id": str(organisation_id),
+                "invite_role": "member",
+            }
+            serialized = str(event.metadata_json).lower()
+            assert "token" not in serialized
+            assert "token_hash" not in serialized
+            assert "email" not in serialized
+
+    run_async(_assert_persisted())
+
+
+def test_resend_invite_delivery_failure_keeps_token_hash_and_audit_event(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-resend-fail", "owner-resend-fail@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Acme", "slug": "invite-resend-fail"},
+        )
+        organisation_id = created.json()["id"]
+        invite_response = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "invitee-resend-fail@example.com", "role": "member"},
+        )
+        invite_id = invite_response.json()["id"]
+        initial_token = owner_sink.token_for_email("invitee-resend-fail@example.com")
+    _override_failing_token_sink(owner_bundle.client)
+    with owner_bundle.client as client:
+        response = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend"
+        )
+        assert response.status_code == 200
+
+    async def _assert_resend_persisted() -> None:
+        async with migrated_session_factory() as session:
+            invite_result = await session.execute(
+                select(Invite).where(Invite.id == UUID(invite_id))
+            )
+            invite = invite_result.scalar_one()
+            assert (
+                invite.token_hash != sha256(initial_token.encode("utf-8")).hexdigest()
+            )
+            audit_result = await session.execute(
+                select(AuditEvent).where(
+                    AuditEvent.target_id == invite.id,
+                    AuditEvent.action == "invite_resent",
+                )
+            )
+            event = audit_result.scalar_one()
+            assert event.metadata_json == {
+                "organisation_id": str(organisation_id),
+                "invite_role": "member",
+            }
+            serialized = str(event.metadata_json).lower()
+            assert "token" not in serialized
+            assert "token_hash" not in serialized
+            assert "email" not in serialized
+
+    run_async(_assert_resend_persisted())
 
 
 def test_create_invite_returns_404_for_missing_organisation(

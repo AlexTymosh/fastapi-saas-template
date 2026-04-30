@@ -265,3 +265,14 @@ Requirements:
 - no ordinary tenant endpoint;
 - preferably two-person approval in future.
 ```
+
+
+## Implementation status update (2026-04-30)
+- Added backend-managed `platform_staff` foundation.
+- Added `/api/v1/platform/*` endpoints for users, organisations, and audit-events.
+- Added `require_platform_permission()` DB-backed authorization (JWT roles ignored for authorization).
+
+- Platform access is DB-backed via `platform_staff`; JWT roles are ignored by backend authorization.
+- Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
+- Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
+- Last-platform-admin hardening is deferred to future platform staff-management stage.

@@ -177,7 +177,7 @@ Purpose: minimal, privacy-aware colleague directory for organisation participant
 Allowed example fields:
 
 - display_name
-- role_label or public title (if needed)
+- tenant_role (`owner` / `admin` / `member`)
 - optional avatar_url in the future
 
 Do not expose by default:
@@ -185,7 +185,6 @@ Do not expose by default:
 - internal `user_id`
 - `membership_id`
 - email
-- system membership role (`owner` / `admin` / `member`) unless explicitly required by future product logic
 - status fields
 - audit/security metadata
 
@@ -335,3 +334,28 @@ Audit events (`audit_events`) should be written for:
 - platform staff created/removed/suspended;
 - GDPR export/anonymisation actions;
 - emergency data correction.
+
+
+## 8. Audit and reason policy
+
+- Tenant-sensitive writes must not silently ignore audit write failures.
+- Audit metadata is backend-controlled and must not include raw tokens, token hashes, full headers, cookies, authorisation values, or arbitrary PII.
+- Tenant destructive/revocation actions accept optional `reason` now (organisation delete, membership removal, invite revoke).
+- Future platform write actions must require `reason`.
+
+## 9. Invite delivery policy
+
+- Current invite delivery is best-effort and intended as development foundation.
+- Invite record and audit event are committed even if token delivery channel fails.
+- Production invite delivery should move to outbox/event worker + email provider integration.
+
+## 10. Enum storage note
+
+Future domain enum-like fields should use explicit string storage with DB check constraints unless there is a strong reason to use SQLAlchemy Enum(native_enum=False).
+
+- Backend source of truth for platform access is now `platform_staff`.
+
+- Platform access is DB-backed via `platform_staff`; JWT roles are ignored by backend authorization.
+- Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
+- Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
+- Last-platform-admin hardening is deferred to future platform staff-management stage.

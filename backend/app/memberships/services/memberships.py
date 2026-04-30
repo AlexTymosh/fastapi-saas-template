@@ -7,6 +7,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access_control.guards import ensure_organisation_active
+from app.audit.context import AuditContext
+from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
+from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
@@ -17,10 +20,17 @@ from app.users.services.users import UserService
 @dataclass(frozen=True)
 class OrganisationDirectoryMember:
     display_name: str
-    role_label: str
+    tenant_role: MembershipRole
 
 
 class MembershipService:
+    @staticmethod
+    def _ensure_audit_actor_matches(
+        *, actor_user_id: UUID, audit_context: AuditContext
+    ) -> None:
+        if audit_context.actor_user_id != actor_user_id:
+            raise ValueError("Audit actor does not match action actor")
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.membership_repository = MembershipRepository(session)
@@ -76,13 +86,19 @@ class MembershipService:
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
+        audit_context: AuditContext,
         membership_id: UUID,
         role: MembershipRole,
     ) -> Membership:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id,
+            audit_context=audit_context,
+        )
         if self.session.in_transaction():
             return await self._change_membership_role(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                audit_context=audit_context,
                 membership_id=membership_id,
                 role=role,
             )
@@ -90,6 +106,7 @@ class MembershipService:
             return await self._change_membership_role(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                audit_context=audit_context,
                 membership_id=membership_id,
                 role=role,
             )
@@ -99,6 +116,7 @@ class MembershipService:
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
+        audit_context: AuditContext,
         membership_id: UUID,
         role: MembershipRole,
     ) -> Membership:
@@ -122,28 +140,54 @@ class MembershipService:
             raise ForbiddenError(detail="Owner role cannot be modified")
         if actor_membership.role != MembershipRole.OWNER:
             raise ForbiddenError(detail="Only owner can change membership roles")
-        return await self.membership_repository.update_role(
+        if target_membership.role == role:
+            raise ConflictError(detail="Membership already has this role")
+        old_role = target_membership.role
+        updated = await self.membership_repository.update_role(
             target_membership, role=role
         )
+        await AuditEventService(self.session).record_event(
+            audit_context=audit_context,
+            category=AuditCategory.TENANT,
+            action=AuditAction.MEMBERSHIP_ROLE_CHANGED,
+            target_type=AuditTargetType.MEMBERSHIP,
+            target_id=updated.id,
+            metadata_json={
+                "organisation_id": str(organisation_id),
+                "old_role": old_role.value,
+                "new_role": updated.role.value,
+            },
+        )
+        return updated
 
     async def remove_membership(
         self,
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
+        audit_context: AuditContext,
         membership_id: UUID,
+        reason: str | None = None,
     ) -> Membership:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id,
+            audit_context=audit_context,
+        )
         if self.session.in_transaction():
             return await self._remove_membership(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                audit_context=audit_context,
                 membership_id=membership_id,
+                reason=reason,
             )
         async with self.session.begin():
             return await self._remove_membership(
                 organisation_id=organisation_id,
                 actor_user_id=actor_user_id,
+                audit_context=audit_context,
                 membership_id=membership_id,
+                reason=reason,
             )
 
     async def _remove_membership(
@@ -151,7 +195,9 @@ class MembershipService:
         *,
         organisation_id: UUID,
         actor_user_id: UUID,
+        audit_context: AuditContext,
         membership_id: UUID,
+        reason: str | None = None,
     ) -> Membership:
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
         await self.user_service.ensure_user_is_active(actor_user)
@@ -169,17 +215,33 @@ class MembershipService:
         )
         if target_membership.role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner membership cannot be removed")
+        removed = None
         if actor_membership.role == MembershipRole.OWNER:
-            return await self.membership_repository.deactivate_membership(
+            removed = await self.membership_repository.deactivate_membership(
                 target_membership
             )
-        if actor_membership.role == MembershipRole.ADMIN:
+        elif actor_membership.role == MembershipRole.ADMIN:
             if target_membership.role != MembershipRole.MEMBER:
                 raise ForbiddenError(detail="Admin can remove only members")
-            return await self.membership_repository.deactivate_membership(
+            removed = await self.membership_repository.deactivate_membership(
                 target_membership
             )
-        raise ForbiddenError(detail="You are not allowed to remove memberships")
+        else:
+            raise ForbiddenError(detail="You are not allowed to remove memberships")
+        await AuditEventService(self.session).record_event(
+            audit_context=audit_context,
+            category=AuditCategory.TENANT,
+            action=AuditAction.MEMBERSHIP_REMOVED,
+            target_type=AuditTargetType.MEMBERSHIP,
+            target_id=removed.id,
+            reason=reason,
+            metadata_json={
+                "organisation_id": str(organisation_id),
+                "removed_user_id": str(removed.user_id),
+                "previous_role": removed.role.value,
+            },
+        )
+        return removed
 
     async def get_membership_for_organisation(
         self,
@@ -269,9 +331,9 @@ class MembershipService:
                     f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
                     or "Organisation member"
                 ),
-                role_label="Organisation member",
+                tenant_role=role,
             )
-            for first_name, last_name in items
+            for first_name, last_name, role in items
         ]
 
     async def list_memberships_for_management(

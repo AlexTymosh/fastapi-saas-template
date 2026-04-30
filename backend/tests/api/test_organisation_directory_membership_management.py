@@ -20,7 +20,7 @@ def _provision(authenticated_client_factory, database_url: str, identity) -> Non
         assert client.get("/api/v1/users/me").status_code == 200
 
 
-def test_directory_privacy_and_neutral_role_label(
+def test_directory_privacy_and_tenant_role_visibility(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
@@ -67,9 +67,8 @@ def test_directory_privacy_and_neutral_role_label(
         payload = response.json()
         assert {"data", "meta", "links"} <= payload.keys()
         for item in payload["data"]:
-            assert set(item.keys()) == {"display_name", "role_label"}
-            assert item["role_label"] == "Organisation member"
-            assert item["role_label"] not in {"Owner", "Admin", "Member"}
+            assert set(item.keys()) == {"display_name", "tenant_role"}
+            assert item["tenant_role"] in {"owner", "admin", "member"}
             assert item["display_name"] != "john"
 
 
@@ -112,8 +111,10 @@ def test_delete_membership_returns_204_and_deactivates(
     membership_id = run_async(_insert_and_get_id())
 
     with owner_bundle.client as client:
-        response = client.delete(
-            f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}"
+        response = client.request(
+            "DELETE",
+            f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}",
+            json={"reason": "  policy violation  "},
         )
         assert response.status_code == 204
         assert response.content == b""

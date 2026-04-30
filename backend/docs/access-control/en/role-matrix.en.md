@@ -40,7 +40,7 @@ A standalone user has no tenant role.
 
 | Endpoint | Member | Admin | Owner | Data scope |
 |---|---:|---:|---:|---|
-| `GET /api/v1/organisations/{organisation_id}/directory` | Yes | Yes | Yes | Minimal colleague directory (`display_name`, optional public role label, optional avatar in future). No default exposure of internal `user_id`, `membership_id`, email, system role, statuses, or audit/security metadata. |
+| `GET /api/v1/organisations/{organisation_id}/directory` | Yes | Yes | Yes | Minimal colleague directory (`display_name` and `tenant_role` (`owner`/`admin`/`member`). No default exposure of internal `user_id`, `membership_id`, email, status fields, or audit/security metadata. |
 | `GET /api/v1/organisations/{organisation_id}/memberships` | No | Yes | Yes | Administrative membership view for management: may include `membership_id`, `user_id`, email, tenant role, and status fields. |
 
 ## 4. Invite matrix
@@ -108,3 +108,10 @@ The same actor may use a dedicated platform endpoint:
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
+
+- Platform matrix is now enforced by backend `platform_staff` role-to-permission mapping.
+
+- Platform access is DB-backed via `platform_staff`; JWT roles are ignored by backend authorization.
+- Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
+- Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
+- Last-platform-admin hardening is deferred to future platform staff-management stage.

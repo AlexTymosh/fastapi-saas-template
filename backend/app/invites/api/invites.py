@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
+from app.audit.context import build_audit_context_from_request
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
 from app.core.errors.openapi import (
@@ -23,6 +25,7 @@ from app.invites.schemas.invites import (
     AcceptInviteResponse,
     CreateInviteRequest,
     InviteResponse,
+    RevokeInviteRequest,
 )
 from app.invites.services.delivery import InviteTokenSink, get_invite_token_sink
 from app.invites.services.invites import InviteService
@@ -48,6 +51,7 @@ async def create_invite(
     organisation_id: UUID,
     payload: CreateInviteRequest,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
     token_sink: InviteTokenSinkDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
@@ -59,6 +63,9 @@ async def create_invite(
         actor_user_id=user.id,
         role=payload.role,
         email=payload.email,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
     )
     return InviteResponse.model_validate(invite)
 
@@ -97,7 +104,9 @@ async def revoke_invite(
     organisation_id: UUID,
     invite_id: UUID,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
+    payload: Annotated[RevokeInviteRequest | None, Body()] = None,
 ) -> None:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session)
@@ -105,6 +114,10 @@ async def revoke_invite(
         organisation_id=organisation_id,
         invite_id=invite_id,
         actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
+        reason=payload.reason if payload is not None else None,
     )
 
 
@@ -118,6 +131,7 @@ async def resend_invite(
     organisation_id: UUID,
     invite_id: UUID,
     identity: PrincipalDep,
+    request: Request,
     db_session: DbSessionDep,
     token_sink: InviteTokenSinkDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
@@ -128,5 +142,8 @@ async def resend_invite(
         organisation_id=organisation_id,
         invite_id=invite_id,
         actor_user_id=user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=user.id, request=request
+        ),
     )
     return InviteResponse.model_validate(invite)
