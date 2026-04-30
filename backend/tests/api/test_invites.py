@@ -11,17 +11,7 @@ from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation, OrganisationStatus
 from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
-
-
-class InMemoryInviteTokenSink:
-    def __init__(self) -> None:
-        self._tokens_by_email: dict[str, str] = {}
-
-    async def deliver(self, *, invite, raw_token: str) -> None:
-        self._tokens_by_email[invite.email.lower()] = raw_token
-
-    def token_for_email(self, email: str) -> str:
-        return self._tokens_by_email[email.lower()]
+from tests.helpers.invites import InMemoryInviteTokenSink
 
 
 def _identity_for(
