@@ -26,6 +26,13 @@ _SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 
 class OrganisationService:
+    @staticmethod
+    def _ensure_audit_actor_matches(
+        *, actor_user_id: UUID, audit_context: AuditContext
+    ) -> None:
+        if audit_context.actor_user_id != actor_user_id:
+            raise ValueError("Audit actor does not match action actor")
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.organisation_repository = OrganisationRepository(session)
@@ -89,6 +96,10 @@ class OrganisationService:
         name: str | None = None,
         slug: str | None = None,
     ) -> Organisation:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id,
+            audit_context=audit_context,
+        )
         if self.session.in_transaction():
             return await self._update_organisation_details(
                 organisation_id=organisation_id,
@@ -168,6 +179,10 @@ class OrganisationService:
         actor_user_id: UUID,
         audit_context: AuditContext,
     ) -> Organisation:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id,
+            audit_context=audit_context,
+        )
         if self.session.in_transaction():
             return await self._soft_delete(
                 organisation_id=organisation_id,

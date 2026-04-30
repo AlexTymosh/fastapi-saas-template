@@ -24,6 +24,13 @@ from app.users.services.users import UserService
 
 
 class InviteService:
+    @staticmethod
+    def _ensure_audit_actor_matches(
+        *, actor_user_id: UUID, audit_context: AuditContext
+    ) -> None:
+        if audit_context.actor_user_id != actor_user_id:
+            raise ValueError("Audit actor does not match action actor")
+
     DEFAULT_INVITE_TTL = timedelta(days=7)
 
     def __init__(
@@ -152,6 +159,10 @@ class InviteService:
         actor_user_id: UUID,
         audit_context: AuditContext,
     ) -> None:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id,
+            audit_context=audit_context,
+        )
         async with (
             self.session.begin()
             if not self.session.in_transaction()
@@ -199,6 +210,10 @@ class InviteService:
         actor_user_id: UUID,
         audit_context: AuditContext,
     ) -> Invite:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id,
+            audit_context=audit_context,
+        )
         async with (
             self.session.begin()
             if not self.session.in_transaction()
