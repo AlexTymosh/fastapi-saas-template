@@ -168,3 +168,24 @@ def test_openapi_membership_collection_response_has_data_meta_links(
 
     meta_schema = spec["components"]["schemas"]["MembershipCollectionMeta"]
     assert "total" in meta_schema["properties"]
+
+
+def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    paths = spec["paths"]
+
+    assert "/api/v1/platform/users" in paths
+    assert "/api/v1/platform/users/{user_id}" in paths
+    assert "/api/v1/platform/users/{user_id}/suspend" in paths
+    assert "/api/v1/platform/users/{user_id}/restore" in paths
+    assert "/api/v1/platform/organisations" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}/suspend" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}/restore" in paths
+    assert "/api/v1/platform/audit-events" in paths
