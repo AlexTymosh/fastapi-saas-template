@@ -31,12 +31,14 @@ def _identity_for(
     *,
     email_verified: bool = True,
 ) -> AuthenticatedPrincipal:
-    return AuthenticatedPrincipal(
-        external_auth_id=external_auth_id,
-        email=email,
-        email_verified=email_verified,
-        platform_roles=roles or [],
-    )
+    claims: dict[str, object] = {
+        "sub": external_auth_id,
+        "email": email,
+        "email_verified": email_verified,
+    }
+    if roles is not None:
+        claims["roles"] = roles
+    return AuthenticatedPrincipal.from_unverified_jwt_claims(claims)
 
 
 def _override_token_sink(test_client) -> InMemoryInviteTokenSink:

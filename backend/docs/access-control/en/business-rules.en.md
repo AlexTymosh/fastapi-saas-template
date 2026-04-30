@@ -16,12 +16,14 @@
 5. A user may have at most one active organisation membership.
 6. Creating an organisation should require `email_verified=true`.
 7. A suspended user must not be able to:
+   - perform tenant actions except reading `/api/v1/users/me`;
    - create an organisation;
    - accept an invite;
    - create an invite;
    - update organisation data;
    - manage memberships;
    - perform platform actions.
+8. A suspended user may still access `GET /api/v1/users/me` for self-state visibility.
 
 ### Not a role
 
@@ -90,6 +92,7 @@ member
 3. Membership role is scoped to the organisation only.
 4. Organisation roles are not platform roles.
 5. Platform staff roles must not grant tenant membership rights.
+6. External JWT role claims (`roles`, `realm_access`, `resource_access`) are ignored for backend authorization decisions.
 
 ### Owner rules
 

@@ -114,7 +114,6 @@ async def test_otlp_collector_receives_http_and_rate_limit_metrics_export(
             external_auth_id=f"otlp-rate-limit-user-{test_suffix}",
             email="integration-user@example.com",
             email_verified=True,
-            platform_roles=[],
         )
 
     app.dependency_overrides[get_authenticated_principal] = _principal

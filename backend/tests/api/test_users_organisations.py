@@ -36,14 +36,16 @@ def _identity_for(
     first_name: str = "Test",
     last_name: str = "User",
 ) -> AuthenticatedPrincipal:
-    return AuthenticatedPrincipal(
-        external_auth_id=external_auth_id,
-        email=email,
-        email_verified=email_verified,
-        first_name=first_name,
-        last_name=last_name,
-        platform_roles=roles or [],
-    )
+    claims: dict[str, object] = {
+        "sub": external_auth_id,
+        "email": email,
+        "email_verified": email_verified,
+        "given_name": first_name,
+        "family_name": last_name,
+    }
+    if roles is not None:
+        claims["roles"] = roles
+    return AuthenticatedPrincipal.from_unverified_jwt_claims(claims)
 
 
 def _create_client_and_session_factory(tmp_path):

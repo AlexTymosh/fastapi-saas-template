@@ -76,8 +76,10 @@ organisations.suspended_reason
 
 ```text
 - suspended user cannot perform tenant actions
+- suspended user may still call GET /api/v1/users/me
 - suspended user cannot accept invite
 - suspended user cannot create organisation
+- suspended user cannot perform platform actions
 - suspended organisation blocks ordinary tenant actions
 ```
 
