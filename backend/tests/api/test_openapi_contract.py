@@ -168,3 +168,66 @@ def test_openapi_membership_collection_response_has_data_meta_links(
 
     meta_schema = spec["components"]["schemas"]["MembershipCollectionMeta"]
     assert "total" in meta_schema["properties"]
+
+
+def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    paths = spec["paths"]
+
+    assert "/api/v1/platform/users" in paths
+    assert "/api/v1/platform/users/{user_id}" in paths
+    assert "/api/v1/platform/users/{user_id}/suspend" in paths
+    assert "/api/v1/platform/users/{user_id}/restore" in paths
+    assert "/api/v1/platform/organisations" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}/suspend" in paths
+    assert "/api/v1/platform/organisations/{organisation_id}/restore" in paths
+    assert "/api/v1/platform/audit-events" in paths
+
+
+def test_openapi_platform_collection_and_errors_contract(monkeypatch) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    spec = response.json()
+
+    users_get = spec["paths"]["/api/v1/platform/users"]["get"]
+    orgs_get = spec["paths"]["/api/v1/platform/organisations"]["get"]
+    audit_get = spec["paths"]["/api/v1/platform/audit-events"]["get"]
+
+    assert users_get["responses"]["200"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/PlatformUsersCollectionResponse")
+    assert orgs_get["responses"]["200"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/PlatformOrganisationsCollectionResponse")
+    assert audit_get["responses"]["200"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/PlatformAuditEventsCollectionResponse")
+
+    for status in ("401", "403", "422"):
+        assert status in users_get["responses"]
+        assert "application/problem+json" in users_get["responses"][status]["content"]
+
+    suspend_post = spec["paths"]["/api/v1/platform/users/{user_id}/suspend"]["post"]
+    for status in ("403", "409", "422"):
+        assert status in suspend_post["responses"]
+        assert (
+            "application/problem+json" in suspend_post["responses"][status]["content"]
+        )
+
+    users_collection = spec["components"]["schemas"]["PlatformUsersCollectionResponse"]
+    assert set(users_collection["required"]) == {"data", "meta", "links"}
+    users_meta_ref = users_collection["properties"]["meta"]["$ref"]
+    users_meta_name = users_meta_ref.split("/")[-1]
+    users_meta = spec["components"]["schemas"][users_meta_name]
+    for key in ("total", "limit", "offset"):
+        assert key in users_meta["properties"]

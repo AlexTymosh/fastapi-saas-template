@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.models.audit_event import AuditEvent
 from app.core.db import get_db_session
+from app.core.errors.openapi import COMMON_ERROR_RESPONSES
 from app.core.platform import PlatformPermission, require_platform_permission
 from app.platform.schemas.platform_audit_events import (
     PlatformAuditEventResponse,
@@ -19,7 +20,11 @@ from app.platform.schemas.platform_audit_events import (
 router = APIRouter(prefix="/platform/audit-events", tags=["platform"])
 
 
-@router.get("", response_model=PlatformAuditEventsCollectionResponse)
+@router.get(
+    "",
+    response_model=PlatformAuditEventsCollectionResponse,
+    responses=COMMON_ERROR_RESPONSES,
+)
 async def list_platform_audit_events(
     _: Annotated[
         object, Depends(require_platform_permission(PlatformPermission.AUDIT_READ))
