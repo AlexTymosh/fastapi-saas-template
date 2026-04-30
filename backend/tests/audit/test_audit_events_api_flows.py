@@ -5,8 +5,26 @@ import json
 from sqlalchemy import select
 
 from app.audit.models.audit_event import AuditEvent
+from app.invites.services.delivery import get_invite_token_sink
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
+
+
+class InMemoryInviteTokenSink:
+    def __init__(self) -> None:
+        self._tokens_by_email: dict[str, str] = {}
+
+    async def deliver(self, *, invite, raw_token: str) -> None:
+        self._tokens_by_email[invite.email.lower()] = raw_token
+
+    def token_for_email(self, email: str) -> str:
+        return self._tokens_by_email[email.lower()]
+
+
+def _override_token_sink(test_client) -> InMemoryInviteTokenSink:
+    sink = InMemoryInviteTokenSink()
+    test_client.app.dependency_overrides[get_invite_token_sink] = lambda: sink
+    return sink
 
 
 def assert_metadata_has_no_sensitive_invite_fields(metadata: dict[str, object]) -> None:
@@ -25,113 +43,213 @@ def _events(migrated_session_factory):
     return run_async(_query())
 
 
-def test_sensitive_actions_write_audit_events(
+def _event_by_action(migrated_session_factory, action: str) -> AuditEvent:
+    events = _events(migrated_session_factory)
+    event = next((item for item in events if item.action == action), None)
+    assert event is not None
+    return event
+
+
+def test_organisation_update_writes_audit_event(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
-    owner = identity_for("kc-audit-owner", "audit-owner@example.com")
-    member = identity_for("kc-audit-member", "audit-member@example.com")
-    outsider = identity_for("kc-audit-outsider", "audit-outsider@example.com")
-
     owner_bundle = authenticated_client_factory(
-        identity=owner, database_url=migrated_database_url, redis_url=None
+        identity=identity_for("kc-audit-owner-update", "audit-owner-update@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
     )
-    member_bundle = authenticated_client_factory(
-        identity=member, database_url=migrated_database_url, redis_url=None
-    )
-    outsider_bundle = authenticated_client_factory(
-        identity=outsider, database_url=migrated_database_url, redis_url=None
-    )
-
-    with member_bundle.client as client:
-        client.get("/api/v1/users/me")
-
-    with outsider_bundle.client as client:
-        client.get("/api/v1/users/me")
 
     with owner_bundle.client as client:
-        org = client.post(
-            "/api/v1/organisations", json={"name": "Audit Org", "slug": "audit-org"}
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Audit Org Update", "slug": "audit-org-update"},
         )
-        organisation_id = org.json()["id"]
-
-        update_org = client.patch(
-            f"/api/v1/organisations/{organisation_id}", json={"slug": "audit-org-2"}
+        organisation_id = create.json()["id"]
+        response = client.patch(
+            f"/api/v1/organisations/{organisation_id}",
+            json={"slug": "audit-org-update-2"},
         )
-        assert update_org.status_code == 200
+        assert response.status_code == 200
 
+    event = _event_by_action(migrated_session_factory, "organisation_updated")
+    assert event.target_type == "organisation"
+
+
+def test_invite_resend_writes_audit_event_without_sensitive_metadata(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for("kc-audit-owner-resend", "audit-owner-resend@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Audit Org Resend", "slug": "audit-org-resend"},
+        )
+        organisation_id = create.json()["id"]
         invite = client.post(
             f"/api/v1/organisations/{organisation_id}/invites",
-            json={"email": "audit-member@example.com", "role": "member"},
+            json={"email": "audit-member-resend@example.com", "role": "member"},
         )
-        assert invite.status_code == 201
         invite_id = invite.json()["id"]
-
-        resend = client.post(
+        response = client.post(
             f"/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend"
         )
-        assert resend.status_code == 200
+        assert response.status_code == 200
 
-        revoke = client.delete(
-            f"/api/v1/organisations/{organisation_id}/invites/{invite_id}"
-        )
-        assert revoke.status_code == 204
+    assert owner_sink.token_for_email("audit-member-resend@example.com")
+    event = _event_by_action(migrated_session_factory, "invite_resent")
+    assert event.metadata_json is not None
+    assert_metadata_has_no_sensitive_invite_fields(event.metadata_json)
 
-        invite_admin = client.post(
-            f"/api/v1/organisations/{organisation_id}/invites",
-            json={"email": "audit-member@example.com", "role": "admin"},
-        )
-        assert invite_admin.status_code == 201
 
-    with member_bundle.client as client:
-        accept = client.post(
-            "/api/v1/invites/accept", json={"token": invite_admin.json()["token"]}
-        )
-        assert accept.status_code in {200, 404, 422}
+def test_invite_revoke_writes_audit_event_without_sensitive_metadata(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for("kc-audit-owner-revoke", "audit-owner-revoke@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
 
     with owner_bundle.client as client:
-        memberships = client.get(f"/api/v1/organisations/{organisation_id}/memberships")
-        member_row = next(
-            item for item in memberships.json()["data"] if item["role"] == "member"
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Audit Org Revoke", "slug": "audit-org-revoke"},
         )
-        membership_id = member_row["id"]
-        change_role = client.patch(
+        organisation_id = create.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "audit-member-revoke@example.com", "role": "member"},
+        )
+        invite_id = invite.json()["id"]
+        response = client.delete(
+            f"/api/v1/organisations/{organisation_id}/invites/{invite_id}"
+        )
+        assert response.status_code == 204
+
+    event = _event_by_action(migrated_session_factory, "invite_revoked")
+    assert event.metadata_json is not None
+    assert_metadata_has_no_sensitive_invite_fields(event.metadata_json)
+
+
+def test_membership_role_change_writes_audit_event(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for("kc-audit-owner-role", "audit-owner-role@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+    member_bundle = authenticated_client_factory(
+        identity=identity_for("kc-audit-member-role", "audit-member-role@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Audit Org Role", "slug": "audit-org-role"},
+        )
+        organisation_id = create.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "audit-member-role@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+
+    raw_token = owner_sink.token_for_email("audit-member-role@example.com")
+    with member_bundle.client as client:
+        accept = client.post("/api/v1/invites/accept", json={"token": raw_token})
+        assert accept.status_code == 200
+        membership_id = accept.json()["membership_id"]
+
+    with owner_bundle.client as client:
+        response = client.patch(
             f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}/role",
             json={"role": "admin"},
         )
-        assert change_role.status_code == 200
+        assert response.status_code == 200
 
-        remove_member = client.delete(
+    event = _event_by_action(migrated_session_factory, "membership_role_changed")
+    assert event.metadata_json["old_role"] == "member"
+    assert event.metadata_json["new_role"] == "admin"
+
+
+def test_membership_remove_writes_audit_event(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for(
+            "kc-audit-owner-remove-member", "audit-owner-remove-member@example.com"
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+    member_bundle = authenticated_client_factory(
+        identity=identity_for(
+            "kc-audit-member-remove-member", "audit-member-remove-member@example.com"
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Audit Org Remove", "slug": "audit-org-remove-member"},
+        )
+        organisation_id = create.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "audit-member-remove-member@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+
+    raw_token = owner_sink.token_for_email("audit-member-remove-member@example.com")
+    with member_bundle.client as client:
+        accept = client.post("/api/v1/invites/accept", json={"token": raw_token})
+        assert accept.status_code == 200
+        membership_id = accept.json()["membership_id"]
+
+    with owner_bundle.client as client:
+        response = client.delete(
             f"/api/v1/organisations/{organisation_id}/memberships/{membership_id}"
         )
-        assert remove_member.status_code == 204
+        assert response.status_code == 204
 
-        delete_org = client.delete(f"/api/v1/organisations/{organisation_id}")
-        assert delete_org.status_code == 204
+    event = _event_by_action(migrated_session_factory, "membership_removed")
+    assert event.metadata_json["previous_role"] == "member"
 
-    events = _events(migrated_session_factory)
-    by_action = {event.action: event for event in events}
-    assert "organisation_updated" in by_action
-    assert "organisation_deleted" in by_action
-    assert "membership_role_changed" in by_action
-    assert "membership_removed" in by_action
-    assert "invite_revoked" in by_action
-    assert "invite_resent" in by_action
 
-    deleted = by_action["organisation_deleted"]
-    assert deleted.target_type == "organisation"
-    assert deleted.metadata_json["soft_delete"] is True
+def test_organisation_delete_writes_audit_event(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=identity_for("kc-audit-owner-delete", "audit-owner-delete@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
 
-    role_changed = by_action["membership_role_changed"]
-    assert role_changed.metadata_json["old_role"] == "member"
-    assert role_changed.metadata_json["new_role"] == "admin"
+    with owner_bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Audit Org Delete", "slug": "audit-org-delete"},
+        )
+        organisation_id = create.json()["id"]
+        response = client.delete(f"/api/v1/organisations/{organisation_id}")
+        assert response.status_code == 204
 
-    removed = by_action["membership_removed"]
-    assert removed.metadata_json["previous_role"] == "member"
-
-    for action in ("invite_revoked", "invite_resent"):
-        metadata = by_action[action].metadata_json
-        assert metadata is not None
-        assert_metadata_has_no_sensitive_invite_fields(metadata)
+    event = _event_by_action(migrated_session_factory, "organisation_deleted")
+    assert event.target_type == "organisation"
+    assert event.metadata_json["soft_delete"] is True
 
 
 def test_failed_permission_does_not_write_success_audit_event(
