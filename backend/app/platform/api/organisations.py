@@ -85,7 +85,8 @@ async def suspend_platform_org(
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
-            require_platform_write_context(PlatformPermission.ORGANISATIONS_SUSPEND)
+            require_platform_write_context(PlatformPermission.ORGANISATIONS_SUSPEND),
+            scope="function",
         ),
     ],
     request: Request,
@@ -115,7 +116,8 @@ async def restore_platform_org(
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
-            require_platform_write_context(PlatformPermission.ORGANISATIONS_RESTORE)
+            require_platform_write_context(PlatformPermission.ORGANISATIONS_RESTORE),
+            scope="function",
         ),
     ],
     request: Request,
@@ -147,7 +149,8 @@ async def patch_platform_org(
         Depends(
             require_platform_write_context(
                 PlatformPermission.ORGANISATIONS_CORRECT_PROFILE
-            )
+            ),
+            scope="function",
         ),
     ],
     request: Request,

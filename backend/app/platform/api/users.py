@@ -75,7 +75,10 @@ async def suspend_platform_user(
     payload: ReasonRequest,
     write_context: Annotated[
         PlatformWriteContext,
-        Depends(require_platform_write_context(PlatformPermission.USERS_SUSPEND)),
+        Depends(
+            require_platform_write_context(PlatformPermission.USERS_SUSPEND),
+            scope="function",
+        ),
     ],
     request: Request,
 ) -> PlatformUserResponse:
@@ -101,7 +104,10 @@ async def restore_platform_user(
     payload: ReasonRequest,
     write_context: Annotated[
         PlatformWriteContext,
-        Depends(require_platform_write_context(PlatformPermission.USERS_RESTORE)),
+        Depends(
+            require_platform_write_context(PlatformPermission.USERS_RESTORE),
+            scope="function",
+        ),
     ],
     request: Request,
 ) -> PlatformUserResponse:
