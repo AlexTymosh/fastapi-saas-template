@@ -6,8 +6,8 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access_control.guards import ensure_organisation_active
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.domain_guards.guards import ensure_organisation_active
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 from app.organisations.services.organisations import OrganisationService

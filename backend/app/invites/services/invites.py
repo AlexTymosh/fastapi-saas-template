@@ -8,9 +8,9 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access_control.guards import ensure_email_verified, ensure_organisation_active
 from app.core.auth import AuthenticatedPrincipal
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.domain_guards.guards import ensure_email_verified, ensure_organisation_active
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.repositories.invites import InviteRepository
 from app.invites.services.delivery import InviteTokenSink, NoOpInviteTokenSink

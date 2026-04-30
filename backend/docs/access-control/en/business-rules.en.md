@@ -335,3 +335,5 @@ Audit events (`audit_events`) should be written for:
 - platform staff created/removed/suspended;
 - GDPR export/anonymisation actions;
 - emergency data correction.
+
+- GET /api/v1/users/me is a self-state endpoint and remains available for suspended users and users whose organisation is suspended. It may return membership summary including organisation_status, but it must not allow tenant actions.

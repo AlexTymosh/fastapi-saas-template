@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access_control.guards import ensure_email_verified
 from app.core.auth import AuthenticatedPrincipal
+from app.domain_guards.guards import ensure_email_verified
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from app.organisations.models.organisation import Organisation

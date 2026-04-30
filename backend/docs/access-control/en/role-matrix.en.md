@@ -108,3 +108,5 @@ The same actor may use a dedicated platform endpoint:
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
+
+- GET /api/v1/users/me is a self-state endpoint and remains available for suspended users and users whose organisation is suspended. It may return membership summary including organisation_status, but it must not allow tenant actions.

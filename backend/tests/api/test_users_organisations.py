@@ -277,11 +277,16 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
 
         me = client.get("/api/v1/users/me")
         assert me.status_code == 200
+        assert me.json()["status"] == UserStatus.ACTIVE.value
         payload = me.json()
         assert payload["onboarding_completed"] is True
         assert payload["status"] == UserStatus.ACTIVE.value
         assert payload["membership"]["organisation_id"] == organisation_id
         assert payload["membership"]["role"] == MembershipRole.OWNER.value
+        assert (
+            payload["membership"]["organisation_status"]
+            == OrganisationStatus.ACTIVE.value
+        )
 
         memberships_response = client.get(
             f"/api/v1/organisations/{organisation_id}/memberships"
@@ -387,6 +392,13 @@ def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
+
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+        assert (
+            me.json()["membership"]["organisation_status"]
+            == OrganisationStatus.SUSPENDED.value
+        )
         assert response.headers["content-type"].startswith("application/problem+json")
 
     run_async(engine.dispose())
@@ -415,6 +427,13 @@ def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> N
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
+
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+        assert (
+            me.json()["membership"]["organisation_status"]
+            == OrganisationStatus.SUSPENDED.value
+        )
 
     async def _fetch_user() -> User:
         async with session_factory() as session:
@@ -791,6 +810,13 @@ def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
+
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+        assert (
+            me.json()["membership"]["organisation_status"]
+            == OrganisationStatus.SUSPENDED.value
+        )
         assert response.headers["content-type"].startswith("application/problem+json")
 
     run_async(engine.dispose())
@@ -961,6 +987,7 @@ def test_suspended_user_cannot_create_organisation(
     with bundle.client as client:
         me = client.get("/api/v1/users/me")
         assert me.status_code == 200
+        assert me.json()["status"] == UserStatus.ACTIVE.value
 
     async def _suspend() -> None:
         async with migrated_session_factory() as session:
@@ -1012,3 +1039,10 @@ def test_suspended_organisation_returns_403_for_get(
     with bundle.client as client:
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
+
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+        assert (
+            me.json()["membership"]["organisation_status"]
+            == OrganisationStatus.SUSPENDED.value
+        )

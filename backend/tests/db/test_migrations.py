@@ -227,3 +227,124 @@ def test_external_db_test_requires_enable_env_guard(
         ),
     ):
         test_alembic_upgrade_head_and_check_with_external_database()
+
+
+@pytest.mark.integration
+def test_invite_pending_unique_index_lifecycle_behaviour(
+    postgres_integration_url: str,
+) -> None:
+    env = os.environ.copy()
+    env["DATABASE__URL"] = postgres_integration_url
+
+    upgrade = _run_alembic("upgrade", "head", env=env)
+    assert upgrade.returncode == 0, upgrade.stdout + "\n" + upgrade.stderr
+
+    engine = sa.create_engine(postgres_integration_url)
+    with engine.begin() as connection:
+        org_id = connection.execute(
+            sa.text(
+                """
+                INSERT INTO organisations (
+                    id, name, slug, status, created_at, updated_at
+                )
+                VALUES (gen_random_uuid(), 'Org A', 'org-a-idx', 'active', now(), now())
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO invites (
+                        id,
+                        email,
+                        organisation_id,
+                        role,
+                        status,
+                        token_hash,
+                        expires_at,
+                        created_at,
+                        updated_at
+                    )
+                VALUES (
+                    gen_random_uuid(),
+                    :email,
+                    :org_id,
+                    'member',
+                    'pending',
+                    'tok-1',
+                    now(),
+                    now(),
+                    now()
+                )
+                """
+            ),
+            {"email": "Test@Example.com", "org_id": org_id},
+        )
+
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO invites (
+                        id,
+                        email,
+                        organisation_id,
+                        role,
+                        status,
+                        token_hash,
+                        expires_at,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        gen_random_uuid(),
+                        :email,
+                        :org_id,
+                        'member',
+                        'pending',
+                        'tok-2',
+                        now(),
+                        now(),
+                        now()
+                    )
+                    """
+                ),
+                {"email": "test@example.com", "org_id": org_id},
+            )
+
+        connection.execute(
+            sa.text("UPDATE invites SET status = 'revoked' WHERE token_hash = 'tok-1'")
+        )
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO invites (
+                        id,
+                        email,
+                        organisation_id,
+                        role,
+                        status,
+                        token_hash,
+                        expires_at,
+                        created_at,
+                        updated_at
+                    )
+                VALUES (
+                    gen_random_uuid(),
+                    :email,
+                    :org_id,
+                    'member',
+                    'pending',
+                    'tok-3',
+                    now(),
+                    now(),
+                    now()
+                )
+                """
+            ),
+            {"email": "test@example.com", "org_id": org_id},
+        )
+
+    engine.dispose()
