@@ -109,11 +109,13 @@ def test_accept_invite_provisions_missing_projection_user() -> None:
     service.user_service.get_or_create_current_user.assert_awaited_once()
 
 
-def test_user_with_active_membership_cannot_accept_invite_to_another_organisation() -> None:
+def test_user_with_active_membership_cannot_accept_invite_to_another_organisation() -> (
+    None
+):
     service = _service()
     invite_organisation_id = uuid4()
-    existing_organisation_id = uuid4()
     user_id = uuid4()
+
     service.invite_repository = AsyncMock()
     invite = Invite(
         email="invited@example.com",
@@ -124,36 +126,41 @@ def test_user_with_active_membership_cannot_accept_invite_to_another_organisatio
     )
     service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
     service.invite_repository.mark_status = AsyncMock()
+
     service.user_service = AsyncMock()
-    service.user_service.get_or_create_current_user = AsyncMock(
-        return_value=User(
-            id=user_id,
-            external_auth_id="kc-1",
-            email="invited@example.com",
-        )
+    user = User(
+        id=user_id,
+        external_auth_id="kc-1",
+        email="invited@example.com",
     )
+    service.user_service.get_or_create_current_user = AsyncMock(return_value=user)
     service.user_service.ensure_user_is_active = AsyncMock()
+
     service.organisation_service = AsyncMock()
     service.organisation_service.get_organisation = AsyncMock(
         return_value=Organisation(name="Acme", slug="acme")
     )
+
     service.membership_service = AsyncMock()
     service.membership_service.create_membership = AsyncMock(
         side_effect=ConflictError(detail="User already belongs to an organisation")
     )
-    existing_membership = Membership(
-        user_id=user_id,
-        organisation_id=existing_organisation_id,
-        role=MembershipRole.MEMBER,
-    )
+    service.membership_service.transfer_membership = AsyncMock()
 
     with pytest.raises(ConflictError):
         run_async(
-            service.accept_invite(token="abc", identity=_identity("invited@example.com"))
+            service.accept_invite(
+                token="abc",
+                identity=_identity("invited@example.com"),
+            )
         )
 
-    assert existing_membership.is_active is True
-    service.membership_service.create_membership.assert_awaited_once()
+    service.membership_service.create_membership.assert_awaited_once_with(
+        user_id=user_id,
+        organisation_id=invite_organisation_id,
+        role=MembershipRole.MEMBER,
+    )
+    service.membership_service.transfer_membership.assert_not_awaited()
     service.invite_repository.mark_status.assert_not_called()
 
 
@@ -186,7 +193,9 @@ def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
 
     with pytest.raises(ConflictError):
         run_async(
-            service.accept_invite(token="abc", identity=_identity("invited@example.com"))
+            service.accept_invite(
+                token="abc", identity=_identity("invited@example.com")
+            )
         )
 
     service.membership_service.create_membership.assert_awaited_once()
@@ -195,43 +204,54 @@ def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
 
 def test_sole_owner_cannot_be_transferred_by_accepting_invite() -> None:
     service = _service()
-    source_org_id = uuid4()
+    invite_organisation_id = uuid4()
     user_id = uuid4()
+
     service.invite_repository = AsyncMock()
     invite = Invite(
         email="owner@example.com",
-        organisation_id=uuid4(),
+        organisation_id=invite_organisation_id,
         role=MembershipRole.MEMBER,
         status=InviteStatus.PENDING,
         token_hash="x",
     )
     service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
     service.invite_repository.mark_status = AsyncMock()
+
     service.user_service = AsyncMock()
-    service.user_service.get_or_create_current_user = AsyncMock(
-        return_value=User(id=user_id, external_auth_id="kc-owner", email="owner@example.com")
+    user = User(
+        id=user_id,
+        external_auth_id="kc-owner",
+        email="owner@example.com",
     )
+    service.user_service.get_or_create_current_user = AsyncMock(return_value=user)
     service.user_service.ensure_user_is_active = AsyncMock()
+
     service.organisation_service = AsyncMock()
     service.organisation_service.get_organisation = AsyncMock(
         return_value=Organisation(name="Target", slug="target")
     )
+
     service.membership_service = AsyncMock()
     service.membership_service.create_membership = AsyncMock(
         side_effect=ConflictError(detail="User already belongs to an organisation")
     )
-    owner_membership = Membership(
-        user_id=user_id,
-        organisation_id=source_org_id,
-        role=MembershipRole.OWNER,
-    )
+    service.membership_service.transfer_membership = AsyncMock()
 
     with pytest.raises(ConflictError):
         run_async(
-            service.accept_invite(token="abc", identity=_identity("owner@example.com"))
+            service.accept_invite(
+                token="abc",
+                identity=_identity("owner@example.com"),
+            )
         )
 
-    assert owner_membership.is_active is True
+    service.membership_service.create_membership.assert_awaited_once_with(
+        user_id=user_id,
+        organisation_id=invite_organisation_id,
+        role=MembershipRole.MEMBER,
+    )
+    service.membership_service.transfer_membership.assert_not_awaited()
     service.invite_repository.mark_status.assert_not_called()
 
 

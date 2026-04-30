@@ -173,6 +173,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
 def test_invite_accept_rejects_transfer_for_sole_owner(
     authenticated_client_factory,
     migrated_database_url: str,
+    migrated_session_factory,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-sole", "owner-sole@example.com"),
@@ -181,6 +182,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
     )
     owner_client = owner_client_bundle.client
     owner_sink = _override_token_sink(owner_client)
+
     with owner_client as client:
         create_org = client.post(
             "/api/v1/organisations",
@@ -201,17 +203,50 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
         redis_url=None,
     )
     sole_owner_client = sole_owner_client_bundle.client
+
     with sole_owner_client as client:
         create_org = client.post(
             "/api/v1/organisations",
             json={"name": "Org Sole Source", "slug": "org-sole-source"},
         )
         assert create_org.status_code == 201
+        source_org_id = create_org.json()["id"]
 
     token = owner_sink.token_for_email("invitee-sole@example.com")
+
     with sole_owner_client as client:
         response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 409
+        assert response.headers["content-type"].startswith("application/problem+json")
+        assert response.json()["error_code"] == "conflict"
+
+    async def _assert_owner_membership_and_invite_pending() -> None:
+        async with migrated_session_factory() as session:
+            user_result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-invitee-sole")
+            )
+            user = user_result.scalar_one()
+
+            memberships_result = await session.execute(
+                select(Membership).where(Membership.user_id == user.id)
+            )
+            memberships = list(memberships_result.scalars().all())
+
+            assert len(memberships) == 1
+            assert memberships[0].organisation_id == UUID(source_org_id)
+            assert memberships[0].role == MembershipRole.OWNER
+            assert memberships[0].is_active is True
+
+            invite_result = await session.execute(
+                select(Invite).where(
+                    Invite.organisation_id == UUID(target_org_id),
+                    Invite.email == "invitee-sole@example.com",
+                )
+            )
+            invite = invite_result.scalar_one()
+            assert invite.status == InviteStatus.PENDING
+
+    run_async(_assert_owner_membership_and_invite_pending())
 
 
 def test_superadmin_role_cannot_invite_without_membership(
