@@ -441,3 +441,5 @@ Suggested commit:
 [ ] platform actions available only through /api/v1/platform/*
 [ ] tests cover tenant/platform separation and role matrix
 ```
+
+- Platform foundation implemented: `platform_staff`, platform permissions/dependency, and bootstrap command.

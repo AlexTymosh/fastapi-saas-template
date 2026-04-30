@@ -352,3 +352,5 @@ Audit events (`audit_events`) should be written for:
 ## 10. Enum storage note
 
 Future domain enum-like fields should use explicit string storage with DB check constraints unless there is a strong reason to use SQLAlchemy Enum(native_enum=False).
+
+- Backend source of truth for platform access is now `platform_staff`.

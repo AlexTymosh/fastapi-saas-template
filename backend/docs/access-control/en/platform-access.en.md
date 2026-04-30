@@ -265,3 +265,9 @@ Requirements:
 - no ordinary tenant endpoint;
 - preferably two-person approval in future.
 ```
+
+
+## Implementation status update (2026-04-30)
+- Added backend-managed `platform_staff` foundation.
+- Added `/api/v1/platform/*` endpoints for users, organisations, and audit-events.
+- Added `require_platform_permission()` DB-backed authorization (JWT roles ignored for authorization).

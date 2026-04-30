@@ -108,3 +108,5 @@ The same actor may use a dedicated platform endpoint:
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
+
+- Platform matrix is now enforced by backend `platform_staff` role-to-permission mapping.

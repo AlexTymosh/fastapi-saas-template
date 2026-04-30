@@ -26,6 +26,13 @@ class AuditAction(StrEnum):
     INVITE_CREATED = "invite_created"
     INVITE_REVOKED = "invite_revoked"
     INVITE_RESENT = "invite_resent"
+    USER_SUSPENDED = "user_suspended"
+    USER_RESTORED = "user_restored"
+    ORGANISATION_SUSPENDED = "organisation_suspended"
+    ORGANISATION_RESTORED = "organisation_restored"
+    PLATFORM_STAFF_CREATED = "platform_staff_created"
+    PLATFORM_STAFF_SUSPENDED = "platform_staff_suspended"
+    PLATFORM_STAFF_RESTORED = "platform_staff_restored"
 
 
 class AuditTargetType(StrEnum):
@@ -33,6 +40,7 @@ class AuditTargetType(StrEnum):
     MEMBERSHIP = "membership"
     INVITE = "invite"
     USER = "user"
+    PLATFORM_STAFF = "platform_staff"
 
 
 class AuditEvent(UUIDMixin, Base):
