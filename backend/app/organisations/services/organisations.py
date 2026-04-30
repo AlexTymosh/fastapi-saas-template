@@ -7,6 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access_control.guards import ensure_organisation_active
+from app.audit.models.audit_event import AuditAction, AuditCategory
+from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import (
     BadRequestError,
     ConflictError,
@@ -28,6 +30,7 @@ class OrganisationService:
         self.organisation_repository = OrganisationRepository(session)
         self.membership_repository = MembershipRepository(session)
         self.user_service = UserService(session)
+        self.audit_event_service = AuditEventService(session)
 
     @staticmethod
     def normalize_name(raw_name: str) -> str:
@@ -124,14 +127,36 @@ class OrganisationService:
 
         normalized_name = self.normalize_name(name) if name is not None else None
         normalized_slug = self.normalize_slug(slug) if slug is not None else None
+        changed_fields: list[str] = []
+        if normalized_name is not None and normalized_name != organisation.name:
+            changed_fields.append("name")
+        old_slug = organisation.slug
+        if normalized_slug is not None and normalized_slug != organisation.slug:
+            changed_fields.append("slug")
+
         try:
-            return await self.organisation_repository.update_details(
+            updated_organisation = await self.organisation_repository.update_details(
                 organisation,
                 name=normalized_name,
                 slug=normalized_slug,
             )
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc
+
+        metadata_json: dict[str, object] = {"changed_fields": changed_fields}
+        if "slug" in changed_fields:
+            metadata_json["old_slug"] = old_slug
+            metadata_json["new_slug"] = updated_organisation.slug
+
+        await self.audit_event_service.record_event(
+            actor_user_id=actor_user_id,
+            category=AuditCategory.TENANT,
+            action=AuditAction.ORGANISATION_UPDATED,
+            target_type="organisation",
+            target_id=updated_organisation.id,
+            metadata_json=metadata_json,
+        )
+        return updated_organisation
 
     async def soft_delete(
         self,
@@ -175,7 +200,23 @@ class OrganisationService:
                 detail="Organisation must always have at least one owner"
             )
 
+        previous_slug = organisation.slug
         await self.membership_repository.deactivate_organisation_memberships(
             organisation_id=organisation_id
         )
-        return await self.organisation_repository.soft_delete(organisation)
+        deleted_organisation = await self.organisation_repository.soft_delete(
+            organisation
+        )
+        await self.audit_event_service.record_event(
+            actor_user_id=actor_user_id,
+            category=AuditCategory.TENANT,
+            action=AuditAction.ORGANISATION_DELETED,
+            target_type="organisation",
+            target_id=deleted_organisation.id,
+            metadata_json={
+                "previous_slug": previous_slug,
+                "deleted_slug": deleted_organisation.slug,
+                "soft_delete": True,
+            },
+        )
+        return deleted_organisation
