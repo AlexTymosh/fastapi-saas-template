@@ -46,8 +46,11 @@ class AuditEventService:
     ) -> AuditEvent:
         validated_metadata = self._validate_metadata_json(metadata_json)
         user_agent = audit_context.user_agent
+        ip_address = audit_context.ip_address
         if user_agent is not None:
             user_agent = user_agent[:512]
+        if ip_address is not None and len(ip_address) > 45:
+            raise ValueError("Audit IP address exceeds max length")
         return await self.repository.create(
             actor_user_id=audit_context.actor_user_id,
             category=category,
@@ -56,7 +59,7 @@ class AuditEventService:
             target_id=target_id,
             reason=reason,
             metadata_json=validated_metadata,
-            ip_address=audit_context.ip_address,
+            ip_address=ip_address,
             user_agent=user_agent,
         )
 
@@ -95,7 +98,19 @@ class AuditEventService:
             current = stack.pop()
             if isinstance(current, dict):
                 for key, val in current.items():
-                    if key.lower() in _FORBIDDEN_KEYS:
+                    normalized_key = key.lower().replace("-", "_")
+                    if normalized_key in _FORBIDDEN_KEYS:
+                        raise ValueError("Audit metadata contains forbidden keys")
+                    if any(
+                        sensitive in normalized_key
+                        for sensitive in (
+                            "token",
+                            "password",
+                            "secret",
+                            "authorization",
+                            "cookie",
+                        )
+                    ):
                         raise ValueError("Audit metadata contains forbidden keys")
                     stack.append(val)
             elif isinstance(current, list):

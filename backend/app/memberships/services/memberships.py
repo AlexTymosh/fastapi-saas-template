@@ -83,6 +83,9 @@ class MembershipService:
         membership_id: UUID,
         role: MembershipRole,
     ) -> Membership:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id, audit_context=audit_context
+        )
         if self.session.in_transaction():
             return await self._change_membership_role(
                 organisation_id=organisation_id,
@@ -155,6 +158,9 @@ class MembershipService:
         audit_context: AuditContext,
         membership_id: UUID,
     ) -> Membership:
+        self._ensure_audit_actor_matches(
+            actor_user_id=actor_user_id, audit_context=audit_context
+        )
         if self.session.in_transaction():
             return await self._remove_membership(
                 organisation_id=organisation_id,
@@ -281,6 +287,13 @@ class MembershipService:
             organisation_id=organisation_id,
             role=role,
         )
+
+    @staticmethod
+    def _ensure_audit_actor_matches(
+        *, actor_user_id: UUID, audit_context: AuditContext
+    ) -> None:
+        if audit_context.actor_user_id != actor_user_id:
+            raise ValueError("Audit actor does not match action actor")
 
     async def list_directory_members_for_user(
         self,
