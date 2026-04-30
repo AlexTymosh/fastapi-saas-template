@@ -60,7 +60,7 @@ def _override_failing_token_sink(test_client) -> None:
     )
 
 
-def test_invite_accept_transfers_membership(
+def test_invite_accept_rejects_when_user_already_has_active_membership(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
@@ -130,13 +130,15 @@ def test_invite_accept_transfers_membership(
             "/api/v1/invites/accept",
             json={"token": transfer_token},
         )
-        assert accepted.status_code == 200
+        assert accepted.status_code == 409
+        assert accepted.headers["content-type"].startswith("application/problem+json")
+        assert accepted.json()["error_code"] == "conflict"
 
         me = client.get("/api/v1/users/me")
         assert me.status_code == 200
-        assert me.json()["membership"]["organisation_id"] == target_org_id
+        assert me.json()["membership"]["organisation_id"] == source_org_id
 
-    async def _assert_membership_transfer() -> None:
+    async def _assert_membership_not_transferred() -> None:
         async with migrated_session_factory() as session:
             user_result = await session.execute(
                 select(User).where(User.external_auth_id == "kc-invitee")
@@ -147,24 +149,25 @@ def test_invite_accept_transfers_membership(
                 select(Membership).where(Membership.user_id == invitee.id)
             )
             memberships = list(memberships_result.scalars().all())
-            assert len(memberships) == 2
+            assert len(memberships) == 1
 
             source_membership = next(
                 membership
                 for membership in memberships
                 if str(membership.organisation_id) == source_org_id
             )
-            target_membership = next(
-                membership
-                for membership in memberships
-                if str(membership.organisation_id) == target_org_id
+
+            assert source_membership.is_active is True
+            invite_result = await session.execute(
+                select(Invite).where(
+                    Invite.organisation_id == UUID(target_org_id),
+                    Invite.email == "invitee@example.com",
+                )
             )
+            invite = invite_result.scalar_one()
+            assert invite.status == InviteStatus.PENDING
 
-            assert source_membership.is_active is False
-            assert target_membership.is_active is True
-            assert target_membership.role == MembershipRole.MEMBER
-
-    run_async(_assert_membership_transfer())
+    run_async(_assert_membership_not_transferred())
 
 
 def test_invite_accept_rejects_transfer_for_sole_owner(

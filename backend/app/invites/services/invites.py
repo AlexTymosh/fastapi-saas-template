@@ -171,7 +171,7 @@ class InviteService:
                 invite.organisation_id
             )
             ensure_organisation_active(organisation)
-            membership = await self.membership_service.transfer_membership(
+            membership = await self.membership_service.create_membership(
                 user_id=user.id,
                 organisation_id=invite.organisation_id,
                 role=invite.role,
