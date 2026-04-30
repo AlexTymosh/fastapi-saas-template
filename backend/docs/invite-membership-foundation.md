@@ -6,7 +6,7 @@ This branch is a **foundation step** for organisation membership and invitation 
 
 - Active/inactive membership model for transfer-style membership changes.
 - Invite creation baseline with pending invite records.
-- Invite acceptance with atomic membership transfer and explicit transaction handling.
+- Invite acceptance with atomic validation-and-create flow; ordinary invite acceptance never transfers an existing active membership.
 - Invite expiration support via `expires_at` and lazy expiration enforcement during accept.
 - Soft-delete organisation baseline (`deleted_at`).
 - Superadmin bootstrap support for platform-level operational access.
