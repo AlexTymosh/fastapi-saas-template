@@ -22,6 +22,7 @@
    - изменять данные организации;
    - управлять memberships;
    - выполнять platform actions.
+8. `GET /api/v1/users/me` — это self-state endpoint и он остаётся доступен для suspended users и пользователей с suspended organisation; он может возвращать membership summary с `organisation_status`, но не должен разрешать tenant actions.
 
 ### Не роль
 
@@ -252,3 +253,5 @@ Audit events должны записываться для:
 - platform staff created/removed/suspended;
 - GDPR export/anonymisation actions;
 - emergency data correction.
+
+- 8. `GET /api/v1/users/me` — это self-state endpoint и он остаётся доступен для suspended users и пользователей с suspended organisation; он может возвращать membership summary с `organisation_status`, но не должен разрешать tenant actions.

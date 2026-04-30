@@ -97,3 +97,5 @@ GET /api/v1/organisations/{organisation_id}
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
+
+- `GET /api/v1/users/me` остаётся доступным для suspended users и пользователей в suspended organisations; tenant-scoped действия остаются заблокированными.

@@ -154,6 +154,105 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
     assert check.returncode == 0, check.stdout + "\n" + check.stderr
 
 
+@pytest.mark.integration
+def test_invite_pending_email_uniqueness_index_contract(
+    postgres_integration_url: str,
+) -> None:
+    database_url = postgres_integration_url
+
+    env = os.environ.copy()
+    env["DATABASE__URL"] = database_url
+
+    upgrade = _run_alembic("upgrade", "head", env=env)
+    assert upgrade.returncode == 0, upgrade.stdout + "\n" + upgrade.stderr
+
+    engine = sa.create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            organisation_id = connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO organisations (id, name, slug, status)
+                    VALUES (gen_random_uuid(), :name, :slug, 'active')
+                    RETURNING id
+                    """
+                ),
+                {"name": "Migration Org", "slug": "migration-org"},
+            ).scalar_one()
+
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO invites (
+                        id, email, organisation_id, role, status, token_hash
+                    )
+                    VALUES (
+                        gen_random_uuid(), :email, :organisation_id,
+                        'member', 'pending', :token_hash
+                    )
+                    """
+                ),
+                {
+                    "email": "Test@Example.com",
+                    "organisation_id": organisation_id,
+                    "token_hash": "hash-1",
+                },
+            )
+
+            with pytest.raises(sa.exc.IntegrityError):
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO invites (
+                        id, email, organisation_id, role, status, token_hash
+                    )
+                        VALUES (
+                        gen_random_uuid(), :email, :organisation_id,
+                        'member', 'pending', :token_hash
+                    )
+                        """
+                    ),
+                    {
+                        "email": "test@example.com",
+                        "organisation_id": organisation_id,
+                        "token_hash": "hash-2",
+                    },
+                )
+
+            connection.execute(
+                sa.text(
+                    """
+                    UPDATE invites
+                    SET status = 'revoked'
+                    WHERE organisation_id = :organisation_id
+                    AND lower(email) = lower(:email)
+                    """
+                ),
+                {"organisation_id": organisation_id, "email": "test@example.com"},
+            )
+
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO invites (
+                        id, email, organisation_id, role, status, token_hash
+                    )
+                    VALUES (
+                        gen_random_uuid(), :email, :organisation_id,
+                        'member', 'pending', :token_hash
+                    )
+                    """
+                ),
+                {
+                    "email": "test@example.com",
+                    "organisation_id": organisation_id,
+                    "token_hash": "hash-3",
+                },
+            )
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("database_url", "expected"),

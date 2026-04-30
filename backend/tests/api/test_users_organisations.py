@@ -282,6 +282,10 @@ def test_create_organisation_sets_owner_and_onboarding_completed(
         assert payload["status"] == UserStatus.ACTIVE.value
         assert payload["membership"]["organisation_id"] == organisation_id
         assert payload["membership"]["role"] == MembershipRole.OWNER.value
+        assert (
+            payload["membership"]["organisation_status"]
+            == OrganisationStatus.ACTIVE.value
+        )
 
         memberships_response = client.get(
             f"/api/v1/organisations/{organisation_id}/memberships"
@@ -1012,3 +1016,83 @@ def test_suspended_organisation_returns_403_for_get(
     with bundle.client as client:
         response = client.get(f"/api/v1/organisations/{organisation_id}")
         assert response.status_code == 403
+
+
+def test_users_me_returns_200_for_suspended_user(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Susp User Org", "slug": "susp-user-org"},
+        )
+        assert create.status_code == 201
+
+    async def _suspend_user() -> None:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            user = result.scalar_one()
+            user.status = UserStatus.SUSPENDED
+            await session.commit()
+
+    run_async(_suspend_user())
+
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+        payload = me.json()
+        assert payload["status"] == UserStatus.SUSPENDED.value
+        assert (
+            payload["membership"]["organisation_status"]
+            == OrganisationStatus.ACTIVE.value
+        )
+
+
+def test_users_me_returns_membership_summary_for_suspended_organisation(
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+) -> None:
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        create = client.post(
+            "/api/v1/organisations",
+            json={"name": "Suspended Org", "slug": "suspended-org-me"},
+        )
+        assert create.status_code == 201
+        organisation_id = create.json()["id"]
+
+    async def _suspend_org() -> None:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(Organisation).where(Organisation.id == UUID(organisation_id))
+            )
+            organisation = result.scalar_one()
+            organisation.status = OrganisationStatus.SUSPENDED
+            await session.commit()
+
+    run_async(_suspend_org())
+
+    bundle = authenticated_client_factory(
+        identity=_identity(), database_url=migrated_database_url, redis_url=None
+    )
+    with bundle.client as client:
+        me = client.get("/api/v1/users/me")
+        assert me.status_code == 200
+        payload = me.json()
+        assert payload["status"] == UserStatus.ACTIVE.value
+        assert (
+            payload["membership"]["organisation_status"]
+            == OrganisationStatus.SUSPENDED.value
+        )
+
+        organisation_get = client.get(f"/api/v1/organisations/{organisation_id}")
+        assert organisation_get.status_code == 403

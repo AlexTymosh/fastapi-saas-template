@@ -49,6 +49,7 @@ async def get_me(
             MembershipSummary(
                 organisation_id=membership.organisation_id,
                 role=membership.role,
+                organisation_status=membership.organisation.status,
             )
             if membership is not None
             else None

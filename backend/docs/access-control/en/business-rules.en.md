@@ -23,7 +23,7 @@
    - update organisation data;
    - manage memberships;
    - perform platform actions.
-8. A suspended user may still access `GET /api/v1/users/me` for self-state visibility.
+8. `GET /api/v1/users/me` is a self-state endpoint and remains available for suspended users and users whose organisation is suspended; it may return membership summary including `organisation_status`, but must not allow tenant actions.
 
 ### Not a role
 

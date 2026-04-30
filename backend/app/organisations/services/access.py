@@ -4,8 +4,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.access_control.guards import ensure_organisation_active
 from app.core.auth import AuthenticatedPrincipal
+from app.domain_guards.guards import ensure_organisation_active
 from app.memberships.services.memberships import MembershipService
 from app.organisations.models.organisation import Organisation
 from app.organisations.services.organisations import OrganisationService

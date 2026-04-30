@@ -6,12 +6,14 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr
 
 from app.memberships.models.membership import MembershipRole
+from app.organisations.models.organisation import OrganisationStatus
 from app.users.models.user import UserStatus
 
 
 class MembershipSummary(BaseModel):
     organisation_id: UUID
     role: MembershipRole
+    organisation_status: OrganisationStatus
 
 
 class UserMeResponse(BaseModel):

@@ -108,3 +108,5 @@ The same actor may use a dedicated platform endpoint:
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
+
+- `GET /api/v1/users/me` remains available for suspended users and for users in suspended organisations; tenant-scoped actions remain blocked.

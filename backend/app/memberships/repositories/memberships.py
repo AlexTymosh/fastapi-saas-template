@@ -67,6 +67,7 @@ class MembershipRepository:
         stmt = (
             select(Membership)
             .where(Membership.user_id == user_id, Membership.is_active.is_(True))
+            .options(selectinload(Membership.organisation))
             .limit(1)
         )
         result = await self.session.execute(stmt)
