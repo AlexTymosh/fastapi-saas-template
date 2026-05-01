@@ -170,6 +170,148 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
     run_async(_assert_membership_not_transferred())
 
 
+def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner_a_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-a", "owner-a@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_b_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-b", "owner-b@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_a_sink = _override_token_sink(owner_a_bundle.client)
+    owner_b_sink = _override_token_sink(owner_b_bundle.client)
+
+    with owner_a_bundle.client as client:
+        org_a = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org A Source", "slug": "org-a-source"},
+        )
+        source_org_id = org_a.json()["id"]
+        invited = client.post(
+            f"/api/v1/organisations/{source_org_id}/invites",
+            json={"email": "active-user@example.com", "role": "member"},
+        )
+        assert invited.status_code == 201
+
+    with owner_b_bundle.client as client:
+        org_b = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org B Target", "slug": "org-b-target"},
+        )
+        target_org_id = org_b.json()["id"]
+        invited = client.post(
+            f"/api/v1/organisations/{target_org_id}/invites",
+            json={"email": "active-user@example.com", "role": "member"},
+        )
+        assert invited.status_code == 201
+
+    first_token = owner_a_sink.token_for_email("active-user@example.com")
+    second_token = owner_b_sink.token_for_email("active-user@example.com")
+    invitee_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-active-user", "active-user@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with invitee_bundle.client as client:
+        first_accept = client.post(
+            "/api/v1/invites/accept",
+            json={"token": first_token},
+        )
+        assert first_accept.status_code == 200
+        second_accept = client.post(
+            "/api/v1/invites/accept",
+            json={"token": second_token},
+        )
+        assert second_accept.status_code == 409
+
+    async def _assert_single_active_membership() -> None:
+        async with migrated_session_factory() as session:
+            user = (
+                await session.execute(
+                    select(User).where(User.external_auth_id == "kc-active-user")
+                )
+            ).scalar_one()
+            memberships = (
+                (
+                    await session.execute(
+                        select(Membership).where(Membership.user_id == user.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            active = [membership for membership in memberships if membership.is_active]
+            assert len(active) == 1
+
+    run_async(_assert_single_active_membership())
+
+
+def test_accept_invite_allows_user_with_inactive_membership(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-inactive", "owner-inactive@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(owner_bundle.client)
+    inactive_user_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-inactive-member", "inactive-member@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with inactive_user_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Inactive Source Org", "slug": "inactive-source-org"},
+        )
+        assert created.status_code == 201
+
+    async def _deactivate_current_membership() -> None:
+        async with migrated_session_factory() as session:
+            user = (
+                await session.execute(
+                    select(User).where(User.external_auth_id == "kc-inactive-member")
+                )
+            ).scalar_one()
+            membership = (
+                await session.execute(
+                    select(Membership).where(Membership.user_id == user.id)
+                )
+            ).scalar_one()
+            membership.is_active = False
+            await session.commit()
+
+    run_async(_deactivate_current_membership())
+
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Inactive Target Org", "slug": "inactive-target-org"},
+        )
+        target_org_id = created.json()["id"]
+        invited = client.post(
+            f"/api/v1/organisations/{target_org_id}/invites",
+            json={"email": "inactive-member@example.com", "role": "member"},
+        )
+        assert invited.status_code == 201
+
+    token = owner_sink.token_for_email("inactive-member@example.com")
+    with inactive_user_bundle.client as client:
+        accepted = client.post("/api/v1/invites/accept", json={"token": token})
+        assert accepted.status_code == 200
+
+
 def test_invite_accept_rejects_transfer_for_sole_owner(
     authenticated_client_factory,
     migrated_database_url: str,

@@ -210,6 +210,24 @@ def test_platform_endpoint_does_not_provision_missing_user(
     run_async(_assert_missing_user())
 
 
+def test_platform_staff_access_does_not_require_tenant_membership(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+):
+    staff_user = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-platform-no-tenant",
+        email="platform-no-tenant@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(staff_user.external_auth_id, staff_user.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.get("/api/v1/platform/users")
+    assert response.status_code == 200
+
+
 def test_compliance_officer_permissions_exclude_gdpr_erase():
     from app.core.platform.permissions import ROLE_PERMISSIONS
 
