@@ -16,6 +16,3 @@ def configure_broker() -> RedisBroker | None:
     broker.add_middleware(AsyncIO())
     dramatiq.set_broker(broker)
     return broker
-
-
-broker = configure_broker()

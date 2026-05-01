@@ -34,7 +34,7 @@ def test_process_outbox_event_marks_processed_on_success(
         )
         assert invite.status_code == 201
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
 
     async def _assert_processed() -> None:
         async with migrated_session_factory() as session:

@@ -1,3 +1,3 @@
-from app.core.tasks.broker import broker, configure_broker
+from app.core.tasks.broker import configure_broker
 
-__all__ = ["broker", "configure_broker"]
+__all__ = ["configure_broker"]
