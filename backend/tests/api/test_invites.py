@@ -559,7 +559,10 @@ def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
                     AuditEvent.action == "invite_created",
                 )
             )
-            assert audit_result.scalar_one_or_none() is None
+            audit_event = audit_result.scalar_one_or_none()
+            assert audit_event is not None
+            assert audit_event.action == "invite_created"
+            assert audit_event.target_id == invite.id
 
     run_async(_assert_persisted())
 
