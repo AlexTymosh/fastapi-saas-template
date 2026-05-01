@@ -15,6 +15,7 @@ from app.outbox.models.outbox_event import OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
 
 log = get_logger(__name__)
+configure_broker()
 
 
 def _safe_error_code(exc: Exception) -> str:
@@ -78,13 +79,11 @@ async def _process_outbox_event(event_id: str) -> None:
 
 @dramatiq.actor(max_retries=0)
 async def process_outbox_event(event_id: str) -> None:
-    configure_broker()
     await _process_outbox_event(event_id)
 
 
 @dramatiq.actor(max_retries=0)
 async def enqueue_pending_outbox_events(limit: int = 100) -> None:
-    configure_broker()
     session_factory = get_session_factory()
     async with session_factory() as session:
         repository = OutboxEventRepository(session)
