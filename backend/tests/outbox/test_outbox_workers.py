@@ -1,13 +1,130 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import asyncio
 from uuid import UUID
 
+from app.outbox.dispatcher import (
+    claim_and_enqueue_due_outbox_events,
+    run_dispatcher_loop,
+)
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
-from app.outbox.workers import _enqueue_pending_outbox_events, _process_outbox_event
+from app.outbox.workers import _process_outbox_event
 from tests.api.test_invites import InMemoryInviteTokenSink, _drain_outbox, _identity_for
 from tests.helpers.asyncio_runner import run_async
+
+
+def test_claim_due_events_marks_pending_events_processing(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            session.add(
+                OutboxEvent(
+                    event_type=OutboxEventType.INVITE_CREATED.value,
+                    payload_json={"invite_id": "1", "raw_token": "a"},
+                    aggregate_type="invite",
+                    aggregate_id=UUID("00000000-0000-0000-0000-000000000121"),
+                    status=OutboxStatus.PENDING.value,
+                )
+            )
+            await session.commit()
+
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                claimed = await OutboxEventRepository(session).claim_due_events(
+                    limit=10
+                )
+                assert len(claimed) == 1
+                assert claimed[0].status == OutboxStatus.PROCESSING.value
+                assert claimed[0].locked_at is not None
+
+    run_async(_run())
+
+
+def test_claim_and_enqueue_due_outbox_events_enqueues_claimed_events(
+    migrated_session_factory, monkeypatch
+) -> None:
+    sent_event_ids: list[str] = []
+    monkeypatch.setattr(
+        "app.outbox.dispatcher.process_outbox_event.send",
+        lambda event_id: sent_event_ids.append(event_id),
+    )
+    monkeypatch.setattr(
+        "app.outbox.dispatcher.get_session_factory", lambda: migrated_session_factory
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            session.add(
+                OutboxEvent(
+                    event_type=OutboxEventType.INVITE_CREATED.value,
+                    payload_json={"invite_id": "1", "raw_token": "a"},
+                    aggregate_type="invite",
+                    aggregate_id=UUID("00000000-0000-0000-0000-000000000131"),
+                    status=OutboxStatus.PENDING.value,
+                )
+            )
+            await session.commit()
+        count = await claim_and_enqueue_due_outbox_events(limit=10)
+        assert count == 1
+        assert len(sent_event_ids) == 1
+
+    run_async(_run())
+
+
+def test_dispatcher_loop_runs_until_cancelled(monkeypatch) -> None:
+    called = {"ticks": 0}
+
+    async def _fake_claim(limit: int = 100) -> int:
+        called["ticks"] += 1
+        return 0
+
+    monkeypatch.setattr(
+        "app.outbox.dispatcher.claim_and_enqueue_due_outbox_events", _fake_claim
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(run_dispatcher_loop(interval=0, batch_size=1))
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    run_async(_run())
+    assert called["ticks"] >= 1
+
+
+def test_worker_noops_when_event_is_not_processing(
+    migrated_session_factory, monkeypatch
+) -> None:
+    sink = InMemoryInviteTokenSink()
+    monkeypatch.setattr("app.outbox.workers.get_invite_token_sink", lambda: sink)
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000111"),
+                payload_json={
+                    "invite_id": "00000000-0000-0000-0000-000000000111",
+                    "raw_token": "secret-token",
+                },
+                status=OutboxStatus.PENDING.value,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+        assert sink.deliveries == []
+
+    run_async(_run())
 
 
 def test_process_outbox_event_marks_processed_on_success(
@@ -19,8 +136,7 @@ def test_process_outbox_event_marks_processed_on_success(
     sink = InMemoryInviteTokenSink()
     monkeypatch.setattr("app.outbox.workers.get_invite_token_sink", lambda: sink)
     monkeypatch.setattr(
-        "app.outbox.workers.get_session_factory",
-        lambda: migrated_session_factory,
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
     )
 
     owner = authenticated_client_factory(
@@ -56,8 +172,7 @@ def test_process_outbox_event_failure_commits_attempts(
     migrated_session_factory, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "app.outbox.workers.get_session_factory",
-        lambda: migrated_session_factory,
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
     )
 
     async def _assert_failure() -> None:
@@ -71,6 +186,7 @@ def test_process_outbox_event_failure_commits_attempts(
                     "raw_token": "secret-token",
                 },
                 max_attempts=1,
+                status=OutboxStatus.PROCESSING.value,
             )
             session.add(event)
             await session.commit()
@@ -86,44 +202,3 @@ def test_process_outbox_event_failure_commits_attempts(
             assert saved.last_error == "invite_not_found"
 
     run_async(_assert_failure())
-
-
-def test_enqueue_pending_outbox_events_sends_only_due_pending(
-    migrated_session_factory, monkeypatch
-) -> None:
-    sent_event_ids: list[str] = []
-    monkeypatch.setattr(
-        "app.outbox.workers.process_outbox_event.send",
-        lambda event_id: sent_event_ids.append(event_id),
-    )
-
-    monkeypatch.setattr(
-        "app.outbox.workers.get_session_factory",
-        lambda: migrated_session_factory,
-    )
-
-    async def _assert_enqueue() -> None:
-        async with migrated_session_factory() as session:
-            due_event = OutboxEvent(
-                event_type=OutboxEventType.INVITE_CREATED.value,
-                payload_json={"invite_id": "1", "raw_token": "a"},
-                aggregate_type="invite",
-                aggregate_id=UUID("00000000-0000-0000-0000-000000000121"),
-                status=OutboxStatus.PENDING.value,
-            )
-            future_event = OutboxEvent(
-                event_type=OutboxEventType.INVITE_CREATED.value,
-                payload_json={"invite_id": "2", "raw_token": "b"},
-                aggregate_type="invite",
-                aggregate_id=UUID("00000000-0000-0000-0000-000000000122"),
-                status=OutboxStatus.PENDING.value,
-                next_attempt_at=datetime.now(UTC) + timedelta(minutes=5),
-            )
-            session.add_all([due_event, future_event])
-            await session.commit()
-            due_event_id = str(due_event.id)
-
-        await _enqueue_pending_outbox_events(limit=10)
-        assert sent_event_ids == [due_event_id]
-
-    run_async(_assert_enqueue())
