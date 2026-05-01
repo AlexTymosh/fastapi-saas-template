@@ -94,6 +94,13 @@ member
 5. Platform staff roles must not grant tenant membership rights.
 6. External JWT role claims (`roles`, `realm_access`, `resource_access`) are ignored for backend authorization decisions.
 
+### One user — one active organisation membership
+
+- Active uniqueness on `memberships.user_id` is intentional and must be preserved.
+- `/api/v1/users/me` returns a single `membership` object (or `null`), never `memberships[]`.
+- Platform staff access is independent from tenant organisation membership (platform role ≠ tenant membership).
+- Inactive membership (for example, after organisation deactivation/deletion flow) does not count as active membership; the user may join/create another organisation when domain rules allow it.
+
 ### Owner rules
 
 The `owner` may:
