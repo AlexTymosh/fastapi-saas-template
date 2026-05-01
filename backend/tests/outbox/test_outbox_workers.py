@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
-from app.outbox.workers import _process_outbox_event
+from app.outbox.workers import _process_outbox_event, enqueue_pending_outbox_events
 from tests.api.test_invites import InMemoryInviteTokenSink, _drain_outbox, _identity_for
 from tests.helpers.asyncio_runner import run_async
 
@@ -34,7 +35,7 @@ def test_process_outbox_event_marks_processed_on_success(
         )
         assert invite.status_code == 201
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
 
     async def _assert_processed() -> None:
         async with migrated_session_factory() as session:
@@ -74,6 +75,41 @@ def test_process_outbox_event_failure_commits_attempts(
             assert saved.status == OutboxStatus.FAILED.value
             assert saved.attempts == 1
             assert saved.last_error == "invite_not_found"
-            assert "secret-token" not in (saved.last_error or "")
 
     run_async(_assert_failure())
+
+
+def test_enqueue_pending_outbox_events_sends_only_due_pending(
+    migrated_session_factory, monkeypatch
+) -> None:
+    sent_event_ids: list[str] = []
+    monkeypatch.setattr(
+        "app.outbox.workers.process_outbox_event.send",
+        lambda event_id: sent_event_ids.append(event_id),
+    )
+
+    async def _assert_enqueue() -> None:
+        async with migrated_session_factory() as session:
+            due_event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                payload_json={"invite_id": "1", "raw_token": "a"},
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000121"),
+                status=OutboxStatus.PENDING.value,
+            )
+            future_event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                payload_json={"invite_id": "2", "raw_token": "b"},
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000122"),
+                status=OutboxStatus.PENDING.value,
+                next_attempt_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+            session.add_all([due_event, future_event])
+            await session.commit()
+            due_event_id = str(due_event.id)
+
+        await enqueue_pending_outbox_events.fn(limit=10)
+        assert sent_event_ids == [due_event_id]
+
+    run_async(_assert_enqueue())

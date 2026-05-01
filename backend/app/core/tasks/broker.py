@@ -18,4 +18,4 @@ def configure_broker() -> RedisBroker | None:
     return broker
 
 
-broker = configure_broker()
+broker = None

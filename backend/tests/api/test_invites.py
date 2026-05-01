@@ -8,9 +8,9 @@ from sqlalchemy import select
 from app.audit.models.audit_event import AuditEvent
 from app.core.auth import AuthenticatedPrincipal
 from app.invites.models.invite import Invite, InviteStatus
-from app.invites.services.delivery import get_invite_token_sink
 from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation, OrganisationStatus
+from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 
@@ -48,15 +48,16 @@ def _identity_for(
     return AuthenticatedPrincipal.from_unverified_jwt_claims(claims)
 
 
-def _override_token_sink(test_client) -> InMemoryInviteTokenSink:
+def _override_token_sink(monkeypatch) -> InMemoryInviteTokenSink:
     sink = InMemoryInviteTokenSink()
-    test_client.app.dependency_overrides[get_invite_token_sink] = lambda: sink
+    monkeypatch.setattr("app.outbox.workers.get_invite_token_sink", lambda: sink)
     return sink
 
 
-def _override_failing_token_sink(test_client) -> None:
-    test_client.app.dependency_overrides[get_invite_token_sink] = lambda: (
-        FailingInviteTokenSink()
+def _override_failing_token_sink(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_invite_token_sink",
+        lambda: FailingInviteTokenSink(),
     )
 
 
@@ -72,7 +73,7 @@ async def _process_all_outbox_events(migrated_session_factory) -> None:
         await _process_outbox_event(str(event.id))
 
 
-def _drain_outbox(migrated_session_factory) -> None:
+def _drain_outbox(migrated_session_factory, monkeypatch) -> None:
     run_async(_process_all_outbox_events(migrated_session_factory))
 
 
@@ -80,6 +81,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner", "owner@example.com"),
@@ -87,7 +89,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    owner_sink = _override_token_sink(owner_client)
+    owner_sink = _override_token_sink(monkeypatch)
 
     source_owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-source-owner", "source-owner@example.com"),
@@ -95,7 +97,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
         redis_url=None,
     )
     source_owner_client = source_owner_client_bundle.client
-    source_owner_sink = _override_token_sink(source_owner_client)
+    source_owner_sink = _override_token_sink(monkeypatch)
 
     with source_owner_client as client:
         create_org = client.post(
@@ -125,7 +127,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
         )
         assert transfer_invite.status_code == 201
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
     source_token = source_owner_sink.token_for_email("invitee@example.com")
     transfer_token = owner_sink.token_for_email("invitee@example.com")
 
@@ -191,6 +193,7 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_a_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-a", "owner-a@example.com"),
@@ -202,8 +205,8 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_a_sink = _override_token_sink(owner_a_bundle.client)
-    owner_b_sink = _override_token_sink(owner_b_bundle.client)
+    owner_a_sink = _override_token_sink(monkeypatch)
+    owner_b_sink = _override_token_sink(monkeypatch)
 
     with owner_a_bundle.client as client:
         org_a = client.post(
@@ -229,7 +232,7 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
         )
         assert invited.status_code == 201
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
     first_token = owner_a_sink.token_for_email("active-user@example.com")
     second_token = owner_b_sink.token_for_email("active-user@example.com")
     invitee_bundle = authenticated_client_factory(
@@ -275,13 +278,14 @@ def test_accept_invite_allows_user_with_inactive_membership(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-inactive", "owner-inactive@example.com"),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
     inactive_user_bundle = authenticated_client_factory(
         identity=_identity_for("kc-inactive-member", "inactive-member@example.com"),
         database_url=migrated_database_url,
@@ -324,7 +328,7 @@ def test_accept_invite_allows_user_with_inactive_membership(
         )
         assert invited.status_code == 201
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("inactive-member@example.com")
     with inactive_user_bundle.client as client:
         accepted = client.post("/api/v1/invites/accept", json={"token": token})
@@ -335,6 +339,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-sole", "owner-sole@example.com"),
@@ -342,7 +347,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    owner_sink = _override_token_sink(owner_client)
+    owner_sink = _override_token_sink(monkeypatch)
 
     with owner_client as client:
         create_org = client.post(
@@ -373,7 +378,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
         assert create_org.status_code == 201
         source_org_id = create_org.json()["id"]
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("invitee-sole@example.com")
 
     with sole_owner_client as client:
@@ -414,6 +419,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
 def test_superadmin_role_cannot_invite_without_membership(
     authenticated_client_factory,
     migrated_database_url: str,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-2", "owner2@example.com"),
@@ -439,7 +445,7 @@ def test_superadmin_role_cannot_invite_without_membership(
         redis_url=None,
     )
     super_client = super_client_bundle.client
-    _override_token_sink(super_client)
+    _override_token_sink(monkeypatch)
     with super_client as client:
         response = client.post(
             f"/api/v1/organisations/{org_id}/invites",
@@ -452,6 +458,7 @@ def test_superadmin_role_cannot_invite_without_membership(
 def test_old_invite_accept_path_route_is_not_available(
     authenticated_client_factory,
     migrated_database_url: str,
+    monkeypatch,
 ) -> None:
     client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-invitee-legacy-path", "legacy@example.com"),
@@ -469,6 +476,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-jit", "owner-jit@example.com"),
@@ -476,7 +484,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    owner_sink = _override_token_sink(owner_client)
+    owner_sink = _override_token_sink(monkeypatch)
     with owner_client as client:
         create_org = client.post(
             "/api/v1/organisations",
@@ -491,7 +499,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
         assert invite_response.status_code == 201
         assert "token" not in invite_response.json()
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("jit-invitee@example.com")
 
     invitee_client_bundle = authenticated_client_factory(
@@ -525,6 +533,7 @@ def test_accept_invite_rejects_email_mismatch(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-mismatch", "owner-mismatch@example.com"),
@@ -532,7 +541,7 @@ def test_accept_invite_rejects_email_mismatch(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    owner_sink = _override_token_sink(owner_client)
+    owner_sink = _override_token_sink(monkeypatch)
     with owner_client as client:
         create_org = client.post(
             "/api/v1/organisations",
@@ -547,7 +556,7 @@ def test_accept_invite_rejects_email_mismatch(
         assert invite_response.status_code == 201
         assert "token" not in invite_response.json()
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("expected@example.com")
 
     wrong_user_client_bundle = authenticated_client_factory(
@@ -565,6 +574,7 @@ def test_accept_invite_rejects_expired_invite(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-expired", "owner-expired@example.com"),
@@ -572,7 +582,7 @@ def test_accept_invite_rejects_expired_invite(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    owner_sink = _override_token_sink(owner_client)
+    owner_sink = _override_token_sink(monkeypatch)
     with owner_client as client:
         create_org = client.post(
             "/api/v1/organisations",
@@ -587,7 +597,7 @@ def test_accept_invite_rejects_expired_invite(
         )
         assert invite_response.status_code == 201
 
-    _drain_outbox(migrated_session_factory)
+    _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("invitee-expired@example.com")
 
     async def _expire_invite() -> None:
@@ -624,6 +634,7 @@ def test_accept_invite_rejects_expired_invite(
 def test_create_invite_rejects_owner_role(
     authenticated_client_factory,
     migrated_database_url: str,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-role", "owner-role@example.com"),
@@ -631,7 +642,7 @@ def test_create_invite_rejects_owner_role(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    _override_token_sink(owner_client)
+    _override_token_sink(monkeypatch)
     with owner_client as client:
         create_org = client.post(
             "/api/v1/organisations",
@@ -649,6 +660,7 @@ def test_create_invite_rejects_owner_role(
 def test_create_invite_returns_single_resource_contract(
     authenticated_client_factory,
     migrated_database_url: str,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-contract", "owner-contract@example.com"),
@@ -656,7 +668,7 @@ def test_create_invite_returns_single_resource_contract(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    _override_token_sink(owner_client)
+    _override_token_sink(monkeypatch)
     invite_email = "contract-invitee@example.com"
     invite_role = "member"
 
@@ -691,14 +703,17 @@ def test_create_invite_returns_single_resource_contract(
 
 
 def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-create-fail", "owner-create-fail@example.com"),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    _override_failing_token_sink(owner_bundle.client)
+    _override_failing_token_sink(monkeypatch)
     with owner_bundle.client as client:
         created = client.post(
             "/api/v1/organisations",
@@ -733,15 +748,18 @@ def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
     run_async(_assert_persisted())
 
 
-def test_resend_invite_delivery_failure_keeps_old_token_hash_and_no_audit_event(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+def test_resend_invite_delivery_failure_updates_outbox_state(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-resend-fail", "owner-resend-fail@example.com"),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
     with owner_bundle.client as client:
         created = client.post(
             "/api/v1/organisations",
@@ -753,38 +771,65 @@ def test_resend_invite_delivery_failure_keeps_old_token_hash_and_no_audit_event(
             json={"email": "invitee-resend-fail@example.com", "role": "member"},
         )
         invite_id = invite_response.json()["id"]
-        _drain_outbox(migrated_session_factory)
+        _drain_outbox(migrated_session_factory, monkeypatch)
     initial_token = owner_sink.token_for_email("invitee-resend-fail@example.com")
-    _override_failing_token_sink(owner_bundle.client)
+
+    _override_failing_token_sink(monkeypatch)
     with owner_bundle.client as client:
         response = client.post(
             f"/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend"
         )
-        assert response.status_code == 409
+        assert response.status_code == 200
+        assert "token" not in response.json()
 
-    async def _assert_resend_not_persisted() -> None:
+    _drain_outbox(migrated_session_factory, monkeypatch)
+
+    async def _assert_resend_persisted() -> None:
         async with migrated_session_factory() as session:
-            invite_result = await session.execute(
-                select(Invite).where(Invite.id == UUID(invite_id))
-            )
-            invite = invite_result.scalar_one()
-            assert (
-                invite.token_hash == sha256(initial_token.encode("utf-8")).hexdigest()
-            )
-            audit_result = await session.execute(
-                select(AuditEvent).where(
-                    AuditEvent.target_id == invite.id,
-                    AuditEvent.action == "invite_resent",
+            invite = (
+                await session.execute(
+                    select(Invite).where(Invite.id == UUID(invite_id))
                 )
+            ).scalar_one()
+            assert (
+                invite.token_hash != sha256(initial_token.encode("utf-8")).hexdigest()
             )
-            assert audit_result.scalar_one_or_none() is None
+            audit_event = (
+                await session.execute(
+                    select(AuditEvent).where(
+                        AuditEvent.target_id == invite.id,
+                        AuditEvent.action == "invite_resent",
+                    )
+                )
+            ).scalar_one_or_none()
+            assert audit_event is not None
+            outbox_event = (
+                (
+                    await session.execute(
+                        select(OutboxEvent).where(
+                            OutboxEvent.aggregate_id == invite.id,
+                            OutboxEvent.event_type
+                            == OutboxEventType.INVITE_RESEND.value,
+                        )
+                    )
+                )
+                .scalars()
+                .all()[-1]
+            )
+            assert outbox_event.attempts >= 1
+            assert outbox_event.status in {
+                OutboxStatus.PENDING.value,
+                OutboxStatus.FAILED.value,
+            }
+            assert outbox_event.last_error is not None
 
-    run_async(_assert_resend_not_persisted())
+    run_async(_assert_resend_persisted())
 
 
 def test_create_invite_returns_404_for_missing_organisation(
     authenticated_client_factory,
     migrated_database_url: str,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-missing-org", "owner-missing-org@example.com"),
@@ -792,7 +837,7 @@ def test_create_invite_returns_404_for_missing_organisation(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    _override_token_sink(owner_client)
+    _override_token_sink(monkeypatch)
     with owner_client as client:
         response = client.post(
             "/api/v1/organisations/00000000-0000-0000-0000-000000000001/invites",
@@ -805,6 +850,7 @@ def test_create_invite_returns_404_for_missing_organisation(
 def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_access(
     authenticated_client_factory,
     migrated_database_url: str,
+    monkeypatch,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-no-access", "owner-no-access@example.com"),
@@ -812,7 +858,7 @@ def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_acc
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    owner_sink = _override_token_sink(owner_client)
+    owner_sink = _override_token_sink(monkeypatch)
 
     with owner_client as client:
         create_org = client.post(
@@ -828,7 +874,7 @@ def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_acc
         redis_url=None,
     )
     outsider_client = outsider_client_bundle.client
-    _override_token_sink(outsider_client)
+    _override_token_sink(monkeypatch)
 
     with outsider_client as client:
         response = client.post(
@@ -841,7 +887,10 @@ def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_acc
 
 
 def test_suspended_user_cannot_create_invite(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner", "owner@example.com"),
@@ -879,14 +928,17 @@ def test_suspended_user_cannot_create_invite(
 
 
 def test_suspended_organisation_blocks_invite_acceptance(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-org", "owner-org@example.com"),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
     with owner_bundle.client as client:
         created = client.post(
             "/api/v1/organisations", json={"name": "Acme", "slug": "invite-org-susp"}
@@ -896,7 +948,7 @@ def test_suspended_organisation_blocks_invite_acceptance(
             f"/api/v1/organisations/{organisation_id}/invites",
             json={"email": "invitee@example.com", "role": "member"},
         )
-        _drain_outbox(migrated_session_factory)
+        _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("invitee@example.com")
 
     async def _suspend_org() -> None:
@@ -921,14 +973,17 @@ def test_suspended_organisation_blocks_invite_acceptance(
 
 
 def test_unverified_email_cannot_accept_invite(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-unver", "owner-unver@example.com"),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
     with owner_bundle.client as client:
         created = client.post(
             "/api/v1/organisations",
@@ -941,7 +996,7 @@ def test_unverified_email_cannot_accept_invite(
             json={"email": "invitee-unverified@example.com", "role": "member"},
         )
         assert invited.status_code == 201
-        _drain_outbox(migrated_session_factory)
+        _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("invitee-unverified@example.com")
 
     invitee_bundle = authenticated_client_factory(

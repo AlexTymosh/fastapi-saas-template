@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.db import get_session_factory
 from app.core.logging import get_logger
-from app.core.tasks import broker
+from app.core.tasks import configure_broker
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.delivery import get_invite_token_sink
 from app.outbox.models.outbox_event import OutboxEventType, OutboxStatus
@@ -78,13 +78,13 @@ async def _process_outbox_event(event_id: str) -> None:
 
 @dramatiq.actor(max_retries=0)
 async def process_outbox_event(event_id: str) -> None:
-    _ = broker
+    configure_broker()
     await _process_outbox_event(event_id)
 
 
 @dramatiq.actor(max_retries=0)
 async def enqueue_pending_outbox_events(limit: int = 100) -> None:
-    _ = broker
+    configure_broker()
     session_factory = get_session_factory()
     async with session_factory() as session:
         repository = OutboxEventRepository(session)
