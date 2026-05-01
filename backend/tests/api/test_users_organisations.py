@@ -609,6 +609,28 @@ def test_create_organisation_rejects_second_creation_for_same_user(
     assert second.json()["error_code"] == "conflict"
 
 
+def test_create_first_organisation_succeeds(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    identity = _identity_for(
+        external_auth_id="kc-first-org-user",
+        email="first-org@example.com",
+    )
+    test_client_bundle = authenticated_client_factory(
+        identity=identity,
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with test_client_bundle.client as client:
+        response = client.post(
+            "/api/v1/organisations",
+            json={"name": "First Org Only", "slug": "first-org-only"},
+        )
+
+    assert response.status_code == 201
+
+
 def test_users_me_membership_is_null_when_user_has_no_organisation(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -627,6 +649,34 @@ def test_users_me_membership_is_null_when_user_has_no_organisation(
 
     assert response.status_code == 200
     assert response.json()["membership"] is None
+
+
+def test_users_me_returns_single_membership_contract(
+    authenticated_client_factory,
+    migrated_database_url: str,
+) -> None:
+    test_client_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            external_auth_id="kc-users-me-contract",
+            email="users-me-contract@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with test_client_bundle.client as client:
+        create_response = client.post(
+            "/api/v1/organisations",
+            json={"name": "Contract Org", "slug": "contract-org"},
+        )
+        assert create_response.status_code == 201
+
+        response = client.get("/api/v1/users/me")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "membership" in payload
+    assert payload["membership"] is not None
+    assert "memberships" not in payload
 
 
 def _provision_user_via_api(

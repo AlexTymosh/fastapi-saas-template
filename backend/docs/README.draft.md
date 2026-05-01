@@ -300,10 +300,17 @@ Rules:
 A user may belong to no organizations.
 A user may belong to exactly one organization at a time.
 Membership is determined via a single active Membership record per user.
+Active uniqueness on `memberships.user_id` is intentional and must be preserved.
 The organization creator automatically becomes owner (Membership role=owner).
 Only Membership participants have access to the organization.
 Access to an organization is provided through invitation or by owner/admin addition.
 Moving a user between organizations is a transfer/reassignment operation, not multi-organization membership.
+
+One user — one organisation (active) clarification:
+- `/api/v1/users/me` returns a single `membership` object (or `null`), not a `memberships[]` array.
+- Invite acceptance must return `409 Conflict` if the authenticated user already has an active membership in another organisation.
+- Platform staff access is independent from tenant organisation membership.
+- Inactive membership records (for example, after organisation deactivation/deletion) do not count as an active organisation membership.
 
 Business rules are defined and adjusted according to future tasks.
 

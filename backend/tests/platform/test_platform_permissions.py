@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 
+from sqlalchemy import select
+
 from app.core.platform.dependencies import require_platform_permission
 from app.core.platform.permissions import PlatformPermission, PlatformRole
+from app.memberships.models.membership import Membership
 from app.organisations.models.organisation import Organisation
 from app.platform.models.platform_staff import PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
@@ -208,6 +211,32 @@ def test_platform_endpoint_does_not_provision_missing_user(
             assert user is None
 
     run_async(_assert_missing_user())
+
+
+def test_platform_staff_access_does_not_require_tenant_membership(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+):
+    staff_user = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-platform-no-membership",
+        email="platform-no-membership@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _assert_no_membership():
+        async with migrated_session_factory() as session:
+            memberships = await session.execute(
+                select(Membership).where(Membership.user_id == staff_user.id)
+            )
+            assert list(memberships.scalars().all()) == []
+
+    run_async(_assert_no_membership())
+
+    bundle = authenticated_client_factory(
+        identity=identity_for(staff_user.external_auth_id, staff_user.email),
+        database_url=migrated_database_url,
+    )
+    assert bundle.client.get("/api/v1/platform/users").status_code == 200
 
 
 def test_compliance_officer_permissions_exclude_gdpr_erase():

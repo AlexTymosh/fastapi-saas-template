@@ -170,6 +170,76 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
     run_async(_assert_membership_not_transferred())
 
 
+def test_accept_invite_allows_user_with_inactive_membership(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    invite_owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-inactive-owner", "inactive-owner@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    invite_owner_sink = _override_token_sink(invite_owner_bundle.client)
+
+    invitee_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-inactive-invitee", "inactive-invitee@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with invitee_bundle.client as client:
+        source_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Inactive Source Org", "slug": "inactive-source-org"},
+        )
+        assert source_org.status_code == 201
+        source_org_id = source_org.json()["id"]
+
+        delete_org = client.delete(f"/api/v1/organisations/{source_org_id}")
+        assert delete_org.status_code == 204
+
+    with invite_owner_bundle.client as client:
+        target_org = client.post(
+            "/api/v1/organisations",
+            json={"name": "Inactive Target Org", "slug": "inactive-target-org"},
+        )
+        assert target_org.status_code == 201
+        target_org_id = target_org.json()["id"]
+
+        invite = client.post(
+            f"/api/v1/organisations/{target_org_id}/invites",
+            json={"email": "inactive-invitee@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+
+    token = invite_owner_sink.token_for_email("inactive-invitee@example.com")
+
+    with invitee_bundle.client as client:
+        accepted = client.post("/api/v1/invites/accept", json={"token": token})
+        assert accepted.status_code == 200
+
+    async def _assert_active_membership_switched() -> None:
+        async with migrated_session_factory() as session:
+            user_result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-inactive-invitee")
+            )
+            user = user_result.scalar_one()
+            memberships_result = await session.execute(
+                select(Membership).where(Membership.user_id == user.id)
+            )
+            memberships = list(memberships_result.scalars().all())
+            assert len(memberships) == 2
+            assert sum(1 for membership in memberships if membership.is_active) == 1
+            assert any(
+                membership.organisation_id == UUID(target_org_id)
+                and membership.is_active is True
+                for membership in memberships
+            )
+
+    run_async(_assert_active_membership_switched())
+
+
 def test_invite_accept_rejects_transfer_for_sole_owner(
     authenticated_client_factory,
     migrated_database_url: str,
