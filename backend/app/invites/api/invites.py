@@ -27,7 +27,6 @@ from app.invites.schemas.invites import (
     InviteResponse,
     RevokeInviteRequest,
 )
-from app.invites.services.delivery import InviteTokenSink, get_invite_token_sink
 from app.invites.services.invites import InviteService
 from app.users.services.users import UserService
 
@@ -37,7 +36,6 @@ PrincipalDep = Annotated[
     AuthenticatedPrincipal,
     Depends(require_authenticated_principal),
 ]
-InviteTokenSinkDep = Annotated[InviteTokenSink, Depends(get_invite_token_sink)]
 
 
 @router.post(
@@ -53,11 +51,10 @@ async def create_invite(
     identity: PrincipalDep,
     request: Request,
     db_session: DbSessionDep,
-    token_sink: InviteTokenSinkDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
 ) -> InviteResponse:
     user = await UserService(db_session).provision_current_user(identity)
-    invite_service = InviteService(db_session, token_sink=token_sink)
+    invite_service = InviteService(db_session)
     invite = await invite_service.create_invite(
         organisation_id=organisation_id,
         actor_user_id=user.id,
@@ -133,11 +130,10 @@ async def resend_invite(
     identity: PrincipalDep,
     request: Request,
     db_session: DbSessionDep,
-    token_sink: InviteTokenSinkDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
 ) -> InviteResponse:
     user = await UserService(db_session).provision_current_user(identity)
-    invite_service = InviteService(db_session, token_sink=token_sink)
+    invite_service = InviteService(db_session)
     invite = await invite_service.resend_invite(
         organisation_id=organisation_id,
         invite_id=invite_id,
