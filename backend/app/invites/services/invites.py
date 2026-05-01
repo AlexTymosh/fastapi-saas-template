@@ -17,10 +17,11 @@ from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundEr
 from app.core.logging import get_logger
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.repositories.invites import InviteRepository
-from app.invites.services.delivery import InviteTokenSink, NoOpInviteTokenSink
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from app.organisations.services.organisations import OrganisationService
+from app.outbox.models.outbox_event import OutboxEventType
+from app.outbox.services.outbox import OutboxService
 from app.users.services.users import UserService
 
 
@@ -36,15 +37,13 @@ class InviteService:
 
     DEFAULT_INVITE_TTL = timedelta(days=7)
 
-    def __init__(
-        self, session: AsyncSession, *, token_sink: InviteTokenSink | None = None
-    ) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.invite_repository = InviteRepository(session)
         self.membership_service = MembershipService(session)
         self.organisation_service = OrganisationService(session)
         self.user_service = UserService(session)
-        self.token_sink = token_sink or NoOpInviteTokenSink()
+        self.outbox_service = OutboxService(session)
 
     @staticmethod
     def _token_hash(token: str) -> str:
@@ -79,10 +78,7 @@ class InviteService:
             actor_user_id=actor_user_id,
             audit_context=audit_context,
         )
-        if self.session.in_transaction():
-            raise RuntimeError("Invite delivery requires service-owned transaction")
         invite: Invite | None = None
-        token: str | None = None
         async with self.session.begin():
             if role == MembershipRole.OWNER:
                 raise ForbiddenError(detail="Owner role cannot be assigned via invite")
@@ -131,16 +127,20 @@ class InviteService:
                     "invite_role": invite.role.value,
                 },
             )
-        assert invite is not None and token is not None
-        try:
-            await self.token_sink.deliver(invite=invite, raw_token=token)
-        except Exception as exc:  # pragma: no cover - defensive production safety
-            self.log.warning(
-                "invite_token_delivery_failed",
-                invite_id=str(invite.id),
-                organisation_id=str(organisation_id),
-                error_type=type(exc).__name__,
+            await self.outbox_service.publish_event(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=invite.id,
+                payload_json={
+                    "invite_id": str(invite.id),
+                    "organisation_id": str(organisation_id),
+                    "email": invite.email,
+                    "raw_token": token,
+                    "purpose": "created",
+                    "role": invite.role.value,
+                },
             )
+        assert invite is not None
         return invite
 
     async def accept_invite(
@@ -244,8 +244,6 @@ class InviteService:
             actor_user_id=actor_user_id,
             audit_context=audit_context,
         )
-        if self.session.in_transaction():
-            raise RuntimeError("Invite delivery requires service-owned transaction")
 
         async with self.session.begin():
             actor = await self._get_actor_membership(
@@ -269,54 +267,37 @@ class InviteService:
             ):
                 raise ForbiddenError(detail="Admin can resend member invites only")
 
-        token = token_urlsafe(32)
-        token_hash = self._token_hash(token)
-        expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
+            token = token_urlsafe(32)
+            token_hash = self._token_hash(token)
+            expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
 
-        try:
-            await self.token_sink.deliver(invite=invite, raw_token=token)
-        except Exception as exc:  # pragma: no cover - defensive production safety
-            self.log.warning(
-                "invite_token_delivery_failed",
-                invite_id=str(invite.id),
-                organisation_id=str(organisation_id),
-                error_type=type(exc).__name__,
-            )
-            raise ConflictError(detail="Invite delivery failed") from exc
-
-        async with self.session.begin():
-            invite_for_update = (
-                await self.invite_repository.get_invite_for_organisation_for_update(
-                    invite_id=invite_id,
-                    organisation_id=organisation_id,
-                )
-            )
-            if invite_for_update is None:
-                raise NotFoundError(detail="Invite not found")
-            if invite_for_update.status != InviteStatus.PENDING:
-                raise ConflictError(detail="Only pending invite can be resent")
-            if self._is_expired(expires_at=invite_for_update.expires_at):
-                await self.invite_repository.mark_status(
-                    invite_for_update,
-                    InviteStatus.EXPIRED,
-                )
-                raise ConflictError(detail="Invite has expired")
-
-            invite_for_update.token_hash = token_hash
-            invite_for_update.expires_at = expires_at
+            invite.token_hash = token_hash
+            invite.expires_at = expires_at
             await self.session.flush()
             await AuditEventService(self.session).record_event(
                 audit_context=audit_context,
                 category=AuditCategory.TENANT,
                 action=AuditAction.INVITE_RESENT,
                 target_type=AuditTargetType.INVITE,
-                target_id=invite_for_update.id,
+                target_id=invite.id,
                 metadata_json={
                     "organisation_id": str(organisation_id),
-                    "invite_role": invite_for_update.role.value,
+                    "invite_role": invite.role.value,
                 },
             )
-            invite = invite_for_update
+            await self.outbox_service.publish_event(
+                event_type=OutboxEventType.INVITE_RESEND.value,
+                aggregate_type="invite",
+                aggregate_id=invite.id,
+                payload_json={
+                    "invite_id": str(invite.id),
+                    "organisation_id": str(organisation_id),
+                    "email": invite.email,
+                    "raw_token": token,
+                    "purpose": "resent",
+                    "role": invite.role.value,
+                },
+            )
 
         return invite
 

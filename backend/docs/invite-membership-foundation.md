@@ -26,7 +26,10 @@ The following capabilities are intentionally out of scope for this foundation an
 
 ## Security and delivery note
 
-Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract.
+Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract. Invite delivery now uses a transactional outbox: invite/audit/outbox rows are committed together, while delivery runs asynchronously and at-least-once from background workers.
+
+Raw token material is stored only in outbox payloads until delivery is processed. Production hardening should encrypt sensitive outbox payloads or replace raw-token payload storage with a secure token material strategy before real provider integration.
+Outbox workers now use DB-backed status/attempt tracking as the source of truth and do not rely on Dramatiq retries for business delivery retries. A dispatcher actor (`enqueue_pending_outbox_events`) enqueues due pending events for processing.
 
 ## Authorisation semantics and invite token test seam
 
@@ -38,4 +41,4 @@ For organisation-scoped foundation endpoints, this branch now applies a single a
 
 This policy is applied to organisation read/membership-list flows and organisation-scoped invite creation.
 
-To keep invite API tests realistic without exposing raw tokens in the public API contract, invite creation now calls a token delivery port (`InviteTokenSink`). The production default sink is a no-op placeholder for out-of-band delivery, while tests override the sink with an in-memory capture implementation to retrieve tokens for acceptance tests.
+To keep invite API tests realistic without exposing raw tokens in the public API contract, token delivery is executed only by outbox workers through a token sink abstraction (`InviteTokenSink`). The production default sink remains a no-op placeholder for out-of-band delivery, while tests can override the sink with an in-memory capture implementation.
