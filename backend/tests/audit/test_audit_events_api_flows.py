@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.audit.models.audit_event import AuditEvent
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
+from tests.helpers.outbox import drain_outbox as shared_drain_outbox
 
 
 class InMemoryInviteTokenSink:
@@ -29,24 +30,8 @@ def _override_token_sink(monkeypatch) -> InMemoryInviteTokenSink:
     return sink
 
 
-async def _process_all_outbox_events(migrated_session_factory) -> None:
-    from app.outbox.repositories.outbox_events import OutboxEventRepository
-    from app.outbox.workers import _process_outbox_event
-
-    async with migrated_session_factory() as session:
-        repo = OutboxEventRepository(session)
-        events = await repo.list_pending_due_events(limit=500)
-
-    for event in events:
-        await _process_outbox_event(str(event.id))
-
-
 def _drain_outbox(migrated_session_factory, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.outbox.workers.get_session_factory",
-        lambda: migrated_session_factory,
-    )
-    run_async(_process_all_outbox_events(migrated_session_factory))
+    shared_drain_outbox(migrated_session_factory, monkeypatch)
 
 
 def assert_metadata_has_no_sensitive_invite_fields(metadata: dict[str, object]) -> None:
