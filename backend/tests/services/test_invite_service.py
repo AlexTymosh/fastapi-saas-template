@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.invites import InviteService
 from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation
+from app.outbox.models.outbox_event import OutboxEventType
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
@@ -29,11 +31,10 @@ def _service() -> InviteService:
     session.begin = Mock(return_value=_transaction_context())
     session.in_transaction = Mock(return_value=False)
     session.flush = AsyncMock()
-    return InviteService(session=session)
-
-
-class _DeliveryError(Exception):
-    pass
+    service = InviteService(session=session)
+    service.outbox_service = AsyncMock()
+    service.outbox_service.publish_event = AsyncMock()
+    return service
 
 
 def _identity(email: str = "user@example.com") -> AuthenticatedPrincipal:
@@ -458,11 +459,12 @@ def test_create_invite_translates_integrity_error_to_conflict() -> None:
         )
 
 
-def test_create_invite_delivery_failure_does_not_raise() -> None:
+def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     service = _service()
     org_id = uuid4()
     actor_user_id = uuid4()
     created_invite = Invite(
+        id=uuid4(),
         email="invitee@example.com",
         organisation_id=org_id,
         role=MembershipRole.MEMBER,
@@ -487,7 +489,7 @@ def test_create_invite_delivery_failure_does_not_raise() -> None:
     service.invite_repository.get_pending_invite_by_email = AsyncMock(return_value=None)
     service.invite_repository.create_invite = AsyncMock(return_value=created_invite)
     service.token_sink = AsyncMock()
-    service.token_sink.deliver = AsyncMock(side_effect=_DeliveryError("downstream"))
+    service.token_sink.deliver = AsyncMock()
 
     with patch("app.invites.services.invites.AuditEventService") as audit_service_cls:
         audit_service_cls.return_value.record_event = AsyncMock()
@@ -503,19 +505,46 @@ def test_create_invite_delivery_failure_does_not_raise() -> None:
 
     assert invite is created_invite
     audit_service_cls.return_value.record_event.assert_awaited_once()
+    service.outbox_service.publish_event.assert_awaited_once()
+    payload = service.outbox_service.publish_event.await_args.kwargs["payload_json"]
+    assert (
+        service.outbox_service.publish_event.await_args.kwargs["event_type"]
+        == OutboxEventType.INVITE_CREATED.value
+    )
+    assert (
+        service.outbox_service.publish_event.await_args.kwargs["aggregate_type"]
+        == "invite"
+    )
+    assert (
+        service.outbox_service.publish_event.await_args.kwargs["aggregate_id"]
+        == created_invite.id
+    )
+    assert payload["invite_id"] == str(created_invite.id)
+    assert payload["organisation_id"] == str(org_id)
+    assert payload["email"] == "invitee@example.com"
+    assert payload["purpose"] == "created"
+    assert payload["role"] == MembershipRole.MEMBER.value
+    assert (
+        created_invite.token_hash
+        == sha256(payload["raw_token"].encode("utf-8")).hexdigest()
+    )
+    service.token_sink.deliver.assert_not_called()
 
 
-def test_resend_invite_delivery_failure_keeps_old_token_and_raises_conflict() -> None:
+def test_resend_invite_updates_token_hash_and_publishes_outbox_event() -> None:
     service = _service()
     org_id = uuid4()
     actor_user_id = uuid4()
     invite = Invite(
+        id=uuid4(),
         email="invitee@example.com",
         organisation_id=org_id,
         role=MembershipRole.MEMBER,
         status=InviteStatus.PENDING,
         token_hash="old-hash",
     )
+    old_hash = invite.token_hash
+    old_expires_at = invite.expires_at
     service.user_service = AsyncMock()
     service.user_service.get_user_by_id = AsyncMock(return_value=object())
     service.user_service.ensure_user_is_active = AsyncMock()
@@ -534,81 +563,30 @@ def test_resend_invite_delivery_failure_keeps_old_token_and_raises_conflict() ->
     service.invite_repository.get_invite_for_organisation = AsyncMock(
         return_value=invite
     )
-    service.token_sink = AsyncMock()
-    service.token_sink.deliver = AsyncMock(side_effect=_DeliveryError("downstream"))
-
     service.invite_repository.get_invite_for_organisation_for_update = AsyncMock(
         return_value=invite
     )
 
     with patch("app.invites.services.invites.AuditEventService") as audit_service_cls:
         audit_service_cls.return_value.record_event = AsyncMock()
-        with pytest.raises(ConflictError, match="Invite delivery failed"):
-            run_async(
-                service.resend_invite(
-                    organisation_id=org_id,
-                    invite_id=uuid4(),
-                    actor_user_id=actor_user_id,
-                    audit_context=AuditContext(actor_user_id=actor_user_id),
-                )
+        resent = run_async(
+            service.resend_invite(
+                organisation_id=org_id,
+                invite_id=uuid4(),
+                actor_user_id=actor_user_id,
+                audit_context=AuditContext(actor_user_id=actor_user_id),
             )
+        )
 
-    assert invite.token_hash == "old-hash"
-    audit_service_cls.return_value.record_event.assert_not_called()
-
-
-def test_create_invite_rejects_external_transaction_before_delivery() -> None:
-    service = _service()
-    service.session.in_transaction = Mock(return_value=True)
-    service.token_sink = AsyncMock()
-    service.token_sink.deliver = AsyncMock()
-    service.invite_repository = AsyncMock()
-
-    actor_user_id = uuid4()
-    with patch("app.invites.services.invites.AuditEventService") as audit_service_cls:
-        audit_service_cls.return_value.record_event = AsyncMock()
-        with pytest.raises(
-            RuntimeError, match="Invite delivery requires service-owned transaction"
-        ):
-            run_async(
-                service.create_invite(
-                    organisation_id=uuid4(),
-                    actor_user_id=actor_user_id,
-                    role=MembershipRole.MEMBER,
-                    email="invitee@example.com",
-                    audit_context=AuditContext(actor_user_id=actor_user_id),
-                )
-            )
-
-    service.session.begin.assert_not_called()
-    service.invite_repository.create_invite.assert_not_called()
-    service.token_sink.deliver.assert_not_called()
-    audit_service_cls.return_value.record_event.assert_not_called()
-
-
-def test_resend_invite_rejects_external_transaction_before_delivery() -> None:
-    service = _service()
-    service.session.in_transaction = Mock(return_value=True)
-    service.token_sink = AsyncMock()
-    service.token_sink.deliver = AsyncMock()
-    service.invite_repository = AsyncMock()
-
-    actor_user_id = uuid4()
-    with patch("app.invites.services.invites.AuditEventService") as audit_service_cls:
-        audit_service_cls.return_value.record_event = AsyncMock()
-        with pytest.raises(
-            RuntimeError, match="Invite delivery requires service-owned transaction"
-        ):
-            run_async(
-                service.resend_invite(
-                    organisation_id=uuid4(),
-                    invite_id=uuid4(),
-                    actor_user_id=actor_user_id,
-                    audit_context=AuditContext(actor_user_id=actor_user_id),
-                )
-            )
-
-    service.session.begin.assert_not_called()
-    service.invite_repository.get_invite_for_organisation.assert_not_called()
-    service.token_sink.deliver.assert_not_called()
-    audit_service_cls.return_value.record_event.assert_not_called()
+    assert resent is invite
+    assert invite.token_hash != old_hash
+    assert invite.expires_at is not None
+    if old_expires_at is not None:
+        assert invite.expires_at > old_expires_at
+    audit_service_cls.return_value.record_event.assert_awaited_once()
+    service.outbox_service.publish_event.assert_awaited_once()
+    args = service.outbox_service.publish_event.await_args.kwargs
+    assert args["event_type"] == OutboxEventType.INVITE_RESEND.value
+    payload = args["payload_json"]
+    assert payload["purpose"] == "resent"
+    assert sha256(payload["raw_token"].encode("utf-8")).hexdigest() == invite.token_hash

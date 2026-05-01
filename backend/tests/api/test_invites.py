@@ -77,6 +77,9 @@ async def _process_all_outbox_events(migrated_session_factory) -> None:
 
 
 def _drain_outbox(migrated_session_factory, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
     run_async(_process_all_outbox_events(migrated_session_factory))
 
 
