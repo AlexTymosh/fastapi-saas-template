@@ -39,3 +39,11 @@ For organisation-scoped foundation endpoints, this branch now applies a single a
 This policy is applied to organisation read/membership-list flows and organisation-scoped invite creation.
 
 To keep invite API tests realistic without exposing raw tokens in the public API contract, invite creation now calls a token delivery port (`InviteTokenSink`). The production default sink is a no-op placeholder for out-of-band delivery, while tests override the sink with an in-memory capture implementation to retrieve tokens for acceptance tests.
+
+## Invite token delivery reliability
+
+Invite token delivery now uses a transactional outbox. Invite and audit records are persisted together with an `outbox_events` record in the same transaction, and delivery is executed asynchronously by a worker after commit. Raw invite tokens are not stored in the `invites` table and are not returned by API responses.
+
+Security tradeoff: raw tokens are temporarily present in outbox payloads for worker delivery. Before introducing a real email provider in production, sensitive payloads should be encrypted or replaced with a secret materialisation strategy.
+
+Delivery semantics are at-least-once; worker handlers must stay idempotent.

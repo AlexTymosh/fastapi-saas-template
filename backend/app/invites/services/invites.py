@@ -17,10 +17,11 @@ from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundEr
 from app.core.logging import get_logger
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.repositories.invites import InviteRepository
-from app.invites.services.delivery import InviteTokenSink, NoOpInviteTokenSink
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from app.organisations.services.organisations import OrganisationService
+from app.outbox.services.outbox import OutboxService
+from app.outbox.workers import INVITE_CREATED_EVENT, INVITE_RESEND_EVENT
 from app.users.services.users import UserService
 
 
@@ -36,15 +37,12 @@ class InviteService:
 
     DEFAULT_INVITE_TTL = timedelta(days=7)
 
-    def __init__(
-        self, session: AsyncSession, *, token_sink: InviteTokenSink | None = None
-    ) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.invite_repository = InviteRepository(session)
         self.membership_service = MembershipService(session)
         self.organisation_service = OrganisationService(session)
         self.user_service = UserService(session)
-        self.token_sink = token_sink or NoOpInviteTokenSink()
 
     @staticmethod
     def _token_hash(token: str) -> str:
@@ -131,16 +129,19 @@ class InviteService:
                     "invite_role": invite.role.value,
                 },
             )
-        assert invite is not None and token is not None
-        try:
-            await self.token_sink.deliver(invite=invite, raw_token=token)
-        except Exception as exc:  # pragma: no cover - defensive production safety
-            self.log.warning(
-                "invite_token_delivery_failed",
-                invite_id=str(invite.id),
-                organisation_id=str(organisation_id),
-                error_type=type(exc).__name__,
+            await OutboxService(self.session).publish(
+                event_type=INVITE_CREATED_EVENT,
+                aggregate_type="invite",
+                aggregate_id=invite.id,
+                payload_json={
+                    "invite_id": str(invite.id),
+                    "organisation_id": str(organisation_id),
+                    "email": invite.email,
+                    "raw_token": token,
+                    "purpose": "created",
+                },
             )
+        assert invite is not None
         return invite
 
     async def accept_invite(
@@ -273,17 +274,6 @@ class InviteService:
         token_hash = self._token_hash(token)
         expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
 
-        try:
-            await self.token_sink.deliver(invite=invite, raw_token=token)
-        except Exception as exc:  # pragma: no cover - defensive production safety
-            self.log.warning(
-                "invite_token_delivery_failed",
-                invite_id=str(invite.id),
-                organisation_id=str(organisation_id),
-                error_type=type(exc).__name__,
-            )
-            raise ConflictError(detail="Invite delivery failed") from exc
-
         async with self.session.begin():
             invite_for_update = (
                 await self.invite_repository.get_invite_for_organisation_for_update(
@@ -314,6 +304,18 @@ class InviteService:
                 metadata_json={
                     "organisation_id": str(organisation_id),
                     "invite_role": invite_for_update.role.value,
+                },
+            )
+            await OutboxService(self.session).publish(
+                event_type=INVITE_RESEND_EVENT,
+                aggregate_type="invite",
+                aggregate_id=invite_for_update.id,
+                payload_json={
+                    "invite_id": str(invite_for_update.id),
+                    "organisation_id": str(organisation_id),
+                    "email": invite_for_update.email,
+                    "raw_token": token,
+                    "purpose": "resent",
                 },
             )
             invite = invite_for_update
