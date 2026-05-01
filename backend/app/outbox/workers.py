@@ -15,85 +15,85 @@ from app.outbox.models.outbox_event import OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
 
 log = get_logger(__name__)
-configure_broker()
+configure_broker(require_redis=True)
 
 
-def _safe_error_code(exc: Exception) -> str:
-    return f"delivery_failed:{type(exc).__name__}"
-
-
-async def _process_outbox_event(event_id: str) -> None:
+async def _load_event_delivery_context(
+    event_id: str,
+) -> tuple[dict[str, object], Invite | None, str] | None:
     session_factory = get_session_factory()
-    try:
-        async with session_factory() as session:
-            async with session.begin():
-                repository = OutboxEventRepository(session)
-                event = await repository.get_by_id(UUID(event_id))
-                if event is None or event.status == OutboxStatus.PROCESSED.value:
-                    return
+    async with session_factory() as session:
+        async with session.begin():
+            repository = OutboxEventRepository(session)
+            event = await repository.get_by_id(UUID(event_id))
+            if event is None or event.status != OutboxStatus.PROCESSING.value:
+                return None
+            return (
+                event.payload_json,
+                await _load_invite(session, event.payload_json),
+                event.event_type,
+            )
 
-                await repository.mark_processing(event=event)
-                if event.event_type in {
-                    OutboxEventType.INVITE_CREATED.value,
-                    OutboxEventType.INVITE_RESEND.value,
-                }:
-                    payload = event.payload_json
-                    invite = (
-                        await session.execute(
-                            select(Invite).where(
-                                Invite.id == UUID(str(payload["invite_id"]))
-                            )
-                        )
-                    ).scalar_one_or_none()
-                    if invite is None:
-                        await repository.mark_failed_attempt(
-                            event=event,
-                            error="invite_not_found",
-                        )
-                        return
-                    if invite.status != InviteStatus.PENDING:
-                        await repository.mark_processed(event=event)
-                        return
-                    raw_token = str(payload["raw_token"])
-                    token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
-                    if token_hash != invite.token_hash:
-                        await repository.mark_failed_attempt(
-                            event=event,
-                            error="token_hash_mismatch",
-                        )
-                        return
-                    sink = get_invite_token_sink()
-                    await sink.deliver(invite=invite, raw_token=raw_token)
-                await repository.mark_processed(event=event)
-    except Exception as exc:
-        async with session_factory() as session:
-            async with session.begin():
-                repository = OutboxEventRepository(session)
-                event = await repository.get_by_id(UUID(event_id))
-                if event is None or event.status == OutboxStatus.PROCESSED.value:
-                    return
-                await repository.mark_failed_attempt(
-                    event=event,
-                    error=_safe_error_code(exc),
-                )
-        log.warning("outbox_delivery_failed", event_id=event_id)
+
+async def _load_invite(session, payload: dict[str, object]) -> Invite | None:
+    invite_id = UUID(str(payload["invite_id"]))
+    return (
+        await session.execute(select(Invite).where(Invite.id == invite_id))
+    ).scalar_one_or_none()
+
+
+async def _mark_processed(event_id: str) -> None:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        async with session.begin():
+            repository = OutboxEventRepository(session)
+            event = await repository.get_by_id(UUID(event_id))
+            if event is None:
+                return
+            await repository.mark_processed(event=event)
+
+
+async def _mark_failed_attempt(event_id: str, error: str) -> None:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        async with session.begin():
+            repository = OutboxEventRepository(session)
+            event = await repository.get_by_id(UUID(event_id))
+            if event is None or event.status != OutboxStatus.PROCESSING.value:
+                return
+            await repository.mark_failed_attempt(event=event, error=error)
 
 
 @dramatiq.actor(max_retries=0)
 async def process_outbox_event(event_id: str) -> None:
-    await _process_outbox_event(event_id)
+    context = await _load_event_delivery_context(event_id)
+    if context is None:
+        return
+    payload, invite, event_type = context
+    if event_type not in {
+        OutboxEventType.INVITE_CREATED.value,
+        OutboxEventType.INVITE_RESEND.value,
+    }:
+        await _mark_processed(event_id)
+        return
+    if invite is None:
+        await _mark_failed_attempt(event_id, "invite_not_found")
+        return
+    if invite.status != InviteStatus.PENDING:
+        await _mark_processed(event_id)
+        return
 
+    raw_token = str(payload["raw_token"])
+    if sha256(raw_token.encode("utf-8")).hexdigest() != invite.token_hash:
+        await _mark_failed_attempt(event_id, "token_hash_mismatch")
+        return
 
-async def _enqueue_pending_outbox_events(limit: int = 100) -> None:
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        repository = OutboxEventRepository(session)
-        events = await repository.list_pending_due_events(limit=limit)
+    try:
+        sink = get_invite_token_sink()
+        await sink.deliver(invite=invite, raw_token=raw_token)
+    except Exception as exc:
+        await _mark_failed_attempt(event_id, f"delivery_failed:{type(exc).__name__}")
+        log.warning("outbox_delivery_failed", event_id=event_id)
+        return
 
-    for event in events:
-        process_outbox_event.send(str(event.id))
-
-
-@dramatiq.actor(max_retries=0)
-async def enqueue_pending_outbox_events(limit: int = 100) -> None:
-    await _enqueue_pending_outbox_events(limit)
+    await _mark_processed(event_id)

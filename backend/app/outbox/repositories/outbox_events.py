@@ -25,9 +25,9 @@ class OutboxEventRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_pending_due_events(self, *, limit: int) -> list[OutboxEvent]:
+    async def claim_due_events(self, *, limit: int) -> list[OutboxEvent]:
         now = datetime.now(UTC)
-        result = await self.session.execute(
+        statement = (
             select(OutboxEvent)
             .where(
                 OutboxEvent.status == OutboxStatus.PENDING.value,
@@ -39,14 +39,20 @@ class OutboxEventRepository:
             .order_by(OutboxEvent.created_at.asc())
             .limit(limit)
         )
-        return list(result.scalars().all())
 
-    async def mark_processing(self, *, event: OutboxEvent) -> None:
-        if event.status == OutboxStatus.PROCESSED.value:
-            return
-        event.status = OutboxStatus.PROCESSING.value
-        event.locked_at = datetime.now(UTC)
+        bind = self.session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            statement = statement.with_for_update(skip_locked=True)
+        # SQLite fallback is deterministic for tests;
+        # production concurrency safety is PostgreSQL-specific.
+
+        result = await self.session.execute(statement)
+        events = list(result.scalars().all())
+        for event in events:
+            event.status = OutboxStatus.PROCESSING.value
+            event.locked_at = now
         await self.session.flush()
+        return events
 
     async def mark_processed(self, *, event: OutboxEvent) -> None:
         now = datetime.now(UTC)

@@ -15,7 +15,7 @@ services:
       DATABASE__URL: postgresql+psycopg://app:app@postgres:5432/app
       TEST_DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/app
 
-#      REDIS__URL: redis://redis:6379/0
+      REDIS__URL: redis://redis:6379/0
       TEST_REDIS_URL: redis://redis:6379/0
 
       VAULT__ENABLED: "false"
@@ -35,6 +35,52 @@ services:
       --host 0.0.0.0
       --port 8000
       --reload
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: fastapi_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP__ENVIRONMENT: local
+      LOGGING__AS_JSON: "true"
+      DATABASE__URL: postgresql+psycopg://app:app@postgres:5432/app
+      REDIS__URL: redis://redis:6379/0
+      VAULT__ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: dramatiq app.outbox.workers
+
+  outbox-dispatcher:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: fastapi_outbox_dispatcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP__ENVIRONMENT: local
+      LOGGING__AS_JSON: "true"
+      DATABASE__URL: postgresql+psycopg://app:app@postgres:5432/app
+      REDIS__URL: redis://redis:6379/0
+      VAULT__ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: python -m app.outbox.dispatcher --interval 5 --batch-size 100
 
   postgres:
     image: postgres:17-alpine
