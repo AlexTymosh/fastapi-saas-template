@@ -60,6 +60,22 @@ def _override_failing_token_sink(test_client) -> None:
     )
 
 
+async def _process_all_outbox_events(migrated_session_factory) -> None:
+    from app.outbox.repositories.outbox_events import OutboxEventRepository
+    from app.outbox.workers import _process_outbox_event
+
+    async with migrated_session_factory() as session:
+        repo = OutboxEventRepository(session)
+        events = await repo.list_pending_due_events(limit=500)
+
+    for event in events:
+        await _process_outbox_event(str(event.id))
+
+
+def _drain_outbox(migrated_session_factory) -> None:
+    run_async(_process_all_outbox_events(migrated_session_factory))
+
+
 def test_invite_accept_rejects_when_user_already_has_active_membership(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -109,6 +125,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
         )
         assert transfer_invite.status_code == 201
 
+    _drain_outbox(migrated_session_factory)
     source_token = source_owner_sink.token_for_email("invitee@example.com")
     transfer_token = owner_sink.token_for_email("invitee@example.com")
 
@@ -212,6 +229,7 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
         )
         assert invited.status_code == 201
 
+    _drain_outbox(migrated_session_factory)
     first_token = owner_a_sink.token_for_email("active-user@example.com")
     second_token = owner_b_sink.token_for_email("active-user@example.com")
     invitee_bundle = authenticated_client_factory(
@@ -306,6 +324,7 @@ def test_accept_invite_allows_user_with_inactive_membership(
         )
         assert invited.status_code == 201
 
+    _drain_outbox(migrated_session_factory)
     token = owner_sink.token_for_email("inactive-member@example.com")
     with inactive_user_bundle.client as client:
         accepted = client.post("/api/v1/invites/accept", json={"token": token})
@@ -354,6 +373,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
         assert create_org.status_code == 201
         source_org_id = create_org.json()["id"]
 
+    _drain_outbox(migrated_session_factory)
     token = owner_sink.token_for_email("invitee-sole@example.com")
 
     with sole_owner_client as client:
@@ -471,6 +491,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
         assert invite_response.status_code == 201
         assert "token" not in invite_response.json()
 
+    _drain_outbox(migrated_session_factory)
     token = owner_sink.token_for_email("jit-invitee@example.com")
 
     invitee_client_bundle = authenticated_client_factory(
@@ -503,6 +524,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
 def test_accept_invite_rejects_email_mismatch(
     authenticated_client_factory,
     migrated_database_url: str,
+    migrated_session_factory,
 ) -> None:
     owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-mismatch", "owner-mismatch@example.com"),
@@ -525,6 +547,7 @@ def test_accept_invite_rejects_email_mismatch(
         assert invite_response.status_code == 201
         assert "token" not in invite_response.json()
 
+    _drain_outbox(migrated_session_factory)
     token = owner_sink.token_for_email("expected@example.com")
 
     wrong_user_client_bundle = authenticated_client_factory(
@@ -564,6 +587,7 @@ def test_accept_invite_rejects_expired_invite(
         )
         assert invite_response.status_code == 201
 
+    _drain_outbox(migrated_session_factory)
     token = owner_sink.token_for_email("invitee-expired@example.com")
 
     async def _expire_invite() -> None:
@@ -729,7 +753,8 @@ def test_resend_invite_delivery_failure_keeps_old_token_hash_and_no_audit_event(
             json={"email": "invitee-resend-fail@example.com", "role": "member"},
         )
         invite_id = invite_response.json()["id"]
-        initial_token = owner_sink.token_for_email("invitee-resend-fail@example.com")
+        _drain_outbox(migrated_session_factory)
+    initial_token = owner_sink.token_for_email("invitee-resend-fail@example.com")
     _override_failing_token_sink(owner_bundle.client)
     with owner_bundle.client as client:
         response = client.post(
@@ -871,7 +896,8 @@ def test_suspended_organisation_blocks_invite_acceptance(
             f"/api/v1/organisations/{organisation_id}/invites",
             json={"email": "invitee@example.com", "role": "member"},
         )
-        token = owner_sink.token_for_email("invitee@example.com")
+        _drain_outbox(migrated_session_factory)
+    token = owner_sink.token_for_email("invitee@example.com")
 
     async def _suspend_org() -> None:
         async with migrated_session_factory() as session:
@@ -895,7 +921,7 @@ def test_suspended_organisation_blocks_invite_acceptance(
 
 
 def test_unverified_email_cannot_accept_invite(
-    authenticated_client_factory, migrated_database_url: str
+    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=_identity_for("kc-owner-unver", "owner-unver@example.com"),
@@ -915,7 +941,8 @@ def test_unverified_email_cannot_accept_invite(
             json={"email": "invitee-unverified@example.com", "role": "member"},
         )
         assert invited.status_code == 201
-        token = owner_sink.token_for_email("invitee-unverified@example.com")
+        _drain_outbox(migrated_session_factory)
+    token = owner_sink.token_for_email("invitee-unverified@example.com")
 
     invitee_bundle = authenticated_client_factory(
         identity=_identity_for(

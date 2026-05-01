@@ -25,6 +25,22 @@ class OutboxEventRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_pending_due_events(self, *, limit: int) -> list[OutboxEvent]:
+        now = datetime.now(UTC)
+        result = await self.session.execute(
+            select(OutboxEvent)
+            .where(
+                OutboxEvent.status == OutboxStatus.PENDING.value,
+                (
+                    (OutboxEvent.next_attempt_at.is_(None))
+                    | (OutboxEvent.next_attempt_at <= now)
+                ),
+            )
+            .order_by(OutboxEvent.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def mark_processing(self, *, event: OutboxEvent) -> None:
         if event.status == OutboxStatus.PROCESSED.value:
             return
