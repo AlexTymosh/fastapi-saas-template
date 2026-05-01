@@ -505,7 +505,7 @@ def test_create_invite_delivery_failure_does_not_raise() -> None:
     audit_service_cls.return_value.record_event.assert_awaited_once()
 
 
-def test_resend_invite_delivery_failure_does_not_raise() -> None:
+def test_resend_invite_delivery_failure_keeps_old_token_and_raises_conflict() -> None:
     service = _service()
     org_id = uuid4()
     actor_user_id = uuid4()
@@ -537,20 +537,24 @@ def test_resend_invite_delivery_failure_does_not_raise() -> None:
     service.token_sink = AsyncMock()
     service.token_sink.deliver = AsyncMock(side_effect=_DeliveryError("downstream"))
 
+    service.invite_repository.get_invite_for_organisation_for_update = AsyncMock(
+        return_value=invite
+    )
+
     with patch("app.invites.services.invites.AuditEventService") as audit_service_cls:
         audit_service_cls.return_value.record_event = AsyncMock()
-        result = run_async(
-            service.resend_invite(
-                organisation_id=org_id,
-                invite_id=uuid4(),
-                actor_user_id=actor_user_id,
-                audit_context=AuditContext(actor_user_id=actor_user_id),
+        with pytest.raises(ConflictError, match="Invite delivery failed"):
+            run_async(
+                service.resend_invite(
+                    organisation_id=org_id,
+                    invite_id=uuid4(),
+                    actor_user_id=actor_user_id,
+                    audit_context=AuditContext(actor_user_id=actor_user_id),
+                )
             )
-        )
 
-    assert result is invite
-    assert invite.token_hash != "old-hash"
-    audit_service_cls.return_value.record_event.assert_awaited_once()
+    assert invite.token_hash == "old-hash"
+    audit_service_cls.return_value.record_event.assert_not_called()
 
 
 def test_create_invite_rejects_external_transaction_before_delivery() -> None:

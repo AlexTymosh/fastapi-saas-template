@@ -101,7 +101,6 @@ platform_admin:
 - platform_staff:manage
 - audit:read
 - gdpr:export
-- gdpr:erase
 - data:correct
 
 support_agent:

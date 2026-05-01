@@ -66,6 +66,18 @@ class InviteRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_invite_for_organisation_for_update(
+        self, *, invite_id: UUID, organisation_id: UUID
+    ) -> Invite | None:
+        stmt = (
+            select(Invite)
+            .where(Invite.id == invite_id, Invite.organisation_id == organisation_id)
+            .with_for_update()
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def mark_revoked(self, invite: Invite, *, revoked_by_user_id: UUID) -> Invite:
         invite.status = InviteStatus.REVOKED
         invite.revoked_at = datetime.now(UTC)

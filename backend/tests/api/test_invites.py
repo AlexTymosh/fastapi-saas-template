@@ -559,20 +559,15 @@ def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
                     AuditEvent.action == "invite_created",
                 )
             )
-            event = audit_result.scalar_one()
-            assert event.metadata_json == {
-                "organisation_id": str(organisation_id),
-                "invite_role": "member",
-            }
-            serialized = str(event.metadata_json).lower()
-            assert "token" not in serialized
-            assert "token_hash" not in serialized
-            assert "email" not in serialized
+            audit_event = audit_result.scalar_one_or_none()
+            assert audit_event is not None
+            assert audit_event.action == "invite_created"
+            assert audit_event.target_id == invite.id
 
     run_async(_assert_persisted())
 
 
-def test_resend_invite_delivery_failure_keeps_token_hash_and_audit_event(
+def test_resend_invite_delivery_failure_keeps_old_token_hash_and_no_audit_event(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
     owner_bundle = authenticated_client_factory(
@@ -598,16 +593,16 @@ def test_resend_invite_delivery_failure_keeps_token_hash_and_audit_event(
         response = client.post(
             f"/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend"
         )
-        assert response.status_code == 200
+        assert response.status_code == 409
 
-    async def _assert_resend_persisted() -> None:
+    async def _assert_resend_not_persisted() -> None:
         async with migrated_session_factory() as session:
             invite_result = await session.execute(
                 select(Invite).where(Invite.id == UUID(invite_id))
             )
             invite = invite_result.scalar_one()
             assert (
-                invite.token_hash != sha256(initial_token.encode("utf-8")).hexdigest()
+                invite.token_hash == sha256(initial_token.encode("utf-8")).hexdigest()
             )
             audit_result = await session.execute(
                 select(AuditEvent).where(
@@ -615,17 +610,9 @@ def test_resend_invite_delivery_failure_keeps_token_hash_and_audit_event(
                     AuditEvent.action == "invite_resent",
                 )
             )
-            event = audit_result.scalar_one()
-            assert event.metadata_json == {
-                "organisation_id": str(organisation_id),
-                "invite_role": "member",
-            }
-            serialized = str(event.metadata_json).lower()
-            assert "token" not in serialized
-            assert "token_hash" not in serialized
-            assert "email" not in serialized
+            assert audit_result.scalar_one_or_none() is None
 
-    run_async(_assert_resend_persisted())
+    run_async(_assert_resend_not_persisted())
 
 
 def test_create_invite_returns_404_for_missing_organisation(

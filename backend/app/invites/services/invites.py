@@ -246,8 +246,7 @@ class InviteService:
         )
         if self.session.in_transaction():
             raise RuntimeError("Invite delivery requires service-owned transaction")
-        invite: Invite | None = None
-        token: str | None = None
+
         async with self.session.begin():
             actor = await self._get_actor_membership(
                 organisation_id=organisation_id, actor_user_id=actor_user_id
@@ -269,22 +268,11 @@ class InviteService:
                 and invite.role == MembershipRole.ADMIN
             ):
                 raise ForbiddenError(detail="Admin can resend member invites only")
-            token = token_urlsafe(32)
-            invite.token_hash = self._token_hash(token)
-            invite.expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
-            await self.session.flush()
-            await AuditEventService(self.session).record_event(
-                audit_context=audit_context,
-                category=AuditCategory.TENANT,
-                action=AuditAction.INVITE_RESENT,
-                target_type=AuditTargetType.INVITE,
-                target_id=invite.id,
-                metadata_json={
-                    "organisation_id": str(organisation_id),
-                    "invite_role": invite.role.value,
-                },
-            )
-        assert invite is not None and token is not None
+
+        token = token_urlsafe(32)
+        token_hash = self._token_hash(token)
+        expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
+
         try:
             await self.token_sink.deliver(invite=invite, raw_token=token)
         except Exception as exc:  # pragma: no cover - defensive production safety
@@ -294,6 +282,42 @@ class InviteService:
                 organisation_id=str(organisation_id),
                 error_type=type(exc).__name__,
             )
+            raise ConflictError(detail="Invite delivery failed") from exc
+
+        async with self.session.begin():
+            invite_for_update = (
+                await self.invite_repository.get_invite_for_organisation_for_update(
+                    invite_id=invite_id,
+                    organisation_id=organisation_id,
+                )
+            )
+            if invite_for_update is None:
+                raise NotFoundError(detail="Invite not found")
+            if invite_for_update.status != InviteStatus.PENDING:
+                raise ConflictError(detail="Only pending invite can be resent")
+            if self._is_expired(expires_at=invite_for_update.expires_at):
+                await self.invite_repository.mark_status(
+                    invite_for_update,
+                    InviteStatus.EXPIRED,
+                )
+                raise ConflictError(detail="Invite has expired")
+
+            invite_for_update.token_hash = token_hash
+            invite_for_update.expires_at = expires_at
+            await self.session.flush()
+            await AuditEventService(self.session).record_event(
+                audit_context=audit_context,
+                category=AuditCategory.TENANT,
+                action=AuditAction.INVITE_RESENT,
+                target_type=AuditTargetType.INVITE,
+                target_id=invite_for_update.id,
+                metadata_json={
+                    "organisation_id": str(organisation_id),
+                    "invite_role": invite_for_update.role.value,
+                },
+            )
+            invite = invite_for_update
+
         return invite
 
     @staticmethod
