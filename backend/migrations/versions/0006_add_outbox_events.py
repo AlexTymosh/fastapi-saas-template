@@ -1,17 +1,19 @@
 """add outbox events
 
-Revision ID: 0006_add_outbox_events
-Revises: 0005_add_platform_staff
+Revision ID: 0006
+Revises: 0005
 Create Date: 2026-05-01
 """
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0006_add_outbox_events"
-down_revision = "0005_add_platform_staff"
-branch_labels = None
-depends_on = None
+revision: str = "0006"
+down_revision: str | None = "0005"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

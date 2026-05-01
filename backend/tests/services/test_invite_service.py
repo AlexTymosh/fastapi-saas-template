@@ -516,10 +516,15 @@ def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     assert payload["email"] == created_invite.email
     assert payload["purpose"] == "created"
     assert payload["role"] == MembershipRole.MEMBER.value
-    assert (
-        created_invite.token_hash
-        == sha256(payload["raw_token"].encode("utf-8")).hexdigest()
-    )
+    expected_hash = sha256(payload["raw_token"].encode("utf-8")).hexdigest()
+
+    service.invite_repository.create_invite.assert_awaited_once()
+    create_kwargs = service.invite_repository.create_invite.await_args.kwargs
+    assert create_kwargs["token_hash"] == expected_hash
+    assert create_kwargs["email"] == "invitee@example.com"
+    assert create_kwargs["organisation_id"] == org_id
+    assert create_kwargs["role"] == MembershipRole.MEMBER
+
     service.token_sink.deliver.assert_not_called()
 
 
