@@ -17,13 +17,17 @@ from tests.helpers.asyncio_runner import run_async
 
 class InMemoryInviteTokenSink:
     def __init__(self) -> None:
-        self._tokens_by_email: dict[str, str] = {}
+        self._tokens_by_email: dict[str, list[str]] = {}
 
     async def deliver(self, *, invite, raw_token: str) -> None:
-        self._tokens_by_email[invite.email.lower()] = raw_token
+        email = invite.email.lower()
+        self._tokens_by_email.setdefault(email, []).append(raw_token)
 
     def token_for_email(self, email: str) -> str:
-        return self._tokens_by_email[email.lower()]
+        return self._tokens_by_email[email.lower()][-1]
+
+    def tokens_for_email(self, email: str) -> list[str]:
+        return list(self._tokens_by_email.get(email.lower(), []))
 
 
 class FailingInviteTokenSink:
@@ -89,7 +93,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
         redis_url=None,
     )
     owner_client = owner_client_bundle.client
-    owner_sink = _override_token_sink(monkeypatch)
+    sink = _override_token_sink(monkeypatch)
 
     source_owner_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-source-owner", "source-owner@example.com"),
@@ -97,7 +101,6 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
         redis_url=None,
     )
     source_owner_client = source_owner_client_bundle.client
-    source_owner_sink = _override_token_sink(monkeypatch)
 
     with source_owner_client as client:
         create_org = client.post(
@@ -128,8 +131,10 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
         assert transfer_invite.status_code == 201
 
     _drain_outbox(migrated_session_factory, monkeypatch)
-    source_token = source_owner_sink.token_for_email("invitee@example.com")
-    transfer_token = owner_sink.token_for_email("invitee@example.com")
+    tokens = sink.tokens_for_email("invitee@example.com")
+    assert len(tokens) == 2
+    source_token = tokens[0]
+    transfer_token = tokens[1]
 
     invitee_client_bundle = authenticated_client_factory(
         identity=_identity_for("kc-invitee", "invitee@example.com"),
@@ -205,8 +210,7 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_a_sink = _override_token_sink(monkeypatch)
-    owner_b_sink = _override_token_sink(monkeypatch)
+    sink = _override_token_sink(monkeypatch)
 
     with owner_a_bundle.client as client:
         org_a = client.post(
@@ -233,8 +237,10 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
         assert invited.status_code == 201
 
     _drain_outbox(migrated_session_factory, monkeypatch)
-    first_token = owner_a_sink.token_for_email("active-user@example.com")
-    second_token = owner_b_sink.token_for_email("active-user@example.com")
+    tokens = sink.tokens_for_email("active-user@example.com")
+    assert len(tokens) == 2
+    first_token = tokens[0]
+    second_token = tokens[1]
     invitee_bundle = authenticated_client_factory(
         identity=_identity_for("kc-active-user", "active-user@example.com"),
         database_url=migrated_database_url,
