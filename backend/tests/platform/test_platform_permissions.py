@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 
 from app.core.platform.dependencies import require_platform_permission
-from app.core.platform.permissions import PlatformPermission, PlatformRole
+from app.core.platform.permissions import (
+    ROLE_PERMISSIONS,
+    PlatformPermission,
+    PlatformRole,
+)
 from app.organisations.models.organisation import Organisation
 from app.platform.models.platform_staff import PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
@@ -140,6 +144,35 @@ def test_permission_matrix_core(
         database_url=migrated_database_url,
     )
     assert regular_bundle.client.get("/api/v1/platform/users").status_code == 403
+
+
+def test_platform_endpoint_denies_missing_local_user_without_provisioning(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+):
+    bundle = authenticated_client_factory(
+        identity=identity_for("kc-no-local-user", "nolocal@example.com"),
+        database_url=migrated_database_url,
+    )
+    response = bundle.client.get("/api/v1/platform/users")
+    assert response.status_code == 403
+
+    async def _assert_user_not_created():
+        async with migrated_session_factory() as session:
+            user = await UserService(session).get_current_user_projection(
+                identity_for("kc-no-local-user", "nolocal@example.com")
+            )
+            assert user is None
+
+    run_async(_assert_user_not_created())
+
+
+def test_platform_permission_sets_for_compliance_and_admin() -> None:
+    compliance_permissions = ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
+    assert PlatformPermission.GDPR_ERASE not in compliance_permissions
+    assert PlatformPermission.GDPR_EXPORT in compliance_permissions
+
+    admin_permissions = ROLE_PERMISSIONS[PlatformRole.PLATFORM_ADMIN]
+    assert PlatformPermission.GDPR_ERASE in admin_permissions
 
 
 def test_invalid_platform_staff_role_is_denied_without_value_error(

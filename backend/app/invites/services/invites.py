@@ -270,8 +270,28 @@ class InviteService:
             ):
                 raise ForbiddenError(detail="Admin can resend member invites only")
             token = token_urlsafe(32)
-            invite.token_hash = self._token_hash(token)
-            invite.expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
+            token_hash = self._token_hash(token)
+            new_expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
+        assert invite is not None and token is not None and token_hash is not None
+        assert new_expires_at is not None
+        try:
+            await self.token_sink.deliver(invite=invite, raw_token=token)
+        except Exception as exc:  # pragma: no cover - defensive production safety
+            self.log.warning(
+                "invite_token_delivery_failed",
+                invite_id=str(invite.id),
+                organisation_id=str(organisation_id),
+                error_type=type(exc).__name__,
+            )
+            return invite
+        async with self.session.begin():
+            invite = await self.invite_repository.get_invite_for_organisation(
+                invite_id=invite_id, organisation_id=organisation_id
+            )
+            if invite is None or invite.status != InviteStatus.PENDING:
+                raise ConflictError(detail="Only pending invite can be resent")
+            invite.token_hash = token_hash
+            invite.expires_at = new_expires_at
             await self.session.flush()
             await AuditEventService(self.session).record_event(
                 audit_context=audit_context,
@@ -283,16 +303,6 @@ class InviteService:
                     "organisation_id": str(organisation_id),
                     "invite_role": invite.role.value,
                 },
-            )
-        assert invite is not None and token is not None
-        try:
-            await self.token_sink.deliver(invite=invite, raw_token=token)
-        except Exception as exc:  # pragma: no cover - defensive production safety
-            self.log.warning(
-                "invite_token_delivery_failed",
-                invite_id=str(invite.id),
-                organisation_id=str(organisation_id),
-                error_type=type(exc).__name__,
             )
         return invite
 

@@ -87,6 +87,13 @@ class UserService:
     async def get_me(self, identity: AuthenticatedPrincipal) -> User:
         return await self.provision_current_user(identity)
 
+    async def get_current_user_projection(
+        self, identity: AuthenticatedPrincipal
+    ) -> User | None:
+        return await self.user_repository.get_by_external_auth_id(
+            identity.external_auth_id
+        )
+
     async def get_user_by_id(self, user_id: UUID) -> User:
         user = await self.user_repository.get_by_id(user_id)
         if user is None:

@@ -505,16 +505,17 @@ def test_create_invite_delivery_failure_does_not_raise() -> None:
     audit_service_cls.return_value.record_event.assert_awaited_once()
 
 
-def test_resend_invite_delivery_failure_does_not_raise() -> None:
+def test_resend_invite_delivery_failure_keeps_existing_token_and_skips_audit() -> None:
     service = _service()
     org_id = uuid4()
     actor_user_id = uuid4()
+    old_hash = "old-hash"
     invite = Invite(
         email="invitee@example.com",
         organisation_id=org_id,
         role=MembershipRole.MEMBER,
         status=InviteStatus.PENDING,
-        token_hash="old-hash",
+        token_hash=old_hash,
     )
     service.user_service = AsyncMock()
     service.user_service.get_user_by_id = AsyncMock(return_value=object())
@@ -549,8 +550,8 @@ def test_resend_invite_delivery_failure_does_not_raise() -> None:
         )
 
     assert result is invite
-    assert invite.token_hash != "old-hash"
-    audit_service_cls.return_value.record_event.assert_awaited_once()
+    assert invite.token_hash == old_hash
+    audit_service_cls.return_value.record_event.assert_not_awaited()
 
 
 def test_create_invite_rejects_external_transaction_before_delivery() -> None:

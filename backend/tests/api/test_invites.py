@@ -572,7 +572,7 @@ def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
     run_async(_assert_persisted())
 
 
-def test_resend_invite_delivery_failure_keeps_token_hash_and_audit_event(
+def test_resend_invite_delivery_failure_keeps_token_hash_without_audit_event(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
     owner_bundle = authenticated_client_factory(
@@ -606,24 +606,15 @@ def test_resend_invite_delivery_failure_keeps_token_hash_and_audit_event(
                 select(Invite).where(Invite.id == UUID(invite_id))
             )
             invite = invite_result.scalar_one()
-            assert (
-                invite.token_hash != sha256(initial_token.encode("utf-8")).hexdigest()
-            )
+            initial_hash = sha256(initial_token.encode("utf-8")).hexdigest()
+            assert invite.token_hash == initial_hash
             audit_result = await session.execute(
                 select(AuditEvent).where(
                     AuditEvent.target_id == invite.id,
                     AuditEvent.action == "invite_resent",
                 )
             )
-            event = audit_result.scalar_one()
-            assert event.metadata_json == {
-                "organisation_id": str(organisation_id),
-                "invite_role": "member",
-            }
-            serialized = str(event.metadata_json).lower()
-            assert "token" not in serialized
-            assert "token_hash" not in serialized
-            assert "email" not in serialized
+            assert audit_result.scalar_one_or_none() is None
 
     run_async(_assert_resend_persisted())
 
