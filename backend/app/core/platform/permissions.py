@@ -45,7 +45,6 @@ ROLE_PERMISSIONS = {
             PlatformPermission.AUDIT_READ,
             PlatformPermission.AUDIT_READ_LIMITED,
             PlatformPermission.GDPR_EXPORT,
-            PlatformPermission.GDPR_ERASE,
         }
     ),
 }

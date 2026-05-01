@@ -34,7 +34,9 @@ async def resolve_platform_actor(
     session: AsyncSession,
     required_permission: PlatformPermission,
 ) -> PlatformActor:
-    user = await UserService(session).provision_current_user(identity)
+    user = await UserService(session).get_current_user_by_external_auth_id(identity)
+    if user is None:
+        raise ForbiddenError(detail="Platform access denied")
     if user.status != UserStatus.ACTIVE:
         raise ForbiddenError(detail="Platform access denied")
     staff = await PlatformStaffRepository(session).get_by_user_id(user.id)

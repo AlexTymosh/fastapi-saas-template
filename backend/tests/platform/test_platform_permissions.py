@@ -189,3 +189,37 @@ def test_invalid_platform_staff_role_is_denied_without_value_error(
         database_url=migrated_database_url,
     )
     assert bundle.client.get("/api/v1/platform/users").status_code == 403
+
+
+def test_platform_endpoint_does_not_provision_missing_user(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+):
+    bundle = authenticated_client_factory(
+        identity=identity_for("kc-missing-local", "missing-local@example.com"),
+        database_url=migrated_database_url,
+    )
+    assert bundle.client.get("/api/v1/platform/users").status_code == 403
+
+    async def _assert_missing_user():
+        async with migrated_session_factory() as session:
+            user = await UserService(session).user_repository.get_by_external_auth_id(
+                "kc-missing-local"
+            )
+            assert user is None
+
+    run_async(_assert_missing_user())
+
+
+def test_compliance_officer_permissions_exclude_gdpr_erase():
+    from app.core.platform.permissions import ROLE_PERMISSIONS
+
+    perms = ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
+    assert PlatformPermission.GDPR_ERASE not in perms
+    assert PlatformPermission.GDPR_EXPORT in perms
+
+
+def test_platform_admin_permissions_include_gdpr_erase():
+    from app.core.platform.permissions import ROLE_PERMISSIONS
+
+    perms = ROLE_PERMISSIONS[PlatformRole.PLATFORM_ADMIN]
+    assert PlatformPermission.GDPR_ERASE in perms

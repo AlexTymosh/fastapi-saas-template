@@ -75,6 +75,13 @@ class UserService:
         async with self.session.begin():
             return await self.get_or_create_current_user(identity=identity)
 
+    async def get_current_user_by_external_auth_id(
+        self, identity: AuthenticatedPrincipal
+    ) -> User | None:
+        return await self.user_repository.get_by_external_auth_id(
+            identity.external_auth_id
+        )
+
     async def mark_onboarding_completed(self, user: User) -> User:
         if user.onboarding_completed:
             return user

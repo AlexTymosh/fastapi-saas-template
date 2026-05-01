@@ -128,7 +128,6 @@ compliance_officer:
 - audit:read
 - audit:read_limited
 - gdpr:export
-- gdpr:erase (only with approval or explicit future workflow)
 ```
 
 ## 5. Platform actor resolution
