@@ -30,6 +30,8 @@ Raw invite tokens are generated for out-of-band delivery but are not part of the
 
 Raw token material is stored only in outbox payloads until delivery is processed. Production hardening should encrypt sensitive outbox payloads or replace raw-token payload storage with a secure token material strategy before real provider integration.
 
+Outbox processing strategy: the outbox table is the source of truth. Workers update attempts/status in the same database and persist failure state before propagating worker errors. Pending due events are dispatched by a dedicated outbox dispatcher actor and can be scheduled independently from request handling.
+
 ## Authorisation semantics and invite token test seam
 
 For organisation-scoped foundation endpoints, this branch now applies a single access rule consistently:

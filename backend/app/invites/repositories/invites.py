@@ -40,6 +40,11 @@ class InviteRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_id(self, *, invite_id: UUID) -> Invite | None:
+        stmt = select(Invite).where(Invite.id == invite_id).limit(1)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_pending_invite_by_email(
         self, *, organisation_id: UUID, email: str
     ) -> Invite | None:

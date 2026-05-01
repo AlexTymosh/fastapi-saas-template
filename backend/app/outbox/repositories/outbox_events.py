@@ -55,3 +55,17 @@ class OutboxEventRepository:
             event.next_attempt_at = now + timedelta(seconds=2**attempts)
         event.updated_at = now
         await self.session.flush()
+
+    async def list_pending_due(self, *, limit: int) -> list[OutboxEvent]:
+        now = datetime.now(UTC)
+        result = await self.session.execute(
+            select(OutboxEvent)
+            .where(OutboxEvent.status == OutboxStatus.PENDING.value)
+            .where(
+                (OutboxEvent.next_attempt_at.is_(None))
+                | (OutboxEvent.next_attempt_at <= now)
+            )
+            .order_by(OutboxEvent.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
