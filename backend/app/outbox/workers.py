@@ -24,14 +24,14 @@ def _safe_error_code(exc: Exception) -> str:
 
 async def _process_outbox_event(event_id: str) -> None:
     session_factory = get_session_factory()
-    async with session_factory() as session:
-        repository = OutboxEventRepository(session)
-        event = await repository.get_by_id(UUID(event_id))
-        if event is None or event.status == OutboxStatus.PROCESSED.value:
-            return
-
-        try:
+    try:
+        async with session_factory() as session:
             async with session.begin():
+                repository = OutboxEventRepository(session)
+                event = await repository.get_by_id(UUID(event_id))
+                if event is None or event.status == OutboxStatus.PROCESSED.value:
+                    return
+
                 await repository.mark_processing(event=event)
                 if event.event_type in {
                     OutboxEventType.INVITE_CREATED.value,
@@ -65,8 +65,10 @@ async def _process_outbox_event(event_id: str) -> None:
                     sink = get_invite_token_sink()
                     await sink.deliver(invite=invite, raw_token=raw_token)
                 await repository.mark_processed(event=event)
-        except Exception as exc:
+    except Exception as exc:
+        async with session_factory() as session:
             async with session.begin():
+                repository = OutboxEventRepository(session)
                 event = await repository.get_by_id(UUID(event_id))
                 if event is None or event.status == OutboxStatus.PROCESSED.value:
                     return
@@ -74,7 +76,7 @@ async def _process_outbox_event(event_id: str) -> None:
                     event=event,
                     error=_safe_error_code(exc),
                 )
-            log.warning("outbox_delivery_failed", event_id=event_id)
+        log.warning("outbox_delivery_failed", event_id=event_id)
 
 
 @dramatiq.actor(max_retries=0)
@@ -82,8 +84,7 @@ async def process_outbox_event(event_id: str) -> None:
     await _process_outbox_event(event_id)
 
 
-@dramatiq.actor(max_retries=0)
-async def enqueue_pending_outbox_events(limit: int = 100) -> None:
+async def _enqueue_pending_outbox_events(limit: int = 100) -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         repository = OutboxEventRepository(session)
@@ -91,3 +92,8 @@ async def enqueue_pending_outbox_events(limit: int = 100) -> None:
 
     for event in events:
         process_outbox_event.send(str(event.id))
+
+
+@dramatiq.actor(max_retries=0)
+async def enqueue_pending_outbox_events(limit: int = 100) -> None:
+    await _enqueue_pending_outbox_events(limit)

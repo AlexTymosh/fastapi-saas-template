@@ -5,26 +5,48 @@ import json
 from sqlalchemy import select
 
 from app.audit.models.audit_event import AuditEvent
-from app.invites.services.delivery import get_invite_token_sink
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 
 
 class InMemoryInviteTokenSink:
     def __init__(self) -> None:
-        self._tokens_by_email: dict[str, str] = {}
+        self._tokens_by_email: dict[str, list[str]] = {}
 
     async def deliver(self, *, invite, raw_token: str) -> None:
-        self._tokens_by_email[invite.email.lower()] = raw_token
+        self._tokens_by_email.setdefault(invite.email.lower(), []).append(raw_token)
 
     def token_for_email(self, email: str) -> str:
-        return self._tokens_by_email[email.lower()]
+        return self.tokens_for_email(email)[-1]
+
+    def tokens_for_email(self, email: str) -> list[str]:
+        return list(self._tokens_by_email[email.lower()])
 
 
-def _override_token_sink(test_client) -> InMemoryInviteTokenSink:
+def _override_token_sink(monkeypatch) -> InMemoryInviteTokenSink:
     sink = InMemoryInviteTokenSink()
-    test_client.app.dependency_overrides[get_invite_token_sink] = lambda: sink
+    monkeypatch.setattr("app.outbox.workers.get_invite_token_sink", lambda: sink)
     return sink
+
+
+async def _process_all_outbox_events(migrated_session_factory) -> None:
+    from app.outbox.repositories.outbox_events import OutboxEventRepository
+    from app.outbox.workers import _process_outbox_event
+
+    async with migrated_session_factory() as session:
+        repo = OutboxEventRepository(session)
+        events = await repo.list_pending_due_events(limit=500)
+
+    for event in events:
+        await _process_outbox_event(str(event.id))
+
+
+def _drain_outbox(migrated_session_factory, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory",
+        lambda: migrated_session_factory,
+    )
+    run_async(_process_all_outbox_events(migrated_session_factory))
 
 
 def assert_metadata_has_no_sensitive_invite_fields(metadata: dict[str, object]) -> None:
@@ -80,7 +102,10 @@ def test_organisation_update_writes_audit_event(
 
 
 def test_invite_resend_writes_audit_event_without_sensitive_metadata(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=identity_for(
@@ -89,7 +114,7 @@ def test_invite_resend_writes_audit_event_without_sensitive_metadata(
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
 
     with owner_bundle.client as client:
         create = client.post(
@@ -107,6 +132,7 @@ def test_invite_resend_writes_audit_event_without_sensitive_metadata(
         )
         assert response.status_code == 200
 
+    _drain_outbox(migrated_session_factory, monkeypatch)
     assert owner_sink.token_for_email("audit-member-resend@example.com")
     event = _event_by_action(migrated_session_factory, "invite_resent")
     assert event.metadata_json is not None
@@ -180,14 +206,17 @@ def test_invite_revoke_writes_audit_event_without_sensitive_metadata(
 
 
 def test_membership_role_change_writes_audit_event(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=identity_for("kc-audit-owner-role", "audit-owner-role@example.com"),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
     member_bundle = authenticated_client_factory(
         identity=identity_for("kc-audit-member-role", "audit-member-role@example.com"),
         database_url=migrated_database_url,
@@ -206,6 +235,7 @@ def test_membership_role_change_writes_audit_event(
         )
         assert invite.status_code == 201
 
+    _drain_outbox(migrated_session_factory, monkeypatch)
     raw_token = owner_sink.token_for_email("audit-member-role@example.com")
     with member_bundle.client as client:
         accept = client.post("/api/v1/invites/accept", json={"token": raw_token})
@@ -225,7 +255,10 @@ def test_membership_role_change_writes_audit_event(
 
 
 def test_membership_remove_writes_audit_event(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=identity_for(
@@ -234,7 +267,7 @@ def test_membership_remove_writes_audit_event(
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
     member_bundle = authenticated_client_factory(
         identity=identity_for(
             "kc-audit-member-remove-member", "audit-member-remove-member@example.com"
@@ -255,6 +288,7 @@ def test_membership_remove_writes_audit_event(
         )
         assert invite.status_code == 201
 
+    _drain_outbox(migrated_session_factory, monkeypatch)
     raw_token = owner_sink.token_for_email("audit-member-remove-member@example.com")
     with member_bundle.client as client:
         accept = client.post("/api/v1/invites/accept", json={"token": raw_token})
@@ -372,7 +406,10 @@ def test_noop_organisation_update_does_not_write_audit_event(
 
 
 def test_noop_membership_role_change_returns_409_without_audit_event(
-    authenticated_client_factory, migrated_database_url: str, migrated_session_factory
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
 ) -> None:
     owner_bundle = authenticated_client_factory(
         identity=identity_for(
@@ -381,7 +418,7 @@ def test_noop_membership_role_change_returns_409_without_audit_event(
         database_url=migrated_database_url,
         redis_url=None,
     )
-    owner_sink = _override_token_sink(owner_bundle.client)
+    owner_sink = _override_token_sink(monkeypatch)
     member_bundle = authenticated_client_factory(
         identity=identity_for(
             "kc-audit-member-noop-role", "audit-member-noop-role@example.com"
@@ -402,6 +439,7 @@ def test_noop_membership_role_change_returns_409_without_audit_event(
         )
         assert invite.status_code == 201
 
+    _drain_outbox(migrated_session_factory, monkeypatch)
     raw_token = owner_sink.token_for_email("audit-member-noop-role@example.com")
     with member_bundle.client as client:
         accept = client.post("/api/v1/invites/accept", json={"token": raw_token})

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
-from app.outbox.workers import _process_outbox_event, enqueue_pending_outbox_events
+from app.outbox.workers import _enqueue_pending_outbox_events, _process_outbox_event
 from tests.api.test_invites import InMemoryInviteTokenSink, _drain_outbox, _identity_for
 from tests.helpers.asyncio_runner import run_async
 
@@ -18,6 +18,10 @@ def test_process_outbox_event_marks_processed_on_success(
 ) -> None:
     sink = InMemoryInviteTokenSink()
     monkeypatch.setattr("app.outbox.workers.get_invite_token_sink", lambda: sink)
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory",
+        lambda: migrated_session_factory,
+    )
 
     owner = authenticated_client_factory(
         identity=_identity_for("kc-owner-outbox", "owner-outbox@example.com"),
@@ -49,8 +53,13 @@ def test_process_outbox_event_marks_processed_on_success(
 
 
 def test_process_outbox_event_failure_commits_attempts(
-    migrated_session_factory,
+    migrated_session_factory, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory",
+        lambda: migrated_session_factory,
+    )
+
     async def _assert_failure() -> None:
         async with migrated_session_factory() as session:
             event = OutboxEvent(
@@ -88,6 +97,11 @@ def test_enqueue_pending_outbox_events_sends_only_due_pending(
         lambda event_id: sent_event_ids.append(event_id),
     )
 
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory",
+        lambda: migrated_session_factory,
+    )
+
     async def _assert_enqueue() -> None:
         async with migrated_session_factory() as session:
             due_event = OutboxEvent(
@@ -109,7 +123,7 @@ def test_enqueue_pending_outbox_events_sends_only_due_pending(
             await session.commit()
             due_event_id = str(due_event.id)
 
-        await enqueue_pending_outbox_events.fn(limit=10)
+        await _enqueue_pending_outbox_events(limit=10)
         assert sent_event_ids == [due_event_id]
 
     run_async(_assert_enqueue())
