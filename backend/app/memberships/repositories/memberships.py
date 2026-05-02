@@ -153,6 +153,18 @@ class MembershipRepository:
         result = await self.session.execute(stmt)
         return int(result.scalar_one())
 
+    async def lock_active_memberships_for_organisation(
+        self, *, organisation_id: UUID
+    ) -> None:
+        stmt = select(Membership.id).where(
+            Membership.organisation_id == organisation_id,
+            Membership.is_active.is_(True),
+        )
+        backend_name = self.session.bind.dialect.name if self.session.bind else ""
+        if backend_name == "postgresql":
+            stmt = stmt.with_for_update()
+        await self.session.execute(stmt)
+
     async def deactivate_organisation_memberships(
         self,
         *,

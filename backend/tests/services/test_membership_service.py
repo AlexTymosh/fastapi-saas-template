@@ -152,8 +152,9 @@ def test_transfer_membership_rejects_when_user_is_last_owner() -> None:
         )
 
 
-def test_transfer_membership_rejects_cross_org_owner_transfer_even_to_owner_role(
-) -> None:
+def test_transfer_membership_rejects_cross_org_owner_transfer_even_to_owner_role() -> (
+    None
+):
     service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
     source_org_id = uuid4()
@@ -347,3 +348,61 @@ def test_create_membership_owner_maps_integrity_error_to_owner_conflict() -> Non
                 role=MembershipRole.OWNER,
             )
         )
+
+
+def test_same_org_owner_demotion_is_forbidden() -> None:
+    service = MembershipService(session=_session_stub())
+    org_id = uuid4()
+    owner_id = uuid4()
+    service.membership_repository = AsyncMock()
+    service.membership_repository.get_membership_for_user = AsyncMock(
+        return_value=Membership(
+            user_id=owner_id, organisation_id=org_id, role=MembershipRole.OWNER
+        )
+    )
+
+    with pytest.raises(ConflictError, match="owner transfer is not supported"):
+        run_async(
+            service.transfer_membership(
+                user_id=owner_id,
+                organisation_id=org_id,
+                role=MembershipRole.MEMBER,
+            )
+        )
+
+
+def test_owner_deactivation_is_forbidden() -> None:
+    service = MembershipService(session=_session_stub())
+    owner_membership = Membership(
+        user_id=uuid4(), organisation_id=uuid4(), role=MembershipRole.OWNER
+    )
+    with pytest.raises(ConflictError, match="cannot be deactivated"):
+        run_async(service.deactivate_membership(owner_membership))
+
+
+def test_valid_owner_replacement_leaves_exactly_one_owner() -> None:
+    session = _session_stub()
+    session.flush = AsyncMock()
+    service = MembershipService(session=session)
+    organisation_id = uuid4()
+    current_owner = Membership(
+        user_id=uuid4(), organisation_id=organisation_id, role=MembershipRole.OWNER
+    )
+    new_owner = Membership(
+        user_id=uuid4(), organisation_id=organisation_id, role=MembershipRole.ADMIN
+    )
+    service.membership_repository = AsyncMock()
+    service.membership_repository.lock_active_memberships_for_organisation = AsyncMock()
+    service.membership_repository.get_membership = AsyncMock(
+        side_effect=[current_owner, new_owner]
+    )
+
+    demoted, promoted = run_async(
+        service.replace_owner(
+            organisation_id=organisation_id,
+            current_owner_user_id=current_owner.user_id,
+            new_owner_user_id=new_owner.user_id,
+        )
+    )
+    assert demoted.role == MembershipRole.ADMIN
+    assert promoted.role == MembershipRole.OWNER
