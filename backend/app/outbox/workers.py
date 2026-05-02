@@ -50,11 +50,7 @@ async def _get_claimed_event_context(
                 return "invite_not_found", {}, None
             if invite.status != InviteStatus.PENDING:
                 return "mark_processed", {}, None
-            key = (
-                get_settings().security.outbox_token_encryption_key
-                or "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-            )
-            crypto = OutboxPayloadCrypto(key)
+            crypto = OutboxPayloadCrypto.from_settings(settings=get_settings())
             try:
                 raw_token = crypto.decrypt_token(str(payload["encrypted_raw_token"]))
             except ValueError:

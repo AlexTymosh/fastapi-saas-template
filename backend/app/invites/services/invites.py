@@ -46,11 +46,7 @@ class InviteService:
         self.organisation_service = OrganisationService(session)
         self.user_service = UserService(session)
         self.outbox_service = OutboxService(session)
-        key = (
-            get_settings().security.outbox_token_encryption_key
-            or "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-        )
-        self.payload_crypto = OutboxPayloadCrypto(key)
+        self.payload_crypto = OutboxPayloadCrypto.from_settings(settings=get_settings())
 
     @staticmethod
     def _token_hash(token: str) -> str:

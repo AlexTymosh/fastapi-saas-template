@@ -5,6 +5,7 @@ Revises: 0006_add_outbox_events
 Create Date: 2026-05-02
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -20,8 +21,8 @@ def upgrade() -> None:
         "memberships",
         ["organisation_id"],
         unique=True,
-        postgresql_where="role = 'owner' AND is_active = true",
-        sqlite_where="role = 'owner' AND is_active = 1",
+        postgresql_where=sa.text("role = 'owner' AND is_active = true"),
+        sqlite_where=sa.text("role = 'owner' AND is_active = 1"),
     )
 
 
