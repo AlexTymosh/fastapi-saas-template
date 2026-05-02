@@ -41,6 +41,33 @@ class OutboxEventRepository:
         )
         return list(result.scalars().all())
 
+    async def claim_due_events(self, *, limit: int) -> list[OutboxEvent]:
+        now = datetime.now(UTC)
+        due_query = (
+            select(OutboxEvent)
+            .where(
+                OutboxEvent.status == OutboxStatus.PENDING.value,
+                (
+                    (OutboxEvent.next_attempt_at.is_(None))
+                    | (OutboxEvent.next_attempt_at <= now)
+                ),
+            )
+            .order_by(OutboxEvent.created_at.asc())
+            .limit(limit)
+        )
+        if self.session.bind and self.session.bind.dialect.name == "postgresql":
+            due_query = due_query.with_for_update(skip_locked=True)
+        # SQLite and other lightweight test dialects do not provide the same
+        # row-level concurrency semantics as PostgreSQL SKIP LOCKED.
+        result = await self.session.execute(due_query)
+        claimed = list(result.scalars().all())
+        for event in claimed:
+            event.status = OutboxStatus.PROCESSING.value
+            event.locked_at = now
+            event.updated_at = now
+        await self.session.flush()
+        return claimed
+
     async def mark_processing(self, *, event: OutboxEvent) -> None:
         if event.status == OutboxStatus.PROCESSED.value:
             return

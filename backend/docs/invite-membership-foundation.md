@@ -42,3 +42,26 @@ For organisation-scoped foundation endpoints, this branch now applies a single a
 This policy is applied to organisation read/membership-list flows and organisation-scoped invite creation.
 
 To keep invite API tests realistic without exposing raw tokens in the public API contract, token delivery is executed only by outbox workers through a token sink abstraction (`InviteTokenSink`). The production default sink remains a no-op placeholder for out-of-band delivery, while tests can override the sink with an in-memory capture implementation.
+
+
+## Outbox runtime operations (P0)
+
+Runtime now uses two dedicated background processes:
+
+- Dramatiq worker: `dramatiq app.outbox.worker_runtime`
+- Outbox dispatcher: `python -m app.outbox.dispatcher --interval 5 --batch-size 100`
+
+Lifecycle is explicitly split:
+
+1. Request transaction writes invite + audit + outbox event.
+2. Dispatcher claims due events (`pending -> processing`, sets `locked_at`) and commits.
+3. Dispatcher enqueues claimed IDs to Dramatiq.
+4. Worker loads claimed event, performs external delivery **outside** DB transaction, then commits result transition.
+
+Status transitions:
+
+- Success: `pending -> processing -> processed`
+- Failure with retries remaining: `pending -> processing -> pending`
+- Failure with max attempts reached: `pending -> processing -> failed`
+
+Known P0 limitation: if claim commits but enqueue fails, some events may remain in `processing` state. Stale-processing recovery is planned for a follow-up P1 hardening task.
