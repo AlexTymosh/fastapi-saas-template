@@ -77,6 +77,10 @@ class MembershipService:
                 role=role,
             )
         except IntegrityError as exc:
+            if role == MembershipRole.OWNER:
+                raise ConflictError(
+                    detail="Organisation already has an active owner"
+                ) from exc
             raise ConflictError(
                 detail="User already belongs to an organisation"
             ) from exc
@@ -288,7 +292,7 @@ class MembershipService:
             user_id=user_id
         )
         if existing is not None:
-            if existing.role == MembershipRole.OWNER:
+            if existing.role == MembershipRole.OWNER and role != MembershipRole.OWNER:
                 owner_count = await self.membership_repository.count_active_owners(
                     organisation_id=existing.organisation_id
                 )
@@ -298,11 +302,18 @@ class MembershipService:
                     )
             await self.membership_repository.deactivate_membership(existing)
 
-        return await self.membership_repository.create_membership(
-            user_id=user_id,
-            organisation_id=organisation_id,
-            role=role,
-        )
+        try:
+            return await self.membership_repository.create_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+        except IntegrityError as exc:
+            if role == MembershipRole.OWNER:
+                raise ConflictError(
+                    detail="Organisation already has an active owner"
+                ) from exc
+            raise
 
     async def list_directory_members_for_user(
         self,

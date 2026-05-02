@@ -138,3 +138,19 @@ def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
     assert settings.rate_limiting.storage_timeout_seconds == 2.5
 
     reset_settings_cache()
+
+
+def test_dev_requires_outbox_key_when_invite_delivery_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "dev")
+    monkeypatch.setenv("OUTBOX__INVITE_DELIVERY_ENABLED", "true")
+    monkeypatch.delenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", raising=False)
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="OUTBOX_TOKEN_ENCRYPTION_KEY"):
+        get_settings()
+
+
+def test_settings_rejects_invalid_fernet_key(monkeypatch) -> None:
+    monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", "invalid-key")
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="valid Fernet key"):
+        get_settings()

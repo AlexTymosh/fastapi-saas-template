@@ -66,3 +66,13 @@ Status transitions:
 - Failure with max attempts reached: `pending -> processing -> failed`
 
 Known P0 limitation: if claim commits but enqueue fails, some events may remain in `processing` state. Stale-processing recovery is planned for a follow-up P1 hardening task.
+
+
+## Encryption key requirements
+
+- Invite outbox payload encryption uses Fernet (`SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY`).
+- `local` and `test` may use deterministic fallback key when env var is omitted.
+- `dev`, `staging`, and `prod` require explicit key when `OUTBOX__INVITE_DELIVERY_ENABLED=true`.
+- Worker decryption/key mismatch is handled safely: event is failed/retried without exposing raw token or encrypted payload.
+- Key rotation and KMS integration are not part of this task.
+- Processed-outbox retention/cleanup remains a separate follow-up task.

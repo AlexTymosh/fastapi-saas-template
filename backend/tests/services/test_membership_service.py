@@ -304,3 +304,21 @@ def test_directory_service_returns_projection_objects() -> None:
     assert items[0].display_name == "John Doe"
     assert items[0].tenant_role == MembershipRole.ADMIN
     assert not isinstance(items[0], Membership)
+
+
+def test_create_membership_owner_maps_integrity_error_to_owner_conflict() -> None:
+    service = MembershipService(session=_session_stub())
+    service.membership_repository = AsyncMock()
+    service.membership_repository.get_membership_for_user = AsyncMock(return_value=None)
+    service.membership_repository.create_membership = AsyncMock(
+        side_effect=IntegrityError("insert", params={}, orig=Exception("duplicate"))
+    )
+
+    with pytest.raises(ConflictError, match="already has an active owner"):
+        run_async(
+            service.create_membership(
+                user_id=uuid4(),
+                organisation_id=uuid4(),
+                role=MembershipRole.OWNER,
+            )
+        )

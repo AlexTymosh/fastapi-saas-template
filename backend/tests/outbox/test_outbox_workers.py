@@ -270,7 +270,9 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
     async def _run() -> None:
         from app.outbox.services.payload_crypto import OutboxPayloadCrypto
 
-        crypto = OutboxPayloadCrypto("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo5ODc2NTQzMjEw")
+        crypto = OutboxPayloadCrypto(
+            "VjlxVDdPUGQ4RElSeW9fUjBfQWx2d1pOb0lzMVNqckl0dTRqSk9LQ0tMVT0="
+        )
         encrypted = crypto.encrypt_token("super-secret-token")
         async with migrated_session_factory() as session:
             event = OutboxEvent(

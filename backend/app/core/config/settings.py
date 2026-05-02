@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -63,6 +64,22 @@ class RedisSettings(BaseModel):
 
 class SecuritySettings(BaseModel):
     outbox_token_encryption_key: str | None = None
+
+    @field_validator("outbox_token_encryption_key")
+    @classmethod
+    def validate_outbox_token_encryption_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            Fernet(normalized.encode("utf-8"))
+        except Exception as exc:
+            raise ValueError(
+                "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY must be a valid Fernet key"
+            ) from exc
+        return normalized
 
     """
     Security settings that are unrelated to runtime JWT validation.
@@ -195,7 +212,7 @@ class Settings(BaseSettings):
                 )
         if (
             self.outbox.invite_delivery_enabled
-            and env in {"staging", "prod"}
+            and env in {"dev", "staging", "prod"}
             and not self.security.outbox_token_encryption_key
         ):
             raise ValueError(
