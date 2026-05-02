@@ -32,6 +32,13 @@ class Membership(UUIDMixin, TimestampMixin, Base):
             postgresql_where=text("is_active = true"),
             sqlite_where=text("is_active = 1"),
         ),
+        Index(
+            "uq_memberships_one_active_owner_per_org",
+            "organisation_id",
+            unique=True,
+            postgresql_where=text("role = 'owner' AND is_active = true"),
+            sqlite_where=text("role = 'owner' AND is_active = 1"),
+        ),
     )
 
     user_id: Mapped[UUID] = mapped_column(
