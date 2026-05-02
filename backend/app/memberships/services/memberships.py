@@ -292,17 +292,13 @@ class MembershipService:
             user_id=user_id
         )
         if existing is not None:
-            if (
-                existing.role == MembershipRole.OWNER
-                and existing.organisation_id != organisation_id
-            ):
-                owner_count = await self.membership_repository.count_active_owners(
-                    organisation_id=existing.organisation_id
-                )
-                if owner_count <= 1:
-                    raise ConflictError(
-                        detail="Organisation must always have at least one owner"
+            if existing.role == MembershipRole.OWNER:
+                raise ConflictError(
+                    detail=(
+                        "Cross-organisation owner transfer is not supported; "
+                        "use atomic owner replacement"
                     )
+                )
             await self.membership_repository.deactivate_membership(existing)
 
         try:
@@ -317,6 +313,57 @@ class MembershipService:
                     detail="Organisation already has an active owner"
                 ) from exc
             raise
+
+    async def replace_owner(
+        self,
+        *,
+        organisation_id: UUID,
+        current_owner_user_id: UUID,
+        new_owner_user_id: UUID,
+    ) -> tuple[Membership, Membership]:
+        if current_owner_user_id == new_owner_user_id:
+            raise ConflictError(detail="New owner must be different from current owner")
+        if self.session.in_transaction():
+            return await self._replace_owner(
+                organisation_id=organisation_id,
+                current_owner_user_id=current_owner_user_id,
+                new_owner_user_id=new_owner_user_id,
+            )
+        async with self.session.begin():
+            return await self._replace_owner(
+                organisation_id=organisation_id,
+                current_owner_user_id=current_owner_user_id,
+                new_owner_user_id=new_owner_user_id,
+            )
+
+    async def _replace_owner(
+        self,
+        *,
+        organisation_id: UUID,
+        current_owner_user_id: UUID,
+        new_owner_user_id: UUID,
+    ) -> tuple[Membership, Membership]:
+        await self.membership_repository.lock_active_memberships_for_organisation(
+            organisation_id=organisation_id
+        )
+        current_owner = await self.membership_repository.get_membership(
+            user_id=current_owner_user_id,
+            organisation_id=organisation_id,
+        )
+        if current_owner is None or current_owner.role != MembershipRole.OWNER:
+            raise ConflictError(detail="Current owner membership not found")
+        replacement = await self.membership_repository.get_membership(
+            user_id=new_owner_user_id,
+            organisation_id=organisation_id,
+        )
+        if replacement is None:
+            raise ConflictError(detail="Replacement user must be an active member")
+        if replacement.role == MembershipRole.OWNER:
+            raise ConflictError(detail="Organisation already has an active owner")
+        current_owner.role = MembershipRole.ADMIN
+        replacement.role = MembershipRole.OWNER
+        await self.session.flush()
+        return current_owner, replacement
 
     async def list_directory_members_for_user(
         self,
@@ -424,15 +471,8 @@ class MembershipService:
         self,
         membership: Membership,
     ) -> None:
-        if membership.role != MembershipRole.OWNER:
-            return
-        owner_count = await self.membership_repository.count_active_owners(
-            organisation_id=membership.organisation_id
-        )
-        if owner_count <= 1:
-            raise ConflictError(
-                detail="Organisation must always have at least one owner"
-            )
+        if membership.role == MembershipRole.OWNER:
+            raise ConflictError(detail="Owner membership cannot be deactivated")
 
     async def deactivate_membership(self, membership: Membership) -> Membership:
         if self.session.in_transaction():

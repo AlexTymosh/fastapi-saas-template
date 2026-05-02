@@ -12,6 +12,7 @@ This project is currently in the **active development** and architectural design
   - Required for local development via `docker compose`
   - Required for integration tests because the test suite uses Testcontainers to start temporary PostgreSQL and Redis containers
 - Git
+- SQLite 3.35+ if you run tests/dev flows on SQLite (some repository update paths use SQL `RETURNING`)
 
 ---
 
@@ -62,6 +63,9 @@ Optional check:
 ```bash
 docker compose exec app python -m alembic check
 ```
+
+> [!NOTE]
+> PostgreSQL is the production database target and remains the primary supported path for concurrency-critical ownership invariants.
 
 ---
 

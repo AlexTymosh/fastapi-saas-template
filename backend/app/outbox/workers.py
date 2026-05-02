@@ -89,6 +89,8 @@ async def _process_outbox_event(event_id: str) -> None:
         "token_hash_mismatch",
         "outbox_payload_decryption_failed",
     }:
+        if action == "outbox_payload_decryption_failed":
+            log.warning("outbox_payload_decryption_failed", event_id=event_id)
         await _apply_result(event_id, success=False, error=action)
         return
 
