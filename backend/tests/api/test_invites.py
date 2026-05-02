@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from uuid import UUID
 
@@ -1013,7 +1012,7 @@ def test_unverified_email_cannot_accept_invite(
         assert response.headers["content-type"].startswith("application/problem+json")
 
 
-def test_invite_token_cannot_be_accepted_twice_concurrently(
+def test_invite_token_cannot_be_accepted_twice(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
@@ -1039,21 +1038,47 @@ def test_invite_token_cannot_be_accepted_twice_concurrently(
         _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("invitee-concurrent@example.com")
 
-    def _accept_once() -> int:
-        invitee_bundle = authenticated_client_factory(
-            identity=_identity_for(
-                "kc-invitee-concurrent",
-                "invitee-concurrent@example.com",
-            ),
-            database_url=migrated_database_url,
-            redis_url=None,
-        )
-        with invitee_bundle.client as client:
-            response = client.post("/api/v1/invites/accept", json={"token": token})
-            return response.status_code
+    invitee_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-invitee-concurrent",
+            "invitee-concurrent@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        statuses = list(pool.map(lambda _: _accept_once(), range(2)))
+    with invitee_bundle.client as client:
+        first = client.post("/api/v1/invites/accept", json={"token": token})
+        assert first.status_code == 200
 
-    assert statuses.count(200) == 1
-    assert statuses.count(409) == 1
+        second = client.post("/api/v1/invites/accept", json={"token": token})
+        assert second.status_code == 409
+        assert second.headers["content-type"].startswith("application/problem+json")
+        assert second.json()["error_code"] == "conflict"
+
+    async def _assert_state() -> None:
+        async with migrated_session_factory() as session:
+            token_hash = sha256(token.encode()).hexdigest()
+            accepted_invite = await session.scalar(
+                select(Invite).where(Invite.token_hash == token_hash)
+            )
+            assert accepted_invite is not None
+            assert accepted_invite.status == InviteStatus.ACCEPTED
+
+            memberships = (
+                (
+                    await session.execute(
+                        select(Membership)
+                        .join(User, User.id == Membership.user_id)
+                        .where(
+                            User.email == "invitee-concurrent@example.com",
+                            Membership.is_active.is_(True),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(memberships) == 1
+
+    run_async(_assert_state())
