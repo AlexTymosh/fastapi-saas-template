@@ -25,7 +25,7 @@ def test_claim_due_events_marks_pending_events_processing(
             session.add(
                 OutboxEvent(
                     event_type=OutboxEventType.INVITE_CREATED.value,
-                    payload_json={"invite_id": "1", "raw_token": "a"},
+                    payload_json={"invite_id": "1", "encrypted_raw_token": "a"},
                     aggregate_type="invite",
                     aggregate_id=UUID("00000000-0000-0000-0000-000000000121"),
                     status=OutboxStatus.PENDING.value,
@@ -59,7 +59,7 @@ def test_drain_helper_claims_then_processes(
         async with migrated_session_factory() as session:
             event = OutboxEvent(
                 event_type=OutboxEventType.INVITE_CREATED.value,
-                payload_json={"invite_id": "1", "raw_token": "a"},
+                payload_json={"invite_id": "1", "encrypted_raw_token": "a"},
                 aggregate_type="invite",
                 aggregate_id=UUID("00000000-0000-0000-0000-000000000141"),
                 status=OutboxStatus.PENDING.value,
@@ -91,7 +91,7 @@ def test_pending_events_are_not_processed_directly(
                 aggregate_id=UUID("00000000-0000-0000-0000-000000000111"),
                 payload_json={
                     "invite_id": "00000000-0000-0000-0000-000000000111",
-                    "raw_token": "secret-token",
+                    "encrypted_raw_token": "secret-token",
                 },
                 status=OutboxStatus.PENDING.value,
             )
@@ -163,7 +163,7 @@ def test_claim_and_enqueue_due_outbox_events_enqueues_claimed_events(
             session.add(
                 OutboxEvent(
                     event_type=OutboxEventType.INVITE_CREATED.value,
-                    payload_json={"invite_id": "1", "raw_token": "a"},
+                    payload_json={"invite_id": "1", "encrypted_raw_token": "a"},
                     aggregate_type="invite",
                     aggregate_id=UUID("00000000-0000-0000-0000-000000000131"),
                     status=OutboxStatus.PENDING.value,
@@ -216,7 +216,7 @@ def test_process_outbox_event_failure_commits_attempts(
                 aggregate_id=UUID("00000000-0000-0000-0000-000000000111"),
                 payload_json={
                     "invite_id": "00000000-0000-0000-0000-000000000111",
-                    "raw_token": "secret-token",
+                    "encrypted_raw_token": "secret-token",
                 },
                 max_attempts=1,
                 status=OutboxStatus.PROCESSING.value,
