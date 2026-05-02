@@ -13,7 +13,6 @@ from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
 from app.audit.services.audit_events import AuditEventService
 from app.core.auth import AuthenticatedPrincipal
-from app.core.config.settings import get_settings
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.core.logging import get_logger
 from app.invites.models.invite import Invite, InviteStatus
@@ -23,7 +22,10 @@ from app.memberships.services.memberships import MembershipService
 from app.organisations.services.organisations import OrganisationService
 from app.outbox.models.outbox_event import OutboxEventType
 from app.outbox.services.outbox import OutboxService
-from app.outbox.services.payload_crypto import OutboxPayloadCrypto
+from app.outbox.services.payload_crypto import (
+    OutboxPayloadCrypto,
+    resolve_outbox_encryption_key,
+)
 from app.users.services.users import UserService
 
 
@@ -46,11 +48,7 @@ class InviteService:
         self.organisation_service = OrganisationService(session)
         self.user_service = UserService(session)
         self.outbox_service = OutboxService(session)
-        key = (
-            get_settings().security.outbox_token_encryption_key
-            or "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-        )
-        self.payload_crypto = OutboxPayloadCrypto(key)
+        self.payload_crypto = OutboxPayloadCrypto(resolve_outbox_encryption_key())
 
     @staticmethod
     def _token_hash(token: str) -> str:
