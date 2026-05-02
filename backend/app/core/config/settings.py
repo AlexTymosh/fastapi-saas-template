@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,6 +61,10 @@ class RedisSettings(BaseModel):
     healthcheck_timeout: float = 0.5
 
 
+class OutboxSettings(BaseModel):
+    token_encryption_key: SecretStr | None = None
+
+
 class SecuritySettings(BaseModel):
     """
     Security settings that are unrelated to runtime JWT validation.
@@ -93,6 +97,7 @@ class AuthSettings(BaseModel):
 
 class RateLimitingSettings(BaseModel):
     enabled: bool = False
+    enforced_by_edge: bool = False
     backend: Literal["redis"] = "redis"
     redis_prefix: str = "rate-limit"
     trust_proxy_headers: bool = False
@@ -161,6 +166,7 @@ class Settings(BaseSettings):
     vault: VaultSettings = Field(default_factory=VaultSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
+    outbox: OutboxSettings = Field(default_factory=OutboxSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
@@ -170,3 +176,27 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+@model_validator(mode="after")
+def _validate_env(self: Settings) -> Settings:
+    env = self.app.environment
+    if env in {"staging", "prod"} and not self.auth.enabled:
+        raise ValueError("AUTH__ENABLED must be true for staging/prod")
+    if env == "prod":
+        if self.api.docs_enabled:
+            raise ValueError("API__DOCS_ENABLED must be false in prod")
+        if self.request_context.trust_incoming_request_id:
+            raise ValueError(
+                "REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID must be false in prod"
+            )
+        if not self.rate_limiting.enabled and not self.rate_limiting.enforced_by_edge:
+            raise ValueError(
+                "Rate limiting must be enabled in app or enforced by edge in prod"
+            )
+        if self.outbox.token_encryption_key is None:
+            raise ValueError("OUTBOX__TOKEN_ENCRYPTION_KEY is required in prod")
+    return self
+
+
+Settings._validate_env = _validate_env
