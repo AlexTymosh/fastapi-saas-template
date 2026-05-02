@@ -268,6 +268,8 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
     reset_settings_cache()
 
     async def _run() -> None:
+        from app.invites.models.invite import Invite, InviteStatus
+        from app.memberships.models.membership import MembershipRole
         from app.outbox.services.payload_crypto import OutboxPayloadCrypto
 
         crypto = OutboxPayloadCrypto(
@@ -275,6 +277,14 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
         )
         encrypted = crypto.encrypt_token("super-secret-token")
         async with migrated_session_factory() as session:
+            invite = Invite(
+                id=UUID("00000000-0000-0000-0000-000000000111"),
+                email="decrypt@example.com",
+                organisation_id=UUID("00000000-0000-0000-0000-000000000299"),
+                role=MembershipRole.MEMBER,
+                status=InviteStatus.PENDING,
+                token_hash="hash",
+            )
             event = OutboxEvent(
                 event_type=OutboxEventType.INVITE_CREATED.value,
                 aggregate_type="invite",
@@ -286,6 +296,7 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
                 max_attempts=1,
                 status=OutboxStatus.PROCESSING.value,
             )
+            session.add(invite)
             session.add(event)
             await session.commit()
             event_id = str(event.id)

@@ -322,3 +322,38 @@ def test_create_membership_owner_maps_integrity_error_to_owner_conflict() -> Non
                 role=MembershipRole.OWNER,
             )
         )
+
+
+def test_deactivate_membership_rejects_last_active_owner() -> None:
+    service = MembershipService(session=_session_stub())
+    owner_membership = Membership(
+        user_id=uuid4(),
+        organisation_id=uuid4(),
+        role=MembershipRole.OWNER,
+    )
+    service.membership_repository = AsyncMock()
+    service.membership_repository.count_active_owners = AsyncMock(return_value=1)
+
+    with pytest.raises(
+        ConflictError, match="Organisation must always have at least one owner"
+    ):
+        run_async(service.deactivate_membership(owner_membership))
+
+    service.membership_repository.deactivate_membership.assert_not_called()
+
+
+def test_deactivate_membership_allows_owner_when_another_owner_exists() -> None:
+    service = MembershipService(session=_session_stub())
+    owner_membership = Membership(
+        user_id=uuid4(),
+        organisation_id=uuid4(),
+        role=MembershipRole.OWNER,
+    )
+    service.membership_repository = AsyncMock()
+    service.membership_repository.count_active_owners = AsyncMock(return_value=2)
+    service.membership_repository.deactivate_membership = AsyncMock(
+        return_value=owner_membership
+    )
+
+    result = run_async(service.deactivate_membership(owner_membership))
+    assert result is owner_membership
