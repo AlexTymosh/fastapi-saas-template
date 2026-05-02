@@ -389,3 +389,12 @@ Development-only Keycloak note:
 
 - `docker/keycloak/realm-export.json` is for local development only.
 - Production OIDC clients must use strict deployment-specific redirect URIs and web origins (no wildcard settings).
+
+## Security invariants (invites and memberships)
+
+- `invites.token_hash` stores `sha256(raw_token)` and never hashes encrypted ciphertext.
+- Outbox payload stores only `encrypted_raw_token`; plain `raw_token` is never persisted.
+- Invite outbox worker decrypts token only in memory, validates hash against `invites.token_hash`, and marks safe failure (`outbox_payload_decryption_failed`) when key/payload is invalid.
+- In `staging`/`prod`, startup validation enforces secure defaults: auth enabled, docs disabled in prod, request-id trust disabled in prod, and rate limiting enabled in-app or enforced by edge.
+- Each active organisation must have exactly one active owner: database index guarantees at most one, service-layer checks prevent dropping to zero for active organisations.
+- Tenant roles come from `memberships`; platform roles come from `platform_staff`; JWT/Keycloak is used for authentication, not tenant role assignment.
