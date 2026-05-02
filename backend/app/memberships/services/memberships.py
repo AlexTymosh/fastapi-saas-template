@@ -292,7 +292,10 @@ class MembershipService:
             user_id=user_id
         )
         if existing is not None:
-            if existing.role == MembershipRole.OWNER and role != MembershipRole.OWNER:
+            if (
+                existing.role == MembershipRole.OWNER
+                and existing.organisation_id != organisation_id
+            ):
                 owner_count = await self.membership_repository.count_active_owners(
                     organisation_id=existing.organisation_id
                 )

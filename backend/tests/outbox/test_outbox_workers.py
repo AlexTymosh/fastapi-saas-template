@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from hashlib import sha256
 from uuid import UUID
 
 import pytest
 
+from app.invites.models.invite import Invite, InviteStatus
+from app.memberships.models.membership import MembershipRole
 from app.outbox.dispatcher import (
     claim_and_enqueue_due_outbox_events,
     run_dispatcher_loop,
@@ -274,13 +277,24 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
             "VjlxVDdPUGQ4RElSeW9fUjBfQWx2d1pOb0lzMVNqckl0dTRqSk9LQ0tMVT0="
         )
         encrypted = crypto.encrypt_token("super-secret-token")
+        invite_id = UUID("00000000-0000-0000-0000-000000000111")
         async with migrated_session_factory() as session:
+            session.add(
+                Invite(
+                    id=invite_id,
+                    email="decrypt-failure@example.com",
+                    organisation_id=UUID("00000000-0000-0000-0000-000000000001"),
+                    role=MembershipRole.MEMBER,
+                    status=InviteStatus.PENDING,
+                    token_hash=sha256(b"super-secret-token").hexdigest(),
+                )
+            )
             event = OutboxEvent(
                 event_type=OutboxEventType.INVITE_CREATED.value,
                 aggregate_type="invite",
                 aggregate_id=UUID("00000000-0000-0000-0000-000000000211"),
                 payload_json={
-                    "invite_id": "00000000-0000-0000-0000-000000000111",
+                    "invite_id": str(invite_id),
                     "encrypted_raw_token": encrypted,
                 },
                 max_attempts=1,

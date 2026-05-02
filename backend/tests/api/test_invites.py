@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from uuid import UUID
 
@@ -1010,3 +1011,49 @@ def test_unverified_email_cannot_accept_invite(
         response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 403
         assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_invite_token_cannot_be_accepted_twice_concurrently(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-concurrent", "owner-concurrent@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(monkeypatch)
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Acme Concurrent", "slug": "acme-concurrent-invite"},
+        )
+        organisation_id = created.json()["id"]
+        invited = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "invitee-concurrent@example.com", "role": "member"},
+        )
+        assert invited.status_code == 201
+        _drain_outbox(migrated_session_factory, monkeypatch)
+    token = owner_sink.token_for_email("invitee-concurrent@example.com")
+
+    def _accept_once() -> int:
+        invitee_bundle = authenticated_client_factory(
+            identity=_identity_for(
+                "kc-invitee-concurrent",
+                "invitee-concurrent@example.com",
+            ),
+            database_url=migrated_database_url,
+            redis_url=None,
+        )
+        with invitee_bundle.client as client:
+            response = client.post("/api/v1/invites/accept", json={"token": token})
+            return response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        statuses = list(pool.map(lambda _: _accept_once(), range(2)))
+
+    assert statuses.count(200) == 1
+    assert statuses.count(409) == 1
