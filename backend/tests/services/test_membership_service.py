@@ -283,6 +283,10 @@ def test_replace_owner_membership_succeeds_and_keeps_exactly_one_owner() -> None
     assert promoted.id == replacement.id
     assert source.role == MembershipRole.ADMIN
     assert replacement.role == MembershipRole.OWNER
+    repo.lock_active_memberships.assert_awaited_once_with(
+        organisation_id=organisation_id
+    )
+    assert service.session.flush.await_count == 2
 
 
 def test_change_membership_role_owner_can_promote_member() -> None:

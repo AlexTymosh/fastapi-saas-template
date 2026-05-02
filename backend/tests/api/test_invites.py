@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from uuid import UUID
 
@@ -1013,7 +1012,7 @@ def test_unverified_email_cannot_accept_invite(
         assert response.headers["content-type"].startswith("application/problem+json")
 
 
-def test_invite_token_cannot_be_accepted_twice_concurrently(
+def test_invite_token_cannot_be_accepted_twice(
     authenticated_client_factory,
     migrated_database_url: str,
     migrated_session_factory,
@@ -1039,21 +1038,50 @@ def test_invite_token_cannot_be_accepted_twice_concurrently(
         _drain_outbox(migrated_session_factory, monkeypatch)
     token = owner_sink.token_for_email("invitee-concurrent@example.com")
 
-    def _accept_once() -> int:
-        invitee_bundle = authenticated_client_factory(
-            identity=_identity_for(
-                "kc-invitee-concurrent",
-                "invitee-concurrent@example.com",
-            ),
-            database_url=migrated_database_url,
-            redis_url=None,
+    invitee_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-invitee-concurrent",
+            "invitee-concurrent@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with invitee_bundle.client as client:
+        first_accept = client.post("/api/v1/invites/accept", json={"token": token})
+        assert first_accept.status_code == 200
+
+        second_accept = client.post("/api/v1/invites/accept", json={"token": token})
+        assert second_accept.status_code == 409
+        assert second_accept.headers["content-type"].startswith(
+            "application/problem+json"
         )
-        with invitee_bundle.client as client:
-            response = client.post("/api/v1/invites/accept", json={"token": token})
-            return response.status_code
+        assert second_accept.json()["error_code"] == "conflict"
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        statuses = list(pool.map(lambda _: _accept_once(), range(2)))
+    async def _assert_single_membership_and_invite_status() -> None:
+        async with migrated_session_factory() as session:
+            user = (
+                await session.execute(
+                    select(User).where(User.external_auth_id == "kc-invitee-concurrent")
+                )
+            ).scalar_one()
+            memberships = (
+                await session.execute(
+                    select(Membership).where(
+                        Membership.user_id == user.id,
+                        Membership.organisation_id == UUID(organisation_id),
+                        Membership.is_active.is_(True),
+                    )
+                )
+            ).scalars()
+            assert len(list(memberships)) == 1
+            invite = (
+                await session.execute(
+                    select(Invite).where(
+                        Invite.organisation_id == UUID(organisation_id),
+                        Invite.email == "invitee-concurrent@example.com",
+                    )
+                )
+            ).scalar_one()
+            assert invite.status == InviteStatus.ACCEPTED
 
-    assert statuses.count(200) == 1
-    assert statuses.count(409) == 1
+    run_async(_assert_single_membership_and_invite_status())

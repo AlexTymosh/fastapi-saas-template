@@ -265,6 +265,11 @@ Requirements:
 - preferably two-person approval in future.
 ```
 
+Current implementation note: an internal-only service flow is available via
+`PlatformOrganisationsService.emergency_replace_organisation_owner`. It performs
+an atomic owner replacement and writes a platform audit event. This remains an
+internal operational path until a dedicated public API contract is introduced.
+
 
 ## Implementation status update (2026-04-30)
 - Added backend-managed `platform_staff` foundation.

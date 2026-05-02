@@ -15,14 +15,18 @@ This branch is a **foundation step** for organisation membership and invitation 
 
 The following capabilities are intentionally out of scope for this foundation and remain future work:
 
-- Invite revocation flows.
-- Invite resend flows.
 - Full support/operations workflows around invite recovery.
 - Member removal flows.
 - Self-leave flows.
 - Full owner/admin role mutation flows.
 - Comprehensive audit logging for membership and invite lifecycle events.
 - Complete organisation deletion/status policy matrix.
+
+## Local role model
+
+- Platform roles are stored in `platform_staff` and drive `/api/v1/platform/*` authorisation.
+- Tenant roles are stored in organisation `memberships` and drive `/api/v1/organisations/*` authorisation.
+- These role models are intentionally separated and must not be merged in business logic.
 
 ## Security and delivery note
 
