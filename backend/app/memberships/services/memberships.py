@@ -369,6 +369,7 @@ class MembershipService:
             raise ConflictError(detail="Replacement membership is already owner")
 
         source.role = MembershipRole.ADMIN
+        await self.session.flush()
         replacement.role = MembershipRole.OWNER
         await self.session.flush()
         await self._ensure_exactly_one_active_owner(organisation_id=organisation_id)
