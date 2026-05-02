@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from uuid import UUID
 
@@ -270,6 +271,58 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
             assert len(active) == 1
 
     run_async(_assert_single_active_membership())
+
+
+def test_invite_accept_token_cannot_be_double_used_under_parallel_requests(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-double", "owner-double@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    sink = _override_token_sink(monkeypatch)
+
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Org Parallel", "slug": "org-parallel"},
+        )
+        assert created.status_code == 201
+        org_id = created.json()["id"]
+        invite = client.post(
+            f"/api/v1/organisations/{org_id}/invites",
+            json={"email": "parallel@example.com", "role": "member"},
+        )
+        assert invite.status_code == 201
+
+    _drain_outbox(migrated_session_factory, monkeypatch)
+    token = sink.token_for_email("parallel@example.com")
+
+    invitee_a = authenticated_client_factory(
+        identity=_identity_for("kc-invitee-parallel", "parallel@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    invitee_b = authenticated_client_factory(
+        identity=_identity_for("kc-invitee-parallel", "parallel@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    def _accept(bundle) -> int:
+        with bundle.client as client:
+            response = client.post("/api/v1/invites/accept", json={"token": token})
+            return response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = list(executor.map(_accept, (invitee_a, invitee_b)))
+
+    assert statuses.count(200) == 1
+    assert statuses.count(409) == 1
 
 
 def test_accept_invite_allows_user_with_inactive_membership(

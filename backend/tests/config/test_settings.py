@@ -76,6 +76,14 @@ def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__STORAGE_TIMEOUT_SECONDS", "2.5")
 
     reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.rate_limiting.enabled is False
+    assert settings.rate_limiting.redis_prefix == "custom-prefix"
+    assert settings.rate_limiting.trust_proxy_headers is True
+    assert settings.rate_limiting.storage_timeout_seconds == 2.5
+
+    reset_settings_cache()
 
 
 def test_prod_requires_auth_enabled(monkeypatch) -> None:
@@ -130,12 +138,6 @@ def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
     reset_settings_cache()
     settings = get_settings()
     assert settings.app.environment == "prod"
-    settings = get_settings()
-
-    assert settings.rate_limiting.enabled is False
-    assert settings.rate_limiting.redis_prefix == "custom-prefix"
-    assert settings.rate_limiting.trust_proxy_headers is True
-    assert settings.rate_limiting.storage_timeout_seconds == 2.5
 
     reset_settings_cache()
 
