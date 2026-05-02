@@ -12,6 +12,7 @@ from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTarget
 from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import ConflictError, NotFoundError
 from app.core.platform.actors import PlatformActor
+from app.memberships.services.memberships import MembershipService
 from app.organisations.models.organisation import Organisation, OrganisationStatus
 from app.organisations.services.organisations import OrganisationService
 
@@ -184,3 +185,38 @@ class PlatformOrganisationsService:
             reason=reason,
         )
         return org
+
+    async def emergency_replace_organisation_owner(
+        self,
+        *,
+        organisation_id: UUID,
+        source_owner_membership_id: UUID,
+        replacement_membership_id: UUID,
+        actor: PlatformActor,
+        reason: str,
+        audit_context: AuditContext,
+    ):
+        """
+        Internal-only emergency correction flow until platform API is introduced.
+        """
+        _ = actor
+        replacement = await MembershipService(self.session).replace_owner_membership(
+            organisation_id=organisation_id,
+            source_owner_membership_id=source_owner_membership_id,
+            replacement_membership_id=replacement_membership_id,
+        )
+        await AuditEventService(self.session).record_event(
+            audit_context=audit_context,
+            category=AuditCategory.PLATFORM,
+            action=AuditAction.MEMBERSHIP_ROLE_CHANGED,
+            target_type=AuditTargetType.MEMBERSHIP,
+            target_id=replacement.id,
+            reason=reason,
+            metadata_json={
+                "organisation_id": str(organisation_id),
+                "correction_type": "emergency_owner_replacement",
+                "source_owner_membership_id": str(source_owner_membership_id),
+                "replacement_membership_id": str(replacement_membership_id),
+            },
+        )
+        return replacement
