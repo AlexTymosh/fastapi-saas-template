@@ -92,7 +92,8 @@ Local Keycloak defaults:
 
 The imported realm intentionally models **two different client identifiers**:
 
-- `fastapi-web` is used for browser login and should be used as `AUTH__CLIENT_ID` for `resource_access.<client_id>.roles`.
+- `fastapi-web` is used for browser login and audience/client alignment only.
+- JWT is used for authentication; tenant roles come from `memberships`, platform roles come from `platform_staff`.
 - `fastapi-api` is a non-interactive API/resource descriptor and should be used as `AUTH__AUDIENCE`.
 - Tokens minted through `fastapi-web` include `aud=fastapi-api` via an explicit audience mapper.
 
@@ -151,7 +152,7 @@ Runtime assumptions for this scenario:
 - `AUTH__ENABLED=true` (backend auth boundary enabled)
 - `AUTH__ISSUER_URL=http://keycloak.local:8080/realms/fastapi-saas` (same as token `iss`)
 - `AUTH__AUDIENCE=fastapi-api` (FastAPI validates `aud` against the API/resource client id)
-- `AUTH__CLIENT_ID=fastapi-web` (FastAPI uses this for `resource_access.<client_id>.roles` extraction)
+- `AUTH__CLIENT_ID=fastapi-web` (identifier validation only; application roles are resolved from DB).
 - backend started via Docker Compose (`compose.yaml`)
 
 Steps:

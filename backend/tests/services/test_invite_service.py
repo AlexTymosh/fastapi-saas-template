@@ -48,7 +48,7 @@ def _identity(email: str = "user@example.com") -> AuthenticatedPrincipal:
 def test_accept_invite_rejects_email_mismatch() -> None:
     service = _service()
     service.invite_repository = AsyncMock()
-    service.invite_repository.get_by_token_hash = AsyncMock(
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
         return_value=Invite(
             email="invited@example.com",
             organisation_id=uuid4(),
@@ -72,7 +72,7 @@ def test_accept_invite_rejects_email_mismatch() -> None:
 def test_accept_invite_provisions_missing_projection_user() -> None:
     service = _service()
     service.invite_repository = AsyncMock()
-    service.invite_repository.get_by_token_hash = AsyncMock(
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
         return_value=Invite(
             email="invited@example.com",
             organisation_id=uuid4(),
@@ -98,7 +98,9 @@ def test_accept_invite_provisions_missing_projection_user() -> None:
             role=MembershipRole.MEMBER,
         )
     )
-    service.invite_repository.mark_status = AsyncMock()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
 
     run_async(
         service.accept_invite(
@@ -125,8 +127,12 @@ def test_user_with_active_membership_cannot_accept_invite_to_another_organisatio
         status=InviteStatus.PENDING,
         token_hash="x",
     )
-    service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
-    service.invite_repository.mark_status = AsyncMock()
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
 
     service.user_service = AsyncMock()
     user = User(
@@ -162,7 +168,7 @@ def test_user_with_active_membership_cannot_accept_invite_to_another_organisatio
         role=MembershipRole.MEMBER,
     )
     service.membership_service.transfer_membership.assert_not_awaited()
-    service.invite_repository.mark_status.assert_not_called()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
 
 
 def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
@@ -176,8 +182,12 @@ def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
         status=InviteStatus.PENDING,
         token_hash="x",
     )
-    service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
-    service.invite_repository.mark_status = AsyncMock()
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
     service.user_service = AsyncMock()
     service.user_service.get_or_create_current_user = AsyncMock(
         return_value=User(external_auth_id="kc-1", email="invited@example.com")
@@ -200,7 +210,7 @@ def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
         )
 
     service.membership_service.create_membership.assert_awaited_once()
-    service.invite_repository.mark_status.assert_not_called()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
 
 
 def test_sole_owner_cannot_be_transferred_by_accepting_invite() -> None:
@@ -216,8 +226,12 @@ def test_sole_owner_cannot_be_transferred_by_accepting_invite() -> None:
         status=InviteStatus.PENDING,
         token_hash="x",
     )
-    service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
-    service.invite_repository.mark_status = AsyncMock()
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
 
     service.user_service = AsyncMock()
     user = User(
@@ -253,7 +267,7 @@ def test_sole_owner_cannot_be_transferred_by_accepting_invite() -> None:
         role=MembershipRole.MEMBER,
     )
     service.membership_service.transfer_membership.assert_not_awaited()
-    service.invite_repository.mark_status.assert_not_called()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
 
 
 def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> None:
@@ -267,8 +281,12 @@ def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
         token_hash="x",
         expires_at=datetime.now(UTC) - timedelta(minutes=1),
     )
-    service.invite_repository.get_by_token_hash = AsyncMock(return_value=invite)
-    service.invite_repository.mark_status = AsyncMock()
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
     service.user_service = AsyncMock()
     service.user_service.ensure_user_is_active = AsyncMock()
 
@@ -280,16 +298,14 @@ def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
             )
         )
 
-    service.invite_repository.mark_status.assert_awaited_once_with(
-        invite, InviteStatus.EXPIRED
-    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
     service.user_service.get_or_create_current_user.assert_not_called()
 
 
 def test_accept_invite_rejects_non_pending_expired_invite() -> None:
     service = _service()
     service.invite_repository = AsyncMock()
-    service.invite_repository.get_by_token_hash = AsyncMock(
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
         return_value=Invite(
             email="invited@example.com",
             organisation_id=uuid4(),
@@ -298,7 +314,9 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
             token_hash="x",
         )
     )
-    service.invite_repository.mark_status = AsyncMock()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
     service.user_service = AsyncMock()
     service.user_service.ensure_user_is_active = AsyncMock()
 
@@ -310,7 +328,7 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
             )
         )
 
-    service.invite_repository.mark_status.assert_not_called()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
     service.user_service.get_or_create_current_user.assert_not_called()
 
 
@@ -401,7 +419,9 @@ def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
     service.invite_repository.get_invite_for_organisation = AsyncMock(
         return_value=invite
     )
-    service.invite_repository.mark_status = AsyncMock()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
 
     with pytest.raises(ConflictError, match="Invite has expired"):
         actor_user_id = uuid4()
@@ -414,9 +434,7 @@ def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
             )
         )
 
-    service.invite_repository.mark_status.assert_awaited_once_with(
-        invite, InviteStatus.EXPIRED
-    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
     assert invite.token_hash == "old"
 
 
@@ -516,7 +534,11 @@ def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     assert payload["email"] == created_invite.email
     assert payload["purpose"] == "created"
     assert payload["role"] == MembershipRole.MEMBER.value
-    expected_hash = sha256(payload["encrypted_raw_token"].encode("utf-8")).hexdigest()
+    raw_token = service.payload_crypto.decrypt_token(payload["encrypted_raw_token"])
+    expected_hash = sha256(raw_token.encode("utf-8")).hexdigest()
+    assert "raw_token" not in payload
+    assert "encrypted_raw_token" in payload
+    assert payload["encrypted_raw_token"] != raw_token
 
     service.invite_repository.create_invite.assert_awaited_once()
     create_kwargs = service.invite_repository.create_invite.await_args.kwargs
@@ -559,6 +581,12 @@ def test_resend_invite_updates_token_hash_and_publishes_outbox_event() -> None:
     service.invite_repository.get_invite_for_organisation = AsyncMock(
         return_value=invite
     )
+    service.invite_repository.rotate_pending_invite_token = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_pending_invite_expired_by_id = AsyncMock(
+        return_value=None
+    )
 
     with patch("app.invites.services.invites.AuditEventService") as audit_service_cls:
         audit_service_cls.return_value.record_event = AsyncMock()
@@ -580,7 +608,7 @@ def test_resend_invite_updates_token_hash_and_publishes_outbox_event() -> None:
     assert kwargs["event_type"] == OutboxEventType.INVITE_RESEND.value
     payload = kwargs["payload_json"]
     assert payload["purpose"] == "resent"
-    assert (
-        sha256(payload["encrypted_raw_token"].encode("utf-8")).hexdigest()
-        == invite.token_hash
-    )
+    raw_token = service.payload_crypto.decrypt_token(payload["encrypted_raw_token"])
+    assert sha256(raw_token.encode("utf-8")).hexdigest() == invite.token_hash
+    assert "raw_token" not in payload
+    assert payload["encrypted_raw_token"] != raw_token

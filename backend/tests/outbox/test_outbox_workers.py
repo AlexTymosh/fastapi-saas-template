@@ -15,6 +15,7 @@ from app.outbox.workers import _process_outbox_event
 from tests.api.test_invites import InMemoryInviteTokenSink, _drain_outbox, _identity_for
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.outbox import process_all_claimed_outbox_events
+from tests.helpers.settings import reset_settings_cache
 
 
 def test_claim_due_events_marks_pending_events_processing(
@@ -252,3 +253,45 @@ def test_worker_runtime_fails_without_redis(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="REDIS__URL"):
         tasks_broker_module.configure_broker(require_redis=True)
+
+
+def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
+    migrated_session_factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+    monkeypatch.setenv(
+        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    )
+    reset_settings_cache()
+
+    async def _run() -> None:
+        from app.outbox.services.payload_crypto import OutboxPayloadCrypto
+
+        crypto = OutboxPayloadCrypto("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo5ODc2NTQzMjEw")
+        encrypted = crypto.encrypt_token("super-secret-token")
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000211"),
+                payload_json={
+                    "invite_id": "00000000-0000-0000-0000-000000000111",
+                    "encrypted_raw_token": encrypted,
+                },
+                max_attempts=1,
+                status=OutboxStatus.PROCESSING.value,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert saved.status == OutboxStatus.FAILED.value
+            assert saved.last_error == "outbox_payload_decryption_failed"
+
+    run_async(_run())
