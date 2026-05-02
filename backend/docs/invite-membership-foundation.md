@@ -76,3 +76,9 @@ Known P0 limitation: if claim commits but enqueue fails, some events may remain 
 - Worker decryption/key mismatch is handled safely: event is failed/retried without exposing raw token or encrypted payload.
 - Key rotation and KMS integration are not part of this task.
 - Processed-outbox retention/cleanup remains a separate follow-up task.
+
+## SQLite and PostgreSQL compatibility note
+
+- Production-safe path remains PostgreSQL.
+- Invite repository update flows use SQL `RETURNING` through SQLAlchemy.
+- SQLite compatibility for these flows requires SQLite **3.35+** (first version with `RETURNING` support).
