@@ -15,8 +15,6 @@ This branch is a **foundation step** for organisation membership and invitation 
 
 The following capabilities are intentionally out of scope for this foundation and remain future work:
 
-- Invite revocation flows.
-- Invite resend flows.
 - Full support/operations workflows around invite recovery.
 - Member removal flows.
 - Self-leave flows.
@@ -31,6 +29,11 @@ Raw invite tokens are generated for out-of-band delivery but are not part of the
 `invites.token_hash` stores `sha256(raw_token)`. The outbox payload stores only `encrypted_raw_token`; plain `raw_token` is never persisted in payload JSON.
 Workers decrypt token material in memory, verify `sha256(raw_token) == invites.token_hash`, and then deliver. Wrong key/material mismatch is handled as a safe failed attempt.
 Outbox workers now use DB-backed status/attempt tracking as the source of truth and do not rely on Dramatiq retries for business delivery retries. A dispatcher actor (`enqueue_pending_outbox_events`) enqueues due pending events for processing.
+
+## Local role model
+
+- Platform access is modelled via the local `platform_staff` table and backend permission checks.
+- Tenant access is modelled via local `memberships` rows (`owner` / `admin` / `member`) scoped to organisation context.
 
 ## Authorisation semantics and invite token test seam
 

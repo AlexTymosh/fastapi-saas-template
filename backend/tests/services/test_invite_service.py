@@ -273,19 +273,18 @@ def test_sole_owner_cannot_be_transferred_by_accepting_invite() -> None:
 def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> None:
     service = _service()
     service.invite_repository = AsyncMock()
-    invite = Invite(
-        email="invited@example.com",
-        organisation_id=uuid4(),
-        role=MembershipRole.MEMBER,
-        status=InviteStatus.PENDING,
-        token_hash="x",
-        expires_at=datetime.now(UTC) - timedelta(minutes=1),
-    )
     service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
-        return_value=invite
+        return_value=None
     )
     service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
-        return_value=None
+        return_value=Invite(
+            email="invited@example.com",
+            organisation_id=uuid4(),
+            role=MembershipRole.MEMBER,
+            status=InviteStatus.EXPIRED,
+            token_hash="x",
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
     )
     service.user_service = AsyncMock()
     service.user_service.ensure_user_is_active = AsyncMock()
@@ -306,6 +305,12 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
     service = _service()
     service.invite_repository = AsyncMock()
     service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
+        return_value=None
+    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=None
+    )
+    service.invite_repository.get_by_token_hash = AsyncMock(
         return_value=Invite(
             email="invited@example.com",
             organisation_id=uuid4(),
@@ -313,9 +318,6 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
             status=InviteStatus.EXPIRED,
             token_hash="x",
         )
-    )
-    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
-        return_value=None
     )
     service.user_service = AsyncMock()
     service.user_service.ensure_user_is_active = AsyncMock()
@@ -328,7 +330,7 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
             )
         )
 
-    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
     service.user_service.get_or_create_current_user.assert_not_called()
 
 
