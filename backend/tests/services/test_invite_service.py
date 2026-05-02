@@ -516,7 +516,11 @@ def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     assert payload["email"] == created_invite.email
     assert payload["purpose"] == "created"
     assert payload["role"] == MembershipRole.MEMBER.value
-    expected_hash = sha256(payload["encrypted_raw_token"].encode("utf-8")).hexdigest()
+    encrypted_raw_token = payload["encrypted_raw_token"]
+    assert "raw_token" not in payload
+    decrypted_token = service.payload_crypto.decrypt_token(encrypted_raw_token)
+    assert encrypted_raw_token != decrypted_token
+    expected_hash = sha256(decrypted_token.encode("utf-8")).hexdigest()
 
     service.invite_repository.create_invite.assert_awaited_once()
     create_kwargs = service.invite_repository.create_invite.await_args.kwargs
@@ -580,7 +584,8 @@ def test_resend_invite_updates_token_hash_and_publishes_outbox_event() -> None:
     assert kwargs["event_type"] == OutboxEventType.INVITE_RESEND.value
     payload = kwargs["payload_json"]
     assert payload["purpose"] == "resent"
-    assert (
-        sha256(payload["encrypted_raw_token"].encode("utf-8")).hexdigest()
-        == invite.token_hash
-    )
+    encrypted_raw_token = payload["encrypted_raw_token"]
+    assert "raw_token" not in payload
+    decrypted_token = service.payload_crypto.decrypt_token(encrypted_raw_token)
+    assert encrypted_raw_token != decrypted_token
+    assert sha256(decrypted_token.encode("utf-8")).hexdigest() == invite.token_hash

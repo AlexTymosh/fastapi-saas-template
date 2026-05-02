@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from hashlib import sha256
 from uuid import UUID
 
 import pytest
@@ -252,3 +253,72 @@ def test_worker_runtime_fails_without_redis(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="REDIS__URL"):
         tasks_broker_module.configure_broker(require_redis=True)
+
+
+def test_process_outbox_event_decryption_failure_is_safe(
+    migrated_session_factory, monkeypatch
+) -> None:
+    from app.invites.models.invite import Invite
+    from app.outbox.services.payload_crypto import OutboxPayloadCrypto
+
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+    monkeypatch.setattr(
+        "app.outbox.workers.get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "security": type(
+                    "Sec",
+                    (),
+                    {
+                        "outbox_token_encryption_key": (
+                            "WFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFg="
+                        )
+                    },
+                )()
+            },
+        )(),
+    )
+
+    async def _run() -> None:
+        good_crypto = OutboxPayloadCrypto(
+            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+        )
+        raw_token = "raw-token-for-test"
+        token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
+        async with migrated_session_factory() as session:
+            invite = Invite(
+                id=UUID("00000000-0000-0000-0000-000000000211"),
+                email="worker-safe@example.com",
+                organisation_id=UUID("00000000-0000-0000-0000-000000000212"),
+                role="member",
+                token_hash=token_hash,
+            )
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=invite.id,
+                payload_json={
+                    "invite_id": str(invite.id),
+                    "encrypted_raw_token": good_crypto.encrypt_token(raw_token),
+                },
+                status=OutboxStatus.PROCESSING.value,
+                max_attempts=1,
+            )
+            session.add(invite)
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+
+        await _process_outbox_event(event_id)
+
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert saved.status == OutboxStatus.FAILED.value
+            assert saved.last_error == "outbox_payload_decryption_failed"
+
+    run_async(_run())

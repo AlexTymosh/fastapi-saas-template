@@ -159,14 +159,22 @@ class InviteService:
             if not self.session.in_transaction()
             else _NoopContext()
         ):
-            invite = await self.invite_repository.get_by_token_hash(token_hash)
+            invite = await self.invite_repository.accept_pending_invite_by_token_hash(
+                token_hash=token_hash
+            )
             if invite is None:
-                raise NotFoundError(detail="Invite not found")
-            if invite.status != InviteStatus.PENDING:
+                mark_expired = (
+                    self.invite_repository.mark_pending_invite_expired_by_token_hash
+                )
+                expired_invite = await mark_expired(token_hash=token_hash)
+                if expired_invite is not None:
+                    raise ConflictError(detail="Invite has expired")
+                existing_invite = await self.invite_repository.get_by_token_hash(
+                    token_hash
+                )
+                if existing_invite is None:
+                    raise NotFoundError(detail="Invite not found")
                 raise ConflictError(detail="Invite is no longer pending")
-            if self._is_expired(expires_at=invite.expires_at):
-                await self.invite_repository.mark_status(invite, InviteStatus.EXPIRED)
-                raise ConflictError(detail="Invite has expired")
             if identity.email is None or invite.email.lower() != identity.email.lower():
                 raise ForbiddenError(
                     detail="Invite email does not match authenticated user"
@@ -222,9 +230,14 @@ class InviteService:
             ):
                 raise ForbiddenError(detail="Admin can revoke member invites only")
             previous_status = invite.status
-            await self.invite_repository.mark_revoked(
-                invite, revoked_by_user_id=actor_user_id
+            revoked = await self.invite_repository.revoke_pending_invite(
+                invite_id=invite_id,
+                organisation_id=organisation_id,
+                revoked_by_user_id=actor_user_id,
             )
+            if revoked is None:
+                raise ConflictError(detail="Only pending invite can be revoked")
+            invite = revoked
             await AuditEventService(self.session).record_event(
                 audit_context=audit_context,
                 category=AuditCategory.TENANT,
@@ -263,9 +276,6 @@ class InviteService:
                 raise NotFoundError(detail="Invite not found")
             if invite.status != InviteStatus.PENDING:
                 raise ConflictError(detail="Only pending invite can be resent")
-            if self._is_expired(expires_at=invite.expires_at):
-                await self.invite_repository.mark_status(invite, InviteStatus.EXPIRED)
-                raise ConflictError(detail="Invite has expired")
             if actor.role == MembershipRole.MEMBER:
                 raise ForbiddenError(detail="You are not allowed to resend invites")
             if (
@@ -278,9 +288,23 @@ class InviteService:
             token_hash = self._token_hash(token)
             expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
 
-            invite.token_hash = token_hash
-            invite.expires_at = expires_at
-            await self.session.flush()
+            rotated = await self.invite_repository.rotate_pending_invite_token(
+                invite_id=invite_id,
+                organisation_id=organisation_id,
+                new_token_hash=token_hash,
+                new_expires_at=expires_at,
+            )
+            if rotated is None:
+                expired_invite = (
+                    await self.invite_repository.mark_pending_invite_expired_by_id(
+                        invite_id=invite_id,
+                        organisation_id=organisation_id,
+                    )
+                )
+                if expired_invite is not None:
+                    raise ConflictError(detail="Invite has expired")
+                raise ConflictError(detail="Only pending invite can be resent")
+            invite = rotated
             await AuditEventService(self.session).record_event(
                 audit_context=audit_context,
                 category=AuditCategory.TENANT,

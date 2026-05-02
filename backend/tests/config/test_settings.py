@@ -84,3 +84,28 @@ def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
     assert settings.rate_limiting.storage_timeout_seconds == 2.5
 
     reset_settings_cache()
+
+
+def test_prod_requires_auth_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "prod")
+    monkeypatch.setenv("AUTH__ENABLED", "false")
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="AUTH__ENABLED"):
+        get_settings()
+
+
+def test_staging_requires_auth_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "staging")
+    monkeypatch.setenv("AUTH__ENABLED", "false")
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="AUTH__ENABLED"):
+        get_settings()
+
+
+def test_prod_rejects_docs_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "prod")
+    monkeypatch.setenv("AUTH__ENABLED", "true")
+    monkeypatch.setenv("API__DOCS_ENABLED", "true")
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="API__DOCS_ENABLED"):
+        get_settings()
