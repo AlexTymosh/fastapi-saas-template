@@ -10,7 +10,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "0007_add_one_active_owner_index"
-down_revision = "0006_add_outbox_events"
+down_revision = "0006"
 branch_labels = None
 depends_on = None
 
