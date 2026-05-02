@@ -21,6 +21,7 @@ from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from app.organisations.services.organisations import OrganisationService
 from app.outbox.models.outbox_event import OutboxEventType
+from app.outbox.services.encryption import OutboxTokenEncryptionService
 from app.outbox.services.outbox import OutboxService
 from app.users.services.users import UserService
 
@@ -44,6 +45,7 @@ class InviteService:
         self.organisation_service = OrganisationService(session)
         self.user_service = UserService(session)
         self.outbox_service = OutboxService(session)
+        self.token_encryption_service = OutboxTokenEncryptionService()
 
     @staticmethod
     def _token_hash(token: str) -> str:
@@ -135,7 +137,7 @@ class InviteService:
                     "invite_id": str(invite.id),
                     "organisation_id": str(organisation_id),
                     "email": invite.email,
-                    "raw_token": token,
+                    "encrypted_raw_token": self.token_encryption_service.encrypt(token),
                     "purpose": "created",
                     "role": invite.role.value,
                 },
@@ -293,7 +295,7 @@ class InviteService:
                     "invite_id": str(invite.id),
                     "organisation_id": str(organisation_id),
                     "email": invite.email,
-                    "raw_token": token,
+                    "encrypted_raw_token": self.token_encryption_service.encrypt(token),
                     "purpose": "resent",
                     "role": invite.role.value,
                 },
