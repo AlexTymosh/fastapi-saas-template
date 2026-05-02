@@ -54,6 +54,7 @@ async def _get_claimed_event_context(
             try:
                 raw_token = crypto.decrypt_token(str(payload["encrypted_raw_token"]))
             except ValueError:
+                log.warning("outbox_payload_decryption_failed", event_id=event_id)
                 return "outbox_payload_decryption_failed", {}, None
             token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
             if token_hash != invite.token_hash:
