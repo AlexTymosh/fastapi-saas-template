@@ -64,6 +64,15 @@ class RedisSettings(BaseModel):
 class SecuritySettings(BaseModel):
     outbox_token_encryption_key: str | None = None
 
+    @field_validator("outbox_token_encryption_key")
+    @classmethod
+    def validate_outbox_key_format(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from app.outbox.services.payload_crypto import validate_fernet_key
+
+        return validate_fernet_key(value)
+
     """
     Security settings that are unrelated to runtime JWT validation.
 
@@ -195,7 +204,7 @@ class Settings(BaseSettings):
                 )
         if (
             self.outbox.invite_delivery_enabled
-            and env in {"staging", "prod"}
+            and env in {"dev", "staging", "prod"}
             and not self.security.outbox_token_encryption_key
         ):
             raise ValueError(

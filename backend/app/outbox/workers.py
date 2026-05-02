@@ -6,7 +6,6 @@ from uuid import UUID
 import dramatiq
 from sqlalchemy import select
 
-from app.core.config.settings import get_settings
 from app.core.db import get_session_factory
 from app.core.logging import get_logger
 from app.core.tasks import configure_broker
@@ -14,7 +13,10 @@ from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.delivery import get_invite_token_sink
 from app.outbox.models.outbox_event import OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
-from app.outbox.services.payload_crypto import OutboxPayloadCrypto
+from app.outbox.services.payload_crypto import (
+    OutboxPayloadCrypto,
+    resolve_outbox_encryption_key,
+)
 
 log = get_logger(__name__)
 configure_broker(require_redis=False)
@@ -50,11 +52,7 @@ async def _get_claimed_event_context(
                 return "invite_not_found", {}, None
             if invite.status != InviteStatus.PENDING:
                 return "mark_processed", {}, None
-            key = (
-                get_settings().security.outbox_token_encryption_key
-                or "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-            )
-            crypto = OutboxPayloadCrypto(key)
+            crypto = OutboxPayloadCrypto(resolve_outbox_encryption_key())
             try:
                 raw_token = crypto.decrypt_token(str(payload["encrypted_raw_token"]))
             except ValueError:

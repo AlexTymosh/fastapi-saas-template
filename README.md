@@ -36,6 +36,22 @@ cp .env.example .env
 > Secrets are loaded from Vault in development mode.  
 > `.env` is used only for bootstrap configuration.
 
+### 3.1 Invite outbox encryption settings
+
+Set these variables when invite delivery is enabled:
+
+- `OUTBOX__INVITE_DELIVERY_ENABLED=true`
+- `SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY=<fernet-key>`
+- `RATE_LIMITING__ENFORCED_BY_EDGE=false`
+
+Notes:
+
+- `local` and `test` environments may use deterministic fallback key for development/testing.
+- `dev`, `staging`, and `prod` require an explicit Fernet key when invite delivery is enabled.
+- Invite outbox stores only encrypted token payload; worker decryption mismatch/failure marks event failed/retry safely without exposing token material.
+- Fernet key rotation/KMS integration and processed outbox cleanup/retention are out of scope in this repository stage.
+
+
 ---
 
 ### 4. Run project
