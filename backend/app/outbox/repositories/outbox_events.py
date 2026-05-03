@@ -126,5 +126,7 @@ class OutboxEventRepository:
         result = await self.session.execute(stale_query)
         stale_events = list(result.scalars().all())
         for event in stale_events:
-            await self.mark_failed_attempt(event=event, error="stale_processing_recovered")
+            await self.mark_failed_attempt(
+                event=event, error="stale_processing_recovered"
+            )
         return stale_events

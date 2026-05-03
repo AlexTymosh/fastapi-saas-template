@@ -221,12 +221,20 @@ def test_dispatcher_releases_event_when_enqueue_fails(
 def test_dispatcher_loop_runs_until_cancelled(monkeypatch) -> None:
     called = {"ticks": 0}
 
+    async def _fake_recover() -> int:
+        return 0
+
     async def _fake_claim(limit: int = 100) -> int:
         called["ticks"] += 1
         return 0
 
     monkeypatch.setattr(
-        "app.outbox.dispatcher.claim_and_enqueue_due_outbox_events", _fake_claim
+        "app.outbox.dispatcher.recover_stale_processing_events",
+        _fake_recover,
+    )
+    monkeypatch.setattr(
+        "app.outbox.dispatcher.claim_and_enqueue_due_outbox_events",
+        _fake_claim,
     )
 
     async def _run() -> None:
@@ -369,13 +377,14 @@ def test_recover_stale_processing_events_requeues_old_processing_event(
                 claimed = await repo.get_by_id(event_id)
                 assert claimed is not None
                 from datetime import UTC, datetime, timedelta
+
                 claimed.locked_at = datetime.now(UTC) - timedelta(seconds=1000)
                 await session.flush()
         async with migrated_session_factory() as session:
             async with session.begin():
-                recovered = await OutboxEventRepository(session).recover_stale_processing_events(
-                    stale_timeout_seconds=300, limit=10
-                )
+                recovered = await OutboxEventRepository(
+                    session
+                ).recover_stale_processing_events(stale_timeout_seconds=300, limit=10)
                 assert len(recovered) == 1
         async with migrated_session_factory() as session:
             saved = await OutboxEventRepository(session).get_by_id(event_id)
@@ -405,9 +414,9 @@ def test_recover_stale_processing_events_ignores_fresh_processing_event(
             event_id = event.id
         async with migrated_session_factory() as session:
             async with session.begin():
-                recovered = await OutboxEventRepository(session).recover_stale_processing_events(
-                    stale_timeout_seconds=300, limit=10
-                )
+                recovered = await OutboxEventRepository(
+                    session
+                ).recover_stale_processing_events(stale_timeout_seconds=300, limit=10)
                 assert recovered == []
         async with migrated_session_factory() as session:
             saved = await OutboxEventRepository(session).get_by_id(event_id)

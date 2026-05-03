@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from app.core.db import get_session_factory
 from app.core.config.settings import get_settings
+from app.core.db import get_session_factory
 from app.core.logging import get_logger
 from app.core.tasks import configure_broker
 from app.outbox.repositories.outbox_events import OutboxEventRepository
