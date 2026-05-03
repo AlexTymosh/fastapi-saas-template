@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -62,6 +63,24 @@ class RedisSettings(BaseModel):
 
 
 class SecuritySettings(BaseModel):
+    outbox_token_encryption_key: str | None = None
+
+    @field_validator("outbox_token_encryption_key")
+    @classmethod
+    def validate_outbox_token_encryption_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            Fernet(normalized.encode("utf-8"))
+        except Exception as exc:
+            raise ValueError(
+                "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY must be a valid Fernet key"
+            ) from exc
+        return normalized
+
     """
     Security settings that are unrelated to runtime JWT validation.
 
@@ -93,6 +112,7 @@ class AuthSettings(BaseModel):
 
 class RateLimitingSettings(BaseModel):
     enabled: bool = False
+    enforced_by_edge: bool = False
     backend: Literal["redis"] = "redis"
     redis_prefix: str = "rate-limit"
     trust_proxy_headers: bool = False
@@ -101,6 +121,12 @@ class RateLimitingSettings(BaseModel):
     default_fail_open: bool = True
     sensitive_fail_open: bool = False
     storage_timeout_seconds: float = 1.0
+
+
+class OutboxSettings(BaseModel):
+    invite_delivery_enabled: bool = True
+    stale_processing_timeout_seconds: float = Field(default=300, gt=0)
+    recovery_batch_size: int = Field(default=100, gt=0)
 
 
 class ObservabilitySettings(BaseModel):
@@ -164,7 +190,37 @@ class Settings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
+    outbox: OutboxSettings = Field(default_factory=OutboxSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+
+    @model_validator(mode="after")
+    def validate_environment_security(self) -> Settings:
+        env = self.app.environment
+        if env in {"staging", "prod"} and not self.auth.enabled:
+            raise ValueError("AUTH__ENABLED must be true in staging/prod")
+        if env == "prod":
+            if self.api.docs_enabled:
+                raise ValueError("API__DOCS_ENABLED must be false in prod")
+            if self.request_context.trust_incoming_request_id:
+                raise ValueError(
+                    "REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID must be false in prod"
+                )
+            if (
+                not self.rate_limiting.enabled
+                and not self.rate_limiting.enforced_by_edge
+            ):
+                raise ValueError(
+                    "Rate limiting must be enabled in app or enforced by edge in prod"
+                )
+        if (
+            self.outbox.invite_delivery_enabled
+            and env in {"dev", "staging", "prod"}
+            and not self.security.outbox_token_encryption_key
+        ):
+            raise ValueError(
+                "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY is required for invite outbox"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

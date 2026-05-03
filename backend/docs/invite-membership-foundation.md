@@ -15,8 +15,6 @@ This branch is a **foundation step** for organisation membership and invitation 
 
 The following capabilities are intentionally out of scope for this foundation and remain future work:
 
-- Invite revocation flows.
-- Invite resend flows.
 - Full support/operations workflows around invite recovery.
 - Member removal flows.
 - Self-leave flows.
@@ -24,11 +22,18 @@ The following capabilities are intentionally out of scope for this foundation an
 - Comprehensive audit logging for membership and invite lifecycle events.
 - Complete organisation deletion/status policy matrix.
 
+## Local role model
+
+- Platform roles are stored in `platform_staff` and drive `/api/v1/platform/*` authorisation.
+- Tenant roles are stored in organisation `memberships` and drive `/api/v1/organisations/*` authorisation.
+- These role models are intentionally separated and must not be merged in business logic.
+
 ## Security and delivery note
 
 Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract. Invite delivery now uses a transactional outbox: invite/audit/outbox rows are committed together, while delivery runs asynchronously and at-least-once from background workers.
 
-Raw token material is stored only in outbox payloads until delivery is processed. Production hardening should encrypt sensitive outbox payloads or replace raw-token payload storage with a secure token material strategy before real provider integration.
+`invites.token_hash` stores `sha256(raw_token)`. The outbox payload stores only `encrypted_raw_token`; plain `raw_token` is never persisted in payload JSON.
+Workers decrypt token material in memory, verify `sha256(raw_token) == invites.token_hash`, and then deliver. Wrong key/material mismatch is handled as a safe failed attempt.
 Outbox workers now use DB-backed status/attempt tracking as the source of truth and do not rely on Dramatiq retries for business delivery retries. A dispatcher actor (`enqueue_pending_outbox_events`) enqueues due pending events for processing.
 
 ## Authorisation semantics and invite token test seam
@@ -54,9 +59,10 @@ Runtime now uses two dedicated background processes:
 Lifecycle is explicitly split:
 
 1. Request transaction writes invite + audit + outbox event.
-2. Dispatcher claims due events (`pending -> processing`, sets `locked_at`) and commits.
-3. Dispatcher enqueues claimed IDs to Dramatiq.
-4. Worker loads claimed event, performs external delivery **outside** DB transaction, then commits result transition.
+2. Dispatcher recovers stale processing events (`processing -> pending/failed`) based on timeout and retry policy.
+3. Dispatcher claims due events (`pending -> processing`, sets `locked_at`) and commits.
+4. Dispatcher enqueues claimed IDs to Dramatiq.
+5. Worker loads claimed event, performs external delivery **outside** DB transaction, then commits result transition.
 
 Status transitions:
 
@@ -64,4 +70,21 @@ Status transitions:
 - Failure with retries remaining: `pending -> processing -> pending`
 - Failure with max attempts reached: `pending -> processing -> failed`
 
-Known P0 limitation: if claim commits but enqueue fails, some events may remain in `processing` state. Stale-processing recovery is planned for a follow-up P1 hardening task.
+If enqueue fails after claim commit, dispatcher immediately re-opens a DB transaction and releases that event with retry semantics (`enqueue_failed:*`), so it does not remain stuck in `processing`.
+At-least-once delivery remains the contract: duplicate delivery is still possible (for example, worker crash after external delivery but before `mark_processed`). Idempotent downstream delivery is a follow-up hardening task (P1/P2).
+
+
+## Encryption key requirements
+
+- Invite outbox payload encryption uses Fernet (`SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY`).
+- `local` and `test` may use deterministic fallback key when env var is omitted.
+- `dev`, `staging`, and `prod` require explicit key when `OUTBOX__INVITE_DELIVERY_ENABLED=true`.
+- Worker decryption/key mismatch is handled safely: event is failed/retried without exposing raw token or encrypted payload.
+- Key rotation and KMS integration are not part of this task.
+- Processed-outbox retention/cleanup remains a separate follow-up task.
+
+## SQLite and PostgreSQL compatibility note
+
+- Production-safe path remains PostgreSQL.
+- Invite repository update flows use SQL `RETURNING` through SQLAlchemy.
+- SQLite compatibility for these flows requires SQLite **3.35+** (first version with `RETURNING` support).

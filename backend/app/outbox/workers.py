@@ -4,8 +4,10 @@ from hashlib import sha256
 from uuid import UUID
 
 import dramatiq
+from pydantic import ValidationError
 from sqlalchemy import select
 
+from app.core.config.settings import get_settings
 from app.core.db import get_session_factory
 from app.core.logging import get_logger
 from app.core.tasks import configure_broker
@@ -13,6 +15,8 @@ from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.delivery import get_invite_token_sink
 from app.outbox.models.outbox_event import OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
+from app.outbox.schemas.payloads import parse_invite_outbox_payload
+from app.outbox.services.payload_crypto import OutboxPayloadCrypto
 
 log = get_logger(__name__)
 configure_broker(require_redis=False)
@@ -38,17 +42,30 @@ async def _get_claimed_event_context(
                 OutboxEventType.INVITE_RESEND.value,
             }:
                 return "mark_processed", {}, None
-            payload = event.payload_json
+            try:
+                payload = parse_invite_outbox_payload(event.payload_json)
+            except (ValidationError, TypeError, ValueError):
+                log.warning(
+                    "malformed_outbox_payload",
+                    event_id=event_id,
+                    event_type=event.event_type,
+                )
+                return "malformed_outbox_payload", {}, None
             invite = (
                 await session.execute(
-                    select(Invite).where(Invite.id == UUID(str(payload["invite_id"])))
+                    select(Invite).where(Invite.id == payload.invite_id)
                 )
             ).scalar_one_or_none()
             if invite is None:
                 return "invite_not_found", {}, None
             if invite.status != InviteStatus.PENDING:
                 return "mark_processed", {}, None
-            raw_token = str(payload["raw_token"])
+            crypto = OutboxPayloadCrypto.from_settings(settings=get_settings())
+            try:
+                raw_token = crypto.decrypt_token(payload.encrypted_raw_token)
+            except ValueError:
+                log.warning("outbox_payload_decryption_failed", event_id=event_id)
+                return "outbox_payload_decryption_failed", {}, None
             token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
             if token_hash != invite.token_hash:
                 return "token_hash_mismatch", {}, None
@@ -78,7 +95,12 @@ async def _process_outbox_event(event_id: str) -> None:
     if action == "mark_processed":
         await _apply_result(event_id, success=True)
         return
-    if action in {"invite_not_found", "token_hash_mismatch"}:
+    if action in {
+        "invite_not_found",
+        "token_hash_mismatch",
+        "outbox_payload_decryption_failed",
+        "malformed_outbox_payload",
+    }:
         await _apply_result(event_id, success=False, error=action)
         return
 

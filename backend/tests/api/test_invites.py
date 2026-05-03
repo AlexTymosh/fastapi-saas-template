@@ -1010,3 +1010,75 @@ def test_unverified_email_cannot_accept_invite(
         response = client.post("/api/v1/invites/accept", json={"token": token})
         assert response.status_code == 403
         assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_invite_token_cannot_be_accepted_twice(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-concurrent", "owner-concurrent@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    owner_sink = _override_token_sink(monkeypatch)
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Acme Concurrent", "slug": "acme-concurrent-invite"},
+        )
+        organisation_id = created.json()["id"]
+        invited = client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "invitee-concurrent@example.com", "role": "member"},
+        )
+        assert invited.status_code == 201
+        _drain_outbox(migrated_session_factory, monkeypatch)
+    token = owner_sink.token_for_email("invitee-concurrent@example.com")
+
+    invitee_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-invitee-concurrent",
+            "invitee-concurrent@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+
+    with invitee_bundle.client as client:
+        first = client.post("/api/v1/invites/accept", json={"token": token})
+        assert first.status_code == 200
+
+        second = client.post("/api/v1/invites/accept", json={"token": token})
+        assert second.status_code == 409
+        assert second.headers["content-type"].startswith("application/problem+json")
+        assert second.json()["error_code"] == "conflict"
+
+    async def _assert_state() -> None:
+        async with migrated_session_factory() as session:
+            token_hash = sha256(token.encode()).hexdigest()
+            accepted_invite = await session.scalar(
+                select(Invite).where(Invite.token_hash == token_hash)
+            )
+            assert accepted_invite is not None
+            assert accepted_invite.status == InviteStatus.ACCEPTED
+
+            memberships = (
+                (
+                    await session.execute(
+                        select(Membership)
+                        .join(User, User.id == Membership.user_id)
+                        .where(
+                            User.email == "invitee-concurrent@example.com",
+                            Membership.is_active.is_(True),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(memberships) == 1
+
+    run_async(_assert_state())

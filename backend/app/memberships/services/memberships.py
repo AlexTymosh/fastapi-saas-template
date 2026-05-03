@@ -24,6 +24,8 @@ class OrganisationDirectoryMember:
 
 
 class MembershipService:
+    _OWNER_INVARIANT_ERROR = "Organisation must have exactly one active owner"
+
     @staticmethod
     def _ensure_audit_actor_matches(
         *, actor_user_id: UUID, audit_context: AuditContext
@@ -71,12 +73,18 @@ class MembershipService:
             raise ConflictError(detail="User already belongs to an organisation")
 
         try:
-            return await self.membership_repository.create_membership(
+            membership = await self.membership_repository.create_membership(
                 user_id=user_id,
                 organisation_id=organisation_id,
                 role=role,
             )
+            await self._ensure_exactly_one_active_owner(organisation_id=organisation_id)
+            return membership
         except IntegrityError as exc:
+            if role == MembershipRole.OWNER:
+                raise ConflictError(
+                    detail="Organisation already has an active owner"
+                ) from exc
             raise ConflictError(
                 detail="User already belongs to an organisation"
             ) from exc
@@ -288,21 +296,91 @@ class MembershipService:
             user_id=user_id
         )
         if existing is not None:
-            if existing.role == MembershipRole.OWNER:
-                owner_count = await self.membership_repository.count_active_owners(
-                    organisation_id=existing.organisation_id
-                )
-                if owner_count <= 1:
-                    raise ConflictError(
-                        detail="Organisation must always have at least one owner"
+            if (
+                existing.role == MembershipRole.OWNER
+                and existing.organisation_id != organisation_id
+            ):
+                raise ConflictError(
+                    detail=(
+                        "Cross-organisation owner transfer is unsupported without "
+                        "atomic owner replacement"
                     )
+                )
             await self.membership_repository.deactivate_membership(existing)
+            await self._ensure_exactly_one_active_owner(
+                organisation_id=existing.organisation_id
+            )
 
-        return await self.membership_repository.create_membership(
-            user_id=user_id,
-            organisation_id=organisation_id,
-            role=role,
+        try:
+            membership = await self.membership_repository.create_membership(
+                user_id=user_id,
+                organisation_id=organisation_id,
+                role=role,
+            )
+            await self._ensure_exactly_one_active_owner(organisation_id=organisation_id)
+            return membership
+        except IntegrityError as exc:
+            if role == MembershipRole.OWNER:
+                raise ConflictError(
+                    detail="Organisation already has an active owner"
+                ) from exc
+            raise
+
+    async def replace_owner_membership(
+        self,
+        *,
+        organisation_id: UUID,
+        source_owner_membership_id: UUID,
+        replacement_membership_id: UUID,
+    ) -> Membership:
+        if source_owner_membership_id == replacement_membership_id:
+            raise ConflictError(detail="Source and replacement owner must be different")
+        if self.session.in_transaction():
+            return await self._replace_owner_membership(
+                organisation_id=organisation_id,
+                source_owner_membership_id=source_owner_membership_id,
+                replacement_membership_id=replacement_membership_id,
+            )
+        async with self.session.begin():
+            return await self._replace_owner_membership(
+                organisation_id=organisation_id,
+                source_owner_membership_id=source_owner_membership_id,
+                replacement_membership_id=replacement_membership_id,
+            )
+
+    async def _replace_owner_membership(
+        self,
+        *,
+        organisation_id: UUID,
+        source_owner_membership_id: UUID,
+        replacement_membership_id: UUID,
+    ) -> Membership:
+        memberships = await self.membership_repository.lock_active_memberships(
+            organisation_id=organisation_id
         )
+        by_id = {membership.id: membership for membership in memberships}
+        source = by_id.get(source_owner_membership_id)
+        replacement = by_id.get(replacement_membership_id)
+        if source is None or replacement is None:
+            raise NotFoundError(detail="Membership not found")
+        if source.role != MembershipRole.OWNER:
+            raise ConflictError(detail="Source membership is not owner")
+        if replacement.role == MembershipRole.OWNER:
+            raise ConflictError(detail="Replacement membership is already owner")
+
+        source.role = MembershipRole.ADMIN
+        await self.session.flush()
+        replacement.role = MembershipRole.OWNER
+        await self.session.flush()
+        await self._ensure_exactly_one_active_owner(organisation_id=organisation_id)
+        return replacement
+
+    async def _ensure_exactly_one_active_owner(self, *, organisation_id: UUID) -> None:
+        owner_count = await self.membership_repository.count_active_owners(
+            organisation_id=organisation_id
+        )
+        if owner_count != 1:
+            raise ConflictError(detail=self._OWNER_INVARIANT_ERROR)
 
     async def list_directory_members_for_user(
         self,

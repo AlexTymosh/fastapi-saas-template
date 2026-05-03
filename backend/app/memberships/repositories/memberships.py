@@ -153,6 +153,31 @@ class MembershipRepository:
         result = await self.session.execute(stmt)
         return int(result.scalar_one())
 
+    async def list_active_memberships_for_organisation_for_update(
+        self,
+        *,
+        organisation_id: UUID,
+    ) -> list[Membership]:
+        stmt = (
+            select(Membership)
+            .where(
+                Membership.organisation_id == organisation_id,
+                Membership.is_active.is_(True),
+            )
+            .with_for_update()
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def lock_active_memberships(
+        self,
+        *,
+        organisation_id: UUID,
+    ) -> list[Membership]:
+        return await self.list_active_memberships_for_organisation_for_update(
+            organisation_id=organisation_id
+        )
+
     async def deactivate_organisation_memberships(
         self,
         *,
