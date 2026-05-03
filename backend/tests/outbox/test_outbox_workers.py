@@ -451,7 +451,7 @@ def test_worker_marks_invalid_payload_failed_attempt(
             assert saved is not None
             assert saved.status != OutboxStatus.PROCESSING.value
             assert saved.attempts == 1
-            assert saved.last_error == "invalid_outbox_payload"
+            assert saved.last_error == "malformed_outbox_payload"
 
     run_async(_run())
 
@@ -484,6 +484,173 @@ def test_worker_marks_invalid_invite_id_payload_failed_attempt(
             assert saved is not None
             assert saved.status != OutboxStatus.PROCESSING.value
             assert saved.attempts == 1
-            assert saved.last_error == "invalid_outbox_payload"
+            assert saved.last_error == "malformed_outbox_payload"
 
     run_async(_run())
+
+
+def test_worker_marks_missing_encrypted_token_payload_failed_attempt(
+    migrated_session_factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+
+    async def _run() -> None:
+        invite_id = UUID("00000000-0000-0000-0000-000000000173")
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000173"),
+                payload_json={"invite_id": str(invite_id)},
+                status=OutboxStatus.PROCESSING.value,
+                max_attempts=1,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert saved.status == OutboxStatus.FAILED.value
+            assert saved.attempts == 1
+            assert saved.last_error == "malformed_outbox_payload"
+
+    run_async(_run())
+
+
+def test_worker_marks_empty_encrypted_token_payload_failed_attempt(
+    migrated_session_factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+
+    async def _run() -> None:
+        invite_id = UUID("00000000-0000-0000-0000-000000000174")
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000174"),
+                payload_json={
+                    "invite_id": str(invite_id),
+                    "encrypted_raw_token": "   ",
+                },
+                status=OutboxStatus.PROCESSING.value,
+                max_attempts=1,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert saved.status == OutboxStatus.FAILED.value
+            assert saved.attempts == 1
+            assert saved.last_error == "malformed_outbox_payload"
+
+    run_async(_run())
+
+
+def test_worker_malformed_payload_does_not_call_sink(
+    migrated_session_factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+
+    class _MustNotCallSink:
+        async def deliver(self, invite, raw_token):  # type: ignore[no-untyped-def]
+            raise AssertionError("sink must not be called for malformed payload")
+
+    monkeypatch.setattr(
+        "app.outbox.workers.get_invite_token_sink", lambda: _MustNotCallSink()
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000175"),
+                payload_json={"encrypted_raw_token": "x"},
+                status=OutboxStatus.PROCESSING.value,
+                max_attempts=1,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+
+    run_async(_run())
+
+
+def test_worker_malformed_payload_retries_as_pending(
+    migrated_session_factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000176"),
+                payload_json={"encrypted_raw_token": "x"},
+                status=OutboxStatus.PROCESSING.value,
+                max_attempts=2,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert saved.status == OutboxStatus.PENDING.value
+            assert saved.attempts == 1
+            assert saved.last_error == "malformed_outbox_payload"
+            assert saved.next_attempt_at is not None
+
+    run_async(_run())
+
+
+def test_worker_malformed_payload_does_not_leak_sensitive_token(
+    migrated_session_factory, monkeypatch, caplog
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000177"),
+                payload_json={
+                    "invite_id": "not-a-uuid",
+                    "encrypted_raw_token": "SECRET_SHOULD_NOT_LEAK",
+                },
+                status=OutboxStatus.PROCESSING.value,
+                max_attempts=1,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+
+        await _process_outbox_event(event_id)
+
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert "SECRET_SHOULD_NOT_LEAK" not in (saved.last_error or "")
+
+    run_async(_run())
+    assert "SECRET_SHOULD_NOT_LEAK" not in caplog.text
