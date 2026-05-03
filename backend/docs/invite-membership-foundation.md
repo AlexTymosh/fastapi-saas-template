@@ -60,8 +60,9 @@ Lifecycle is explicitly split:
 
 1. Request transaction writes invite + audit + outbox event.
 2. Dispatcher claims due events (`pending -> processing`, sets `locked_at`) and commits.
-3. Dispatcher enqueues claimed IDs to Dramatiq.
+3. Dispatcher enqueues claimed IDs to Dramatiq. If enqueue fails after claim commit, dispatcher immediately releases the event via DB retry policy (`processing -> pending/failed`) and stores compact `enqueue_failed:<ExceptionType>` error.
 4. Worker loads claimed event, performs external delivery **outside** DB transaction, then commits result transition.
+5. Each dispatcher tick first recovers stale `processing` rows (`locked_at < now - stale_timeout`) and requeues/fails them using the same DB retry policy.
 
 Status transitions:
 
@@ -69,7 +70,7 @@ Status transitions:
 - Failure with retries remaining: `pending -> processing -> pending`
 - Failure with max attempts reached: `pending -> processing -> failed`
 
-Known P0 limitation: if claim commits but enqueue fails, some events may remain in `processing` state. Stale-processing recovery is planned for a follow-up P1 hardening task.
+Delivery semantics remain **at-least-once**: duplicate deliveries are still possible if a worker crashes after external send and before `mark_processed`. Idempotent downstream delivery remains a follow-up P1/P2 hardening task.
 
 
 ## Encryption key requirements

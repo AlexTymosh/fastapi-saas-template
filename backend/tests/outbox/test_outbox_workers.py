@@ -189,8 +189,15 @@ def test_dispatcher_loop_runs_until_cancelled(monkeypatch) -> None:
         called["ticks"] += 1
         return 0
 
+    async def _fake_recover(*, stale_timeout_seconds: float, limit: int):
+        return []
+
     monkeypatch.setattr(
         "app.outbox.dispatcher.claim_and_enqueue_due_outbox_events", _fake_claim
+    )
+    monkeypatch.setattr(
+        "app.outbox.repositories.outbox_events.OutboxEventRepository.recover_stale_processing_events",
+        _fake_recover,
     )
 
     async def _run() -> None:
@@ -204,6 +211,44 @@ def test_dispatcher_loop_runs_until_cancelled(monkeypatch) -> None:
 
     run_async(_run())
     assert called["ticks"] >= 1
+
+
+def test_dispatcher_releases_event_when_enqueue_fails(
+    migrated_session_factory, monkeypatch
+) -> None:
+    def _raise_send(event_id: str) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.outbox.dispatcher.process_outbox_event.send", _raise_send)
+    monkeypatch.setattr(
+        "app.outbox.dispatcher.get_session_factory", lambda: migrated_session_factory
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                payload_json={"invite_id": "1", "encrypted_raw_token": "a"},
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000231"),
+                max_attempts=3,
+                status=OutboxStatus.PENDING.value,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = event.id
+
+        count = await claim_and_enqueue_due_outbox_events(limit=10)
+        assert count == 0
+
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(event_id)
+            assert saved is not None
+            assert saved.status in {OutboxStatus.PENDING.value, OutboxStatus.FAILED.value}
+            assert saved.locked_at is None
+            assert "enqueue_failed:RuntimeError" in str(saved.last_error)
+
+    run_async(_run())
 
 
 def test_process_outbox_event_failure_commits_attempts(
@@ -309,4 +354,124 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
             assert saved.status == OutboxStatus.FAILED.value
             assert saved.last_error == "outbox_payload_decryption_failed"
 
+    run_async(_run())
+
+
+def test_recover_stale_processing_events_requeues_old_processing_event(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                payload_json={"invite_id": "1", "encrypted_raw_token": "a"},
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000241"),
+                status=OutboxStatus.PROCESSING.value,
+                locked_at=None,
+            )
+            session.add(event)
+            await session.flush()
+            event.locked_at = event.created_at
+            await session.commit()
+            event_id = event.id
+
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                recovered = await OutboxEventRepository(
+                    session
+                ).recover_stale_processing_events(stale_timeout_seconds=0.001, limit=10)
+                assert len(recovered) == 1
+
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(event_id)
+            assert saved is not None
+            assert saved.status in {OutboxStatus.PENDING.value, OutboxStatus.FAILED.value}
+            assert saved.locked_at is None
+            assert saved.last_error == "stale_processing_recovered"
+            assert saved.attempts == 1
+
+    run_async(_run())
+
+
+def test_recover_stale_processing_events_ignores_fresh_processing_event(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                payload_json={"invite_id": "1", "encrypted_raw_token": "a"},
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000251"),
+                status=OutboxStatus.PROCESSING.value,
+            )
+            session.add(event)
+            await session.commit()
+
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                recovered = await OutboxEventRepository(
+                    session
+                ).recover_stale_processing_events(stale_timeout_seconds=3600, limit=10)
+                assert recovered == []
+
+    run_async(_run())
+
+
+def test_worker_marks_invalid_payload_failed_attempt(
+    migrated_session_factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000261"),
+                payload_json={"email": "broken@example.com"},
+                max_attempts=2,
+                status=OutboxStatus.PROCESSING.value,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert saved.status in {OutboxStatus.PENDING.value, OutboxStatus.FAILED.value}
+            assert saved.attempts == 1
+            assert saved.last_error == "invalid_outbox_payload"
+    run_async(_run())
+
+
+def test_worker_marks_invalid_invite_id_payload_failed_attempt(
+    migrated_session_factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.outbox.workers.get_session_factory", lambda: migrated_session_factory
+    )
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=UUID("00000000-0000-0000-0000-000000000271"),
+                payload_json={"invite_id": "not-a-uuid", "encrypted_raw_token": "x"},
+                max_attempts=2,
+                status=OutboxStatus.PROCESSING.value,
+            )
+            session.add(event)
+            await session.commit()
+            event_id = str(event.id)
+        await _process_outbox_event(event_id)
+        async with migrated_session_factory() as session:
+            saved = await OutboxEventRepository(session).get_by_id(UUID(event_id))
+            assert saved is not None
+            assert saved.status in {OutboxStatus.PENDING.value, OutboxStatus.FAILED.value}
+            assert saved.attempts == 1
+            assert saved.last_error == "invalid_outbox_payload"
     run_async(_run())

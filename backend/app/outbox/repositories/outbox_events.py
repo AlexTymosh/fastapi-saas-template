@@ -98,3 +98,38 @@ class OutboxEventRepository:
             event.next_attempt_at = now + timedelta(seconds=2**attempts)
         event.updated_at = now
         await self.session.flush()
+
+    async def release_processing_event_for_retry(
+        self, *, event: OutboxEvent, error: str
+    ) -> OutboxEvent:
+        if event.status != OutboxStatus.PROCESSING.value:
+            return event
+        await self.mark_failed_attempt(event=event, error=error)
+        return event
+
+    async def recover_stale_processing_events(
+        self, *, stale_timeout_seconds: float, limit: int
+    ) -> list[OutboxEvent]:
+        now = datetime.now(UTC)
+        stale_before = now - timedelta(seconds=stale_timeout_seconds)
+        stale_query = (
+            select(OutboxEvent)
+            .where(
+                OutboxEvent.status == OutboxStatus.PROCESSING.value,
+                OutboxEvent.locked_at.is_not(None),
+                OutboxEvent.locked_at < stale_before,
+            )
+            .order_by(OutboxEvent.locked_at.asc())
+            .limit(limit)
+        )
+        if self.session.bind and self.session.bind.dialect.name == "postgresql":
+            stale_query = stale_query.with_for_update(skip_locked=True)
+
+        result = await self.session.execute(stale_query)
+        stale_events = list(result.scalars().all())
+        for event in stale_events:
+            await self.mark_failed_attempt(
+                event=event,
+                error="stale_processing_recovered",
+            )
+        return stale_events
