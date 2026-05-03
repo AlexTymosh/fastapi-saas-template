@@ -86,6 +86,19 @@ def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
     reset_settings_cache()
 
 
+def test_settings_reads_outbox_recovery_env(monkeypatch) -> None:
+    monkeypatch.setenv("OUTBOX__STALE_PROCESSING_TIMEOUT_SECONDS", "120.5")
+    monkeypatch.setenv("OUTBOX__RECOVERY_BATCH_SIZE", "55")
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.outbox.stale_processing_timeout_seconds == 120.5
+    assert settings.outbox.recovery_batch_size == 55
+
+    reset_settings_cache()
+
+
 def test_prod_requires_auth_enabled(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     monkeypatch.setenv("AUTH__ENABLED", "false")

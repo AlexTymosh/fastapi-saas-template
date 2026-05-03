@@ -125,6 +125,8 @@ class RateLimitingSettings(BaseModel):
 
 class OutboxSettings(BaseModel):
     invite_delivery_enabled: bool = True
+    stale_processing_timeout_seconds: float = Field(default=300, gt=0)
+    recovery_batch_size: int = Field(default=100, gt=0)
 
 
 class ObservabilitySettings(BaseModel):
