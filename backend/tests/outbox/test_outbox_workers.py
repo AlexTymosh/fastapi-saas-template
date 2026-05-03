@@ -5,6 +5,7 @@ from hashlib import sha256
 from uuid import UUID
 
 import pytest
+from cryptography.fernet import Fernet
 
 from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import MembershipRole
@@ -273,9 +274,7 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
     async def _run() -> None:
         from app.outbox.services.payload_crypto import OutboxPayloadCrypto
 
-        crypto = OutboxPayloadCrypto(
-            "VjlxVDdPUGQ4RElSeW9fUjBfQWx2d1pOb0lzMVNqckl0dTRqSk9LQ0tMVT0="
-        )
+        crypto = OutboxPayloadCrypto(Fernet.generate_key().decode("utf-8"))
         encrypted = crypto.encrypt_token("super-secret-token")
         invite_id = UUID("00000000-0000-0000-0000-000000000111")
         async with migrated_session_factory() as session:

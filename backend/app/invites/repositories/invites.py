@@ -168,6 +168,7 @@ class InviteRepository:
             )
             .values(token_hash=new_token_hash, expires_at=new_expires_at)
             .returning(Invite)
+            .execution_options(synchronize_session="fetch")
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
