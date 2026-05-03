@@ -59,9 +59,10 @@ Runtime now uses two dedicated background processes:
 Lifecycle is explicitly split:
 
 1. Request transaction writes invite + audit + outbox event.
-2. Dispatcher claims due events (`pending -> processing`, sets `locked_at`) and commits.
-3. Dispatcher enqueues claimed IDs to Dramatiq.
-4. Worker loads claimed event, performs external delivery **outside** DB transaction, then commits result transition.
+2. Dispatcher recovers stale processing events (`processing -> pending/failed`) based on timeout and retry policy.
+3. Dispatcher claims due events (`pending -> processing`, sets `locked_at`) and commits.
+4. Dispatcher enqueues claimed IDs to Dramatiq.
+5. Worker loads claimed event, performs external delivery **outside** DB transaction, then commits result transition.
 
 Status transitions:
 
@@ -69,7 +70,8 @@ Status transitions:
 - Failure with retries remaining: `pending -> processing -> pending`
 - Failure with max attempts reached: `pending -> processing -> failed`
 
-Known P0 limitation: if claim commits but enqueue fails, some events may remain in `processing` state. Stale-processing recovery is planned for a follow-up P1 hardening task.
+If enqueue fails after claim commit, dispatcher immediately re-opens a DB transaction and releases that event with retry semantics (`enqueue_failed:*`), so it does not remain stuck in `processing`.
+At-least-once delivery remains the contract: duplicate delivery is still possible (for example, worker crash after external delivery but before `mark_processed`). Idempotent downstream delivery is a follow-up hardening task (P1/P2).
 
 
 ## Encryption key requirements

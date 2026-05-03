@@ -156,3 +156,16 @@ def test_settings_rejects_invalid_fernet_key(monkeypatch) -> None:
     reset_settings_cache()
     with pytest.raises(ValueError, match="valid Fernet key"):
         get_settings()
+
+
+def test_settings_reads_outbox_recovery_env(monkeypatch) -> None:
+    monkeypatch.setenv("OUTBOX__STALE_PROCESSING_TIMEOUT_SECONDS", "120.5")
+    monkeypatch.setenv("OUTBOX__RECOVERY_BATCH_SIZE", "75")
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.outbox.stale_processing_timeout_seconds == 120.5
+    assert settings.outbox.recovery_batch_size == 75
+
+    reset_settings_cache()
