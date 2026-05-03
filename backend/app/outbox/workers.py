@@ -4,7 +4,7 @@ from hashlib import sha256
 from uuid import UUID
 
 import dramatiq
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.core.config.settings import get_settings
@@ -15,19 +15,11 @@ from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.delivery import get_invite_token_sink
 from app.outbox.models.outbox_event import OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
+from app.outbox.schemas.payloads import parse_invite_outbox_payload
 from app.outbox.services.payload_crypto import OutboxPayloadCrypto
 
 log = get_logger(__name__)
 configure_broker(require_redis=False)
-
-
-class InviteOutboxPayload(BaseModel):
-    invite_id: UUID
-    organisation_id: UUID | None = None
-    email: str | None = None
-    encrypted_raw_token: str
-    purpose: str | None = None
-    role: str | None = None
 
 
 async def _get_claimed_event_context(
@@ -51,10 +43,14 @@ async def _get_claimed_event_context(
             }:
                 return "mark_processed", {}, None
             try:
-                payload = InviteOutboxPayload.model_validate(event.payload_json)
-            except ValidationError:
-                log.warning("invalid_outbox_payload", event_id=event_id)
-                return "invalid_outbox_payload", {}, None
+                payload = parse_invite_outbox_payload(event.payload_json)
+            except (ValidationError, TypeError, ValueError):
+                log.warning(
+                    "malformed_outbox_payload",
+                    event_id=event_id,
+                    event_type=event.event_type,
+                )
+                return "malformed_outbox_payload", {}, None
             invite = (
                 await session.execute(
                     select(Invite).where(Invite.id == payload.invite_id)
@@ -103,7 +99,7 @@ async def _process_outbox_event(event_id: str) -> None:
         "invite_not_found",
         "token_hash_mismatch",
         "outbox_payload_decryption_failed",
-        "invalid_outbox_payload",
+        "malformed_outbox_payload",
     }:
         await _apply_result(event_id, success=False, error=action)
         return
