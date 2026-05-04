@@ -34,5 +34,19 @@ tasks:
 
   pre-push:
     cmds:
+      - task: deps:check
       - task: lint
       - task: test:safe
+
+  deps:compile:
+    dir: backend
+    cmds:
+      - python -m piptools compile --output-file=requirements.txt pyproject.toml
+      - python -m piptools compile --extra=dev --output-file=requirements-dev.txt pyproject.toml
+
+  deps:check:
+    dir: backend
+    cmds:
+      - python -m piptools compile --quiet --output-file=requirements.txt pyproject.toml
+      - python -m piptools compile --quiet --extra=dev --output-file=requirements-dev.txt pyproject.toml
+      - git diff --exit-code -- requirements.txt requirements-dev.txt

@@ -18,7 +18,7 @@ dependencies = [
     "scalar-fastapi>=1.8,<2.0",
     "structlog>=25.5,<26.0",
     "PyJWT[crypto]>=2.10,<3.0",
-    "cryptography>=45.0,<46.0",
+    "cryptography>=47.0,<48.0",
     "hvac>=2.4,<3.0",
     "sqlalchemy[asyncio]>=2.0,<2.2",
     "alembic>=1.18,<2.0",
@@ -39,6 +39,7 @@ dev = [
     "pre-commit>=4.5,<5.0",
     "httpx>=0.28,<1.0",
     "aiosqlite>=0.21,<1.0",
+    "pip-tools>=7.5,<8.0",
 ]
 
 [tool.setuptools.packages.find]
