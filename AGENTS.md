@@ -1,260 +1,157 @@
 # AGENTS.md
 
 ## Purpose
+
 Execution contract for AI coding agents. Enforce architecture, constraints, and patterns. Prefer consistency over creativity.
 
 ## Instruction Priority
-1) User task
-2) This file
-3) Existing repo patterns
-4) README
-5) Framework defaults
 
-## Architecture (Modular Monolith)
+1. User task.
+2. This file.
+3. Existing repository patterns.
+4. README.
+5. Framework defaults.
 
-### Layers
-- api
-- services
-- repositories
-- schemas
-- models
-- core
+## Before starting work
 
-### Rules
-- API MUST NOT contain business logic
-- Services contain business logic and orchestration
-- Repositories handle DB only
-- No DB access from API layer
-- No raw SQL outside repositories (unless justified)
+Codex/AI agents must:
+
+1. Confirm current working directory and branch.
+2. Read `AGENTS.md`.
+3. Read `SESSION_NOTES.md` if present.
+4. Read relevant docs from `backend/docs`.
+5. Run `git status`.
+6. Report the plan before editing.
 
 ## Structure
-- Keep files cohesive (<300–400 LOC target)
-- No catch-all modules (utils/helpers) without narrow scope
-- Prefer domain folders:
 
+The backend is a modular monolith with explicit layers:
+
+- `api`
+- `services`
+- `repositories`
+- `schemas`
+- `models`
+- `core`
+
+Domain modules live under:
+
+```text
 backend/app/<domain>/
   api/
   services/
   repositories/
   schemas/
   models/
-
-## FastAPI Rules
-- Use APIRouter
-- Version routes: /api/v1
-- Thin handlers
-- Dependency Injection (Depends), no hidden globals
-- Use async only for DB / external calls
-- Pure CPU logic MUST be sync
-
-### API Responses
-Single resource (clean REST), example:
-{
-  "id": "123",
-  "name": "Example"
-}
-
-Collection (envelope), example:
-{
-  "data": [
-    { "id": 1 },
-    { "id": 2 }
-  ],
-  "meta": {
-    "page": 1,
-    "pageSize": 20,
-    "total": 999
-  },
-  "links": {
-    "next": "/resources?page=2"
-  }
-}
-
-Errors (RFC-style):
-{
-  "type": "https://api.example.com/errors/validation-error",
-  "title": "Validation Error",
-  "status": 400,
-  "detail": "Email is invalid",
-  "instance": "/users"
-}
-
-## Code Patterns (MANDATORY)
-
-### API
-- Each router MUST define tags
-- Routers SHOULD be registered in deterministic order (001, 002, ...)
-- Route paths MUST be defined inside router files
-- Each router MUST be defined in a separate file under api/
-- One file = one router
-- File name SHOULD reflect domain or purpose (e.g. health.py, users.py)
-- All routes MUST be attached to versioned router (`v1_router`)
-- Version router MUST be attached to root router with prefix `/api/v1`
-- DO NOT use prefix in include_router (except version prefix)
-Example:
-
-```
-# app/api/health.py
-
-from fastapi import APIRouter
-router = APIRouter(tags=["health"])
-@router.get("/health/live")
-async def health_live():
-    return {"status": "ok"}
 ```
 
-Router registration (single entry point)
-ALL routers MUST be registered in master_router.py
-DO NOT register routers in main.py
+Router registration entry point:
 
-Example:
-```
-# app/api/master_router.py
-
-from fastapi import APIRouter
-from app.api.health import router as health_router
-
-router = APIRouter()
-
-# --- API version 1 router ---
-v1_router = APIRouter()
-
-# --- Attach routes ---
-# 001. Health check endpoint
-v1_router.include_router(health_router)
-
-# --- Attach version router ---
-router.include_router(v1_router, prefix="/api/v1")
+```text
+backend/app/api/master_router.py
 ```
 
+Expected flow:
 
+`HTTP -> API -> Service -> Repository -> Service -> Response`
 
-### Error Handling
+## Router contract
 
-Global exception handling MUST be implemented.
+- Domain router files live in `backend/app/<domain>/api/*.py`.
+- One file defines one router.
+- Each router must define tags.
+- Route paths must be defined inside domain router files.
+- Routers should be attached in deterministic order with numbered comments when practical.
+- `backend/app/api/master_router.py` is the only domain-router registration point.
+- All API routes are attached to `v1_router`.
+- Version prefix `/api/v1` is applied centrally in `master_router.py` through settings.
+- `main.py` must not register domain routers directly.
+- Do not pass extra prefixes in `include_router`, except the central version prefix.
 
-#### Rules
+## Layer responsibilities
 
-- API MUST NOT contain try/except for business logic  
-- Services MUST raise exceptions and NOT return HTTP responses  
-- All exceptions MUST be handled centrally via FastAPI handlers  
+- API handlers must stay thin.
+- API must not contain business logic.
+- Services contain business logic, orchestration, and authorization decisions.
+- Repositories handle database access only.
+- API layer must not access the database directly.
+- Do not use raw SQL outside repositories unless explicitly justified.
+- Use FastAPI dependency injection with `Depends`; avoid hidden globals.
+- Use async only for database/external I/O; pure CPU logic should be sync.
 
----
+## API response contract
 
-#### Handlers
+- Single resource: clean REST response.
+- Collections: `{ "data": [], "meta": {}, "links": {} }`.
+- Errors: Problem Details style with `application/problem+json`.
+- Operational endpoints may return endpoint-specific payloads.
 
-- Domain-specific exceptions MUST be handled via `AppError` subclasses and a shared global handler
-- A global fallback handler MUST exist:
+## Error handling contract
 
-```python
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={
-            "type": "https://api.example.com/problems/internal-error",
-            "title": "Internal Server Error",
-            "status": 500,
-            "detail": "An unexpected error occurred.",
-            "instance": request.url.path,
-            "error_code": "internal_error",
-        },
-        media_type="application/problem+json",
-    )
-```
+- API layer must not format business errors manually.
+- API layer must not use `try`/`except` for business-flow errors.
+- Services raise application/domain exceptions.
+- Global FastAPI handlers format Problem Details responses.
+- Do not leak internals, stack traces, tokens, secrets, or raw sensitive data.
 
-##### Requirements
-- All API error responses MUST use application/problem+json
-- Error responses MUST follow the ProblemDetails schema
-- HTTP status codes MUST match the error type
-- Validation errors SHOULD include field-level details in errors
-- Internal details MUST NOT be exposed
-##### Anti-Patterns (MUST NOT)
-- Format error responses inside endpoints
-- Return raw exception messages
-- Duplicate error handling logic
-- Raise HTTPException from business/service layers
+## Security and auth
 
+- JWT authentication uses Keycloak as identity provider.
+- Authentication and authorization are separate concerns.
+- Tenant authorization is resolved from local database memberships.
+- Platform authorization is resolved from `platform_staff`.
+- Permission logic belongs in services/dependencies, not arbitrary API code.
+- Do not trust client-provided identifiers, roles, or permissions.
+- Do not implement local password login unless explicitly requested.
 
-### Service
-class ItemService:
-    def __init__(self, repo: "ItemRepository"):
-        self.repo = repo
+## Logging
 
-    async def list_items(self):
-        return await self.repo.get_all()
-
-### Repository
-class ItemRepository:
-    async def get_all(self):
-        ...
-
-## Typing
-- Type hints REQUIRED for public/core functions
-- Use Pydantic for request/response
-- Avoid untyped dicts in API
-
-## Data & Persistence
-- UUID PKs (ORM level)
-- Access DB via repositories only
-- Do not expose ORM models directly as API responses
-
-## Auth / AuthZ
-- JWT (Keycloak direction)
-- Separate authentication from authorization
-- Put permission logic in services
-
-## Logging (enforced rules)
-- Structured JSON logging
-- NEVER log:
-  - passwords
-  - tokens
-  - API keys
-  - raw personal data (email, IP)
-- Mask or hash identifiers when needed
-
-## Security
-- Validate all input via schemas
-- Do not trust client-provided identifiers
-- Avoid leaking internals in errors
-- Consider rate limiting for public endpoints
+- Use structured JSON logging when configured.
+- Never log passwords, tokens, API keys, or raw personal data such as email/IP.
+- Mask or hash identifiers when needed.
 
 ## Configuration
-- Env-based config
-- No secrets in code
-- No hardcoded credentials or URLs
+
+- Use environment-based configuration only.
+- Do not hardcode secrets, credentials, or deployment URLs.
+- Keep local defaults safe for development.
 
 ## Testing
-- Location: /tests
-- Levels: unit / integration / contract
 
-Rules:
-- Test business logic (services)
-- Mock external dependencies in unit tests
-- Cover API behavior via integration tests
+- Tests live under `backend/tests`.
+- Levels: unit, integration, e2e, contract.
+- Test business logic in services.
+- Mock external dependencies in unit tests.
+- Cover API behaviour with integration/e2e tests.
+- Prefer `pytest -q -m "not external_db"` for broad safe checks.
+- Documentation-only changes should run grep/link sanity checks.
 
-## Tooling
-- Black (format)
-- isort (imports)
-- Ruff (lint)
-- pytest
-- pre-commit
+## Change rules
 
-Generated code should pass lint/format without manual fixes.
-
-## Change Rules
-- Read existing code first
-- Follow existing patterns
-- Minimal necessary changes
-- Add/update tests when behavior changes
+- Read existing code before changing behaviour.
+- Follow existing project patterns.
+- Make the minimal necessary changes.
+- Update tests and docs when behaviour changes.
+- Do not change backend code for documentation-only tasks.
+- Do not commit or push without explicit instruction from the controlling task.
 
 ## Forbidden
-- Business logic in API
-- DB access outside repositories
-- Logging sensitive data
-- Hardcoded secrets
-- New frameworks without need
-- Over-abstraction
 
-## Flow
-HTTP → API → Service → Repository → Service → Response
+- Business logic in API handlers.
+- Database access outside repositories.
+- Logging sensitive data.
+- Hardcoded secrets.
+- Unnecessary new frameworks.
+- Over-abstraction.
+- Catch-all `utils`/`helpers` modules without narrow scope.
+- Exposing ORM models directly as API responses.
+- - Unjustified try/except blocks around imports. Optional dependency/version compatibility fallbacks are allowed only when documented and tested.
+
+## Source of truth
+
+1. Code is primary source of truth.
+2. `AGENTS.md` controls AI-agent workflow.
+3. `backend/docs/architecture.md` controls architecture docs.
+4. `backend/docs/current-state.md` controls current status.
+5. `SESSION_NOTES.md` controls live handoff state.
+6. Feature-specific docs control details only for their area.

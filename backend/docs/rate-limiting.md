@@ -1,13 +1,13 @@
 # Rate limiting
 
 ## Current status
+Rate limiting is implemented for selected sensitive endpoints using `limits` with async Redis backend.
 
-Rate limiting is implemented with the `limits` async Redis backend and is **disabled by default**.
-
-When disabled, rate-limit dependencies are effectively no-op and requests proceed to regular auth/business checks.
+- Status: implemented for protected invite flows.
+- Default mode: disabled (`RATE_LIMITING__ENABLED=false`).
+- When disabled, limiter dependencies are no-op.
 
 ## Configuration
-
 Primary settings:
 
 - `RATE_LIMITING__ENABLED`
@@ -19,10 +19,9 @@ Primary settings:
 - `RATE_LIMITING__SENSITIVE_FAIL_OPEN`
 - `REDIS__URL`
 
-Notes:
-
+Rules:
 - `REDIS__URL` is required only when `RATE_LIMITING__ENABLED=true`.
-- If rate limiting is enabled and `REDIS__URL` is missing, startup fails fast.
+- If enabled without `REDIS__URL`, startup fails fast.
 
 ## Policy matrix
 
@@ -31,42 +30,45 @@ Notes:
 | `invite_accept` | 5 | 5 minutes | fail-closed | Protect invite acceptance from brute force/token guessing |
 | `invite_create` | 20 | 1 hour | fail-closed | Protect invite creation from abuse |
 
-## Identifier strategy
+## Protected endpoint matrix
 
+| Method | Endpoint | Policy |
+|---|---|---|
+| POST | `/api/v1/organisations/{organisation_id}/invites` | `invite_create` |
+| POST | `/api/v1/invites/accept` | `invite_accept` |
+
+## Identifier strategy
 - Authenticated requests are bucketed by principal identity.
-- Identifier kind is tracked as an attribute (`rate_limit.identifier_kind`) for observability.
-- Identifier values are hashed before use as Redis keys.
-- Raw user id/email/IP must not appear in metrics or logs.
-- `RATE_LIMITING__TRUST_PROXY_HEADERS` should remain `false` unless traffic is known to come through a trusted proxy chain.
+- Identifier kind is tracked via `rate_limit.identifier_kind` for observability.
+- Identifier values are hashed before becoming Redis keys.
+- Raw user ID/email/IP must not appear in logs/metrics.
+- Keep `RATE_LIMITING__TRUST_PROXY_HEADERS=false` unless proxy chain is explicitly trusted.
 
 ## Auth-before-rate-limit rule
+For protected endpoints:
 
-For protected endpoints, authentication is resolved before rate-limit checks.
-
-- Unauthenticated requests return `401` first.
-- This avoids creating anonymous buckets for protected routes.
+- authentication is resolved before limiter checks;
+- unauthenticated requests return `401` first;
+- no anonymous buckets are created for protected routes.
 
 ## Redis outage behaviour
+Runtime/backend failures follow policy fail mode.
 
-Backend failures are handled by policy mode:
+- **Fail-closed** (`fail_open=false`): return `503` (`error_code=rate_limiter_unavailable`).
+- **Fail-open** (`fail_open=true`): allow request, emit backend-error metric, log security warning.
+- **Runtime unavailable** (limiter/runtime missing): return `503` (`error_code=rate_limiter_unavailable`).
 
-- **Fail-closed** (`fail_open=false`): return `503` with `error_code=rate_limiter_unavailable`.
-- **Fail-open** (`fail_open=true`): allow request, emit backend error metric, and log a security warning.
-- **Runtime unavailable** (runtime missing or limiter missing): return `503` with `error_code=rate_limiter_unavailable`.
-
-In all backend failure scenarios, observability metrics are emitted.
+In all backend failure paths, observability metrics are emitted.
 
 ## Retry-After contract
+Over-limit responses must:
 
-When a request is over limit:
-
-- response status is `429`;
-- response includes `Retry-After`;
-- response includes `Access-Control-Expose-Headers: Retry-After` for browser/SPA visibility;
-- if Redis window stats are unavailable, fallback uses policy item expiry.
+- return `429`;
+- include `Retry-After`;
+- include `Access-Control-Expose-Headers: Retry-After`;
+- use policy-expiry fallback if Redis window stats are unavailable.
 
 ## Metrics contract
-
 Metric names:
 
 - `rate_limit.requests.total`
@@ -88,37 +90,44 @@ Allowed attributes:
 - `rate_limit.identifier_kind`
 - `error.type`
 
-Forbidden high-cardinality/sensitive attribute values:
+Forbidden high-cardinality/sensitive values:
 
-- raw user id;
-- email;
+- raw user id/email/IP;
 - organisation id;
-- request id;
-- trace id;
-- raw path;
-- raw URL;
-- IP address;
+- request id/trace id;
+- raw path/URL;
 - token;
 - Redis key;
-- identifier value;
-- hashed identifier value.
+- identifier raw/hashed value.
 
 ## OTLP verification status
-
-Current automated OTLP e2e coverage validates export via OTel Collector debug logs for:
+Current e2e OTLP coverage validates export through OTel Collector debug logs for:
 
 - HTTP metrics;
-- rate-limit allowed and blocked decisions;
-- rate-limit backend errors (`backend_error`, `fail_open`, `runtime_unavailable`), including `error.type`.
+- rate-limit `allowed` and `blocked` decisions;
+- backend error paths (`backend_error`, `fail_open`, `runtime_unavailable`) with `error.type`.
 
-Prometheus/Grafana are intentionally out of scope in this phase, and `/metrics` is not exposed.
+Prometheus/Grafana dashboards are out of scope for this phase, and `/metrics` is not exposed.
 
-## Testing
-
-From `backend/`:
+## Testing commands
+Run from `backend/`:
 
 ```bash
 pytest tests/api/test_rate_limiting.py -q
 pytest tests/api/test_rate_limiting_integration.py -q -m integration -rs
 pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
 ```
+
+## Acceptance checklist
+- [ ] Default local/test startup does not require Redis.
+- [ ] Enabling rate limiting without Redis fails fast.
+- [ ] Invite create endpoint is rate limited.
+- [ ] Invite accept endpoint is rate limited.
+- [ ] `401` happens before limiter for unauthenticated protected requests.
+- [ ] `429` includes Problem Details payload.
+- [ ] `429` includes `Retry-After`.
+- [ ] Over-limit requests do not execute endpoint body.
+- [ ] Over-limit requests do not perform DB I/O.
+- [ ] Fail-closed backend outage returns `503`.
+- [ ] Rate-limit metrics are recorded.
+- [ ] Sensitive endpoint protection is covered by tests.
