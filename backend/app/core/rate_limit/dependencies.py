@@ -59,6 +59,131 @@ def _record_rate_limit_outcome(
     )
 
 
+async def check_rate_limit(
+    *,
+    request: Request,
+    principal: AuthenticatedPrincipal,
+    policy: RateLimitPolicy,
+) -> None:
+    settings = get_settings()
+
+    if not settings.rate_limiting.enabled:
+        return
+
+    started_at = time.perf_counter()
+    runtime = _runtime_from_request(request)
+
+    if runtime is None or runtime.limiter is None:
+        record_rate_limit_backend_error(
+            policy_name=policy.name,
+            identifier_kind="unknown",
+            error_type="RuntimeUnavailable",
+        )
+        _record_rate_limit_outcome(
+            policy_name=policy.name,
+            result="runtime_unavailable",
+            identifier_kind="unknown",
+            started_at=started_at,
+        )
+        raise RateLimiterUnavailableError(
+            detail="Rate limiter is unavailable.",
+        )
+
+    identifier = build_identifier(
+        principal=principal,
+        request=request,
+        trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
+    )
+
+    namespace = f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
+    item = policy.item
+
+    try:
+        allowed = await _await_with_timeout(
+            runtime.limiter.hit(item, namespace, identifier.hashed_value),
+            timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
+        )
+    except (
+        RedisConnectionError,
+        RedisTimeoutError,
+        TimeoutError,
+        RuntimeError,
+    ) as exc:
+        record_rate_limit_backend_error(
+            policy_name=policy.name,
+            identifier_kind=identifier.kind,
+            error_type=exc.__class__.__name__,
+        )
+
+        if policy.fail_open:
+            _record_rate_limit_outcome(
+                policy_name=policy.name,
+                result="fail_open",
+                identifier_kind=identifier.kind,
+                started_at=started_at,
+            )
+            log.warning(
+                "rate_limiter_fail_open",
+                policy=policy.name,
+                identifier_kind=identifier.kind,
+                reason=exc.__class__.__name__,
+                category="security",
+            )
+            return
+
+        _record_rate_limit_outcome(
+            policy_name=policy.name,
+            result="backend_error",
+            identifier_kind=identifier.kind,
+            started_at=started_at,
+        )
+        raise RateLimiterUnavailableError(
+            detail="Rate limiter is temporarily unavailable.",
+        ) from exc
+
+    if allowed:
+        _record_rate_limit_outcome(
+            policy_name=policy.name,
+            result="allowed",
+            identifier_kind=identifier.kind,
+            started_at=started_at,
+        )
+        return
+
+    _record_rate_limit_outcome(
+        policy_name=policy.name,
+        result="blocked",
+        identifier_kind=identifier.kind,
+        started_at=started_at,
+    )
+
+    try:
+        window = await _await_with_timeout(
+            runtime.limiter.get_window_stats(
+                item,
+                namespace,
+                identifier.hashed_value,
+            ),
+            timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
+        )
+        retry_after = _build_retry_after(window.reset_time)
+    except (
+        RedisConnectionError,
+        RedisTimeoutError,
+        TimeoutError,
+        RuntimeError,
+    ):
+        retry_after = str(policy.item.get_expiry())
+
+    raise TooManyRequestsError(
+        detail="Too many requests.",
+        headers={
+            "Retry-After": retry_after,
+            "Access-Control-Expose-Headers": "Retry-After",
+        },
+    )
+
+
 def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[None]]:
     async def _dependency(
         request: Request,
@@ -67,125 +192,7 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
             Depends(require_authenticated_principal),
         ],
     ) -> None:
-        settings = get_settings()
-
-        if not settings.rate_limiting.enabled:
-            return
-
-        started_at = time.perf_counter()
-        runtime = _runtime_from_request(request)
-
-        if runtime is None or runtime.limiter is None:
-            record_rate_limit_backend_error(
-                policy_name=policy.name,
-                identifier_kind="unknown",
-                error_type="RuntimeUnavailable",
-            )
-            _record_rate_limit_outcome(
-                policy_name=policy.name,
-                result="runtime_unavailable",
-                identifier_kind="unknown",
-                started_at=started_at,
-            )
-            raise RateLimiterUnavailableError(
-                detail="Rate limiter is unavailable.",
-            )
-
-        identifier = build_identifier(
-            principal=principal,
-            request=request,
-            trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
-        )
-
-        namespace = (
-            f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
-        )
-        item = policy.item
-
-        try:
-            allowed = await _await_with_timeout(
-                runtime.limiter.hit(item, namespace, identifier.hashed_value),
-                timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
-            )
-        except (
-            RedisConnectionError,
-            RedisTimeoutError,
-            TimeoutError,
-            RuntimeError,
-        ) as exc:
-            record_rate_limit_backend_error(
-                policy_name=policy.name,
-                identifier_kind=identifier.kind,
-                error_type=exc.__class__.__name__,
-            )
-
-            if policy.fail_open:
-                _record_rate_limit_outcome(
-                    policy_name=policy.name,
-                    result="fail_open",
-                    identifier_kind=identifier.kind,
-                    started_at=started_at,
-                )
-                log.warning(
-                    "rate_limiter_fail_open",
-                    policy=policy.name,
-                    identifier_kind=identifier.kind,
-                    reason=exc.__class__.__name__,
-                    category="security",
-                )
-                return
-
-            _record_rate_limit_outcome(
-                policy_name=policy.name,
-                result="backend_error",
-                identifier_kind=identifier.kind,
-                started_at=started_at,
-            )
-            raise RateLimiterUnavailableError(
-                detail="Rate limiter is temporarily unavailable.",
-            ) from exc
-
-        if allowed:
-            _record_rate_limit_outcome(
-                policy_name=policy.name,
-                result="allowed",
-                identifier_kind=identifier.kind,
-                started_at=started_at,
-            )
-            return
-
-        _record_rate_limit_outcome(
-            policy_name=policy.name,
-            result="blocked",
-            identifier_kind=identifier.kind,
-            started_at=started_at,
-        )
-
-        try:
-            window = await _await_with_timeout(
-                runtime.limiter.get_window_stats(
-                    item,
-                    namespace,
-                    identifier.hashed_value,
-                ),
-                timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
-            )
-            retry_after = _build_retry_after(window.reset_time)
-        except (
-            RedisConnectionError,
-            RedisTimeoutError,
-            TimeoutError,
-            RuntimeError,
-        ):
-            retry_after = str(policy.item.get_expiry())
-
-        raise TooManyRequestsError(
-            detail="Too many requests.",
-            headers={
-                "Retry-After": retry_after,
-                "Access-Control-Expose-Headers": "Retry-After",
-            },
-        )
+        await check_rate_limit(request=request, principal=principal, policy=policy)
 
     _dependency.__rate_limit_policy_name__ = policy.name  # type: ignore[attr-defined]
     _dependency.__rate_limit_policy__ = policy  # type: ignore[attr-defined]
