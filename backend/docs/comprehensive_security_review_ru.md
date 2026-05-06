@@ -85,7 +85,7 @@
 | Проблема | File / location | Риск | Сценарий эксплуатации | Рекомендация | Приоритет |
 |---|---|---|---|---|---|
 | Защита последнего platform admin от race condition | `PlatformStaffService.change_role/suspend_staff()`, `PlatformStaffRepository.lock_active_platform_admins()` | Исправлено | Active platform admin rows блокируются через SQLAlchemy `with_for_update()` перед demote/suspend; PostgreSQL применяет `SELECT ... FOR UPDATE`, SQLite-тесты покрывают lock-aware path без имитации row-lock semantics | Сохранить regression tests для последнего admin и сценариев с другим active admin | Fixed |
-| Ограниченные audit permissions объявлены, но не применяются в audit list API | `permissions.py`, `platform/api/audit_events.py` | Избыточная видимость аудита | Будущая support/compliance роль получает слишком много данных аудита | Реализовать отдельный limited audit endpoint/filter/redaction или удалить неиспользуемый `AUDIT_READ_LIMITED` до реализации | P2 |
+| Ограниченные audit permissions объявлены, но не применяются в audit list API | `permissions.py`, `platform/api/audit_events.py`, `platform/schemas/platform_audit_events.py` | Исправлено | `AUDIT_READ_LIMITED` теперь открывает только `/api/v1/platform/audit-events/limited`; raw `metadata_json`, `ip_address`, `user_agent`, free-text `reason` и прямой `actor_user_id` не возвращаются | Fixed: реализован backend endpoint/schema-level limited audit view с boolean summary fields `has_actor`, `has_reason`, `has_metadata`; полный `/platform/audit-events` по-прежнему требует `AUDIT_READ` | Fixed |
 | Platform role отделена от tenant role | `core/platform/write_context.py` | Низкий | Tenant owner пытается вызвать platform endpoints | Требует local user + active platform_staff + permission. Хороший baseline. Сохранить — нет superadmin bypass в tenant flows | — |
 
 ### 5.3 Dependency order
@@ -259,7 +259,8 @@
 | POST | `/api/v1/platform/organisations/{organisation_id}/suspend` | Да | ORGANISATIONS_SUSPEND | Global platform | `platform_write` | Да | Низкий/контролируемый |
 | POST | `/api/v1/platform/organisations/{organisation_id}/restore` | Да | ORGANISATIONS_RESTORE | Global platform | `platform_write` | Да | Низкий/контролируемый |
 | PATCH | `/api/v1/platform/organisations/{organisation_id}` | Да | ORGANISATIONS_CORRECT_PROFILE | Global platform | `platform_write` | Да | Низкий/контролируемый |
-| GET | `/api/v1/platform/audit-events` | Да | AUDIT_READ | Global platform | Нет | Нет | Средний |
+| GET | `/api/v1/platform/audit-events` | Да | AUDIT_READ | Global platform | Нет | Нет | Средний: full audit view возвращает полный контракт |
+| GET | `/api/v1/platform/audit-events/limited` | Да | AUDIT_READ_LIMITED | Global platform | Нет | Нет | Низкий/Средний: limited view скрывает raw metadata/IP/user-agent/reason/actor id |
 | GET | `/api/v1/platform/staff` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Нет | Средний |
 | POST | `/api/v1/platform/staff` | Да | PLATFORM_STAFF_MANAGE | Global platform | `platform_staff_write` | Да | Низкий/контролируемый |
 | PATCH | `/api/v1/platform/staff/{staff_id}/role` | Да | PLATFORM_STAFF_MANAGE | Global platform | `platform_staff_write` | Да | Низкий/Средний: last-admin invariant защищён row-level lock |
@@ -314,7 +315,7 @@ ruff format --check .
 | Fixed | CORS | Явная CORS конфигурация добавлена | `main.py`, `settings.py` | Браузерный frontend использует безопасный allowlist | Сохранять environment-based origins без wildcard в prod |
 | P2 | Rate limit | Fixed: platform writes имеют `platform_write`/`platform_staff_write` rate limit | `platform/api/*`, `core/platform/write_context.py`, `core/rate_limit/policies.py`, `tests/platform/test_platform_write_rate_limiting*.py` | Злоупотребление с валидным platform токеном ограничено fail-closed политиками; Redis/Testcontainers tests подтверждают реальные окна/429, transaction-boundary test подтверждает блокировку до platform write transaction/service body | Сохранить fake и Redis regression tests |
 | Fixed | Logging | Structured logging redaction усилен | `logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и auth-token-like значения редактируются рекурсивно | Сохранять regression coverage для новых вариантов ключей |
-| P2 | Platform audit | Limited audit permission не используется | `permissions.py`, `audit_events.py` | Избыточная видимость аудита | Реализовать limited audit view/redaction |
+| Fixed | Platform audit | `AUDIT_READ_LIMITED` используется backend limited view | `permissions.py`, `platform/api/audit_events.py`, `platform/schemas/platform_audit_events.py`, `tests/platform/test_platform_audit_events.py` | Support/compliance triage получает безопасный audit summary без raw metadata/IP/user-agent/reason/actor id | Сохранять regression tests для full, limited, 403 и фильтров |
 | P2/P3 | Soft delete | Platform org list включает удалённые orgs | `platform_organisations.py` | Раскрытие удалённых данных, если не предусмотрено | Добавить флаг/разрешение `include_deleted` |
 | P3 | Invite errors | Состояние токена различимо | `invites/services/invites.py` | Низкая вероятность перечисления | Нормализовать внешние сообщения |
 | P3 | Rate limit | Invite revoke не имеет rate limit | `invites/api/invites.py` | Злоупотребление/перебор с admin токеном | Добавить revoke политику |
@@ -333,7 +334,7 @@ ruff format --check .
 | 5 | Добавить CORS настройки и middleware | `settings.py`, `main.py`, CORS tests | Fixed: браузерная безопасность явно настроена через env-based allowlist; CORS выключен по умолчанию | Fixed |
 | 6 | Fixed: добавлены platform write rate limits | `core/rate_limit/policies.py`, `core/platform/write_context.py`, `platform/api/*`, `tests/platform/test_platform_write_rate_limiting*.py` | Злоупотребление platform write снижено; 429 + Retry-After, fail-closed 503, Redis/Testcontainers over-limit и блокировка до write transaction/service body покрыты тестами | Completed |
 | 7 | Fixed: усилить logging redaction | `core/logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и Bearer/Basic/JWT-like значения redacted рекурсивно; email masking сохранён | Completed |
-| 8 | Реализовать limited audit view или удалить неиспользуемое limited разрешение | `core/platform/permissions.py`, `platform/api/audit_events.py` | Доступ support/compliance чётко определён | P2 |
+| 8 | Fixed: реализован limited audit view для `AUDIT_READ_LIMITED` | `core/platform/permissions.py`, `platform/api/audit_events.py`, `platform/schemas/platform_audit_events.py`, `tests/platform/test_platform_audit_events.py` | Support/compliance доступ чётко определён: limited endpoint отдаёт summary без raw metadata/IP/user-agent/reason/actor id | Fixed |
 | 9 | Нормализовать invite token error responses | `invites/services/invites.py` | Меньше утечки состояния токена | P3 |
 | 10 | Добавить security test suite markers | `tests/security/*` или существующие тесты | Security regressions становятся видимыми | P1/P2 |
 
@@ -355,7 +356,7 @@ ruff format --check .
 | `backend/app/core/rate_limit/policies.py` | Fixed: добавлены `platform_write` и `platform_staff_write`; invite revoke policy остаётся отдельным P3 | Platform write политики зарегистрированы и fail-closed | `tests/rate_limit/test_policy_registry.py`, `tests/platform/test_platform_write_rate_limiting.py` |
 | `backend/app/core/rate_limit/dependencies.py` | Разделить authenticated и public limiter dependencies | Текущий limiter всегда требует auth | Public endpoint limiter unit test |
 | `backend/app/core/logging/processors.py` | Fixed: используется нормализованный ключ, sensitive markers и value-based redaction для Bearer/Basic/JWT-like строк | Снизить риск утечки секретов в application/security logs | Redaction tests для exact/hyphenated/snake_case/camelCase/PascalCase keys, nested/list/tuple structures, auth values и email masking |
-| `backend/app/platform/api/audit_events.py` | Добавить limited audit endpoint/filter или требовать только полный `AUDIT_READ` и удалить limited разрешение | Избегать вводящей в заблуждение модели разрешений | Permission matrix tests |
+| `backend/app/platform/api/audit_events.py` | Fixed: добавлен `/platform/audit-events/limited` с `AUDIT_READ_LIMITED`; полный endpoint оставлен только для `AUDIT_READ` | Limited permission теперь реально используется без раскрытия чувствительных audit fields | Full/limited/no-permission/filter regression tests |
 | `backend/app/platform/services/platform_organisations.py` | Принять решение и реализовать дефолтную обработку `deleted_at` | Платформа в настоящее время видит soft-deleted orgs | `include_deleted=false/true` tests |
 | `backend/app/core/platform/write_context.py` | Рассмотреть общий helper для валидации platform audit actor | Снизить риск внутреннего злоупотребления | Platform service unit tests |
 | `backend/app/core/auth_claims.py` | Удалить или применить `resource_client_id` | Избегать вводящего в заблуждение мёртвого параметра | JWT claims mapping unit test |

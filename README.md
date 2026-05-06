@@ -77,6 +77,7 @@ Keycloak is the identity provider and JWT issuer.
 - Tenant roles are resolved from database memberships.
 - Platform roles and permissions are resolved from `platform_staff`.
 - Sensitive platform write endpoints are protected by fail-closed Redis-backed rate limiting (`platform_write` / `platform_staff_write`).
+- Limited platform audit access uses backend schema-level redaction and does not expose raw metadata, IP addresses, user agents, free-text reasons, or direct actor identifiers.
 - The detailed identity contract is in `backend/docs/keycloak-identity-contract.md`.
 
 

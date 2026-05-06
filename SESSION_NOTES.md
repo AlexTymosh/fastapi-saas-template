@@ -1,3 +1,20 @@
+# Update: Limited Platform Audit View
+
+## Current Focus
+
+Close the P2 security debt for `AUDIT_READ_LIMITED` by implementing a backend limited platform audit view instead of deleting the permission.
+
+## Last Completed
+
+Implemented `GET /api/v1/platform/audit-events/limited` for actors with `AUDIT_READ_LIMITED`. The full `/platform/audit-events` endpoint still requires `AUDIT_READ`; support agents keep limited-only access. The limited schema returns useful triage fields plus `has_actor`, `has_reason`, and `has_metadata`, and never returns raw `metadata_json`, `ip_address`, `user_agent`, free-text `reason`, or direct `actor_user_id`. Added regression tests for full view, limited redaction, no-permission 403, filtering parity, pagination validation, and OpenAPI route/response model coverage.
+
+## Remaining Risks
+
+- Production audit retention, masking, export, and erasure policies still need project-specific hardening.
+- Future platform audit endpoints must preserve limited-view redaction at backend schema/service boundaries, not only in frontend code.
+
+---
+
 # SESSION_NOTES
 
 ## Current Focus
