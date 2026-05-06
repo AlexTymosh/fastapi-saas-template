@@ -77,7 +77,7 @@
 | Проблема | File / location | Риск | Сценарий эксплуатации | Рекомендация | Приоритет |
 |---|---|---|---|---|---|
 | Нет централизованной зависимости `require_active_user` | Проверки активности разбросаны по сервисам | Непоследовательная защита; уже видно на `/users/me` | Новый endpoint забывает вызвать `ensure_user_is_active()` | Ввести `CurrentUserContext` / `require_active_user` dependency и использовать в защищённых маршрутах | P1 |
-| Tenant isolation в основном реализована корректно | Organisation/membership services | Низкий | Пользователь передаёт чужой `organisation_id`; проверка membership блокирует доступ | Сохранить паттерн. Добавить regression tests для каждого UUID path param | P3 |
+| Tenant isolation в основном реализована корректно | Organisation/membership services + `backend/tests/api/test_tenant_bola_idor_regressions.py` | Исправлено | Пользователь передаёт чужой `organisation_id` / `membership_id` / `invite_id`; проверки membership и загрузка ресурса в границах организации блокируют доступ | Сохранить паттерн и BOLA/IDOR regression tests для tenant UUID path params | Fixed |
 | Правило one-user-one-organisation существует | Membership model/repository/service | Низкий | Пользователь пытается вступить/создать вторую организацию | Частичный уникальный индекс БД + проверки в сервисе блокируют активное второе членство. Сохранить. Добавить concurrency test | — |
 
 ### 5.2 Platform authorization
@@ -101,15 +101,16 @@
 
 | Endpoint | Resource ID | Текущая защита | Риск BOLA/IDOR | Рекомендация | Приоритет |
 |---|---|---|---|---|---|
-| `GET /api/v1/organisations/{organisation_id}` | organisation_id | `OrganisationAccessService`: user active + org active + membership | Низкий | Добавить regression test: член org A не может читать org B | P3 |
-| `PATCH /api/v1/organisations/{organisation_id}` | organisation_id | Сервис проверяет membership owner/admin актора | Низкий | Добавить BOLA test для member/non-member | P3 |
-| `DELETE /api/v1/organisations/{organisation_id}` | organisation_id | Только owner | Низкий | Добавить тесты для non-owner/admin/member | P3 |
-| `GET /api/v1/organisations/{organisation_id}/directory` | organisation_id | Актор должен быть активным членом | Низкий | Добавить cross-org test | P3 |
-| `GET /api/v1/organisations/{organisation_id}/memberships` | organisation_id | Только owner/admin | Низкий | Добавить тест: member получает forbidden | P3 |
-| `PATCH /api/v1/organisations/{organisation_id}/memberships/{membership_id}/role` | membership_id | Целевой membership загружается по membership_id + organisation_id | Низкий | Добавить тест: membership_id из другой org возвращает not found/forbidden | P3 |
-| `DELETE /api/v1/organisations/{organisation_id}/memberships/{membership_id}` | membership_id | Ограничен org + правилами owner/admin | Низкий | Добавить cross-org membership delete test | P3 |
-| `POST /api/v1/organisations/{organisation_id}/invites` | organisation_id | Актор должен быть owner/admin org | Низкий | Добавить тесты admin/member/non-member | P3 |
-| `DELETE /api/v1/organisations/{organisation_id}/invites/{invite_id}` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Добавить cross-org invite revoke test | P3 |
+| `GET /api/v1/organisations/{organisation_id}` | organisation_id | `OrganisationAccessService`: user active + org active + membership | Низкий | Fixed: regression test подтверждает, что пользователь org A не читает org B | Fixed |
+| `PATCH /api/v1/organisations/{organisation_id}` | organisation_id | Сервис проверяет membership owner/admin актора | Низкий | Fixed: regression test подтверждает блокировку update чужой org и неизменность БД | Fixed |
+| `DELETE /api/v1/organisations/{organisation_id}` | organisation_id | Только owner | Низкий | Fixed: regression test подтверждает запрет удаления чужой org для admin/member/non-member и неизменность БД | Fixed |
+| `GET /api/v1/organisations/{organisation_id}/directory` | organisation_id | Актор должен быть активным членом | Низкий | Fixed: cross-org directory regression test добавлен | Fixed |
+| `GET /api/v1/organisations/{organisation_id}/memberships` | organisation_id | Только owner/admin | Низкий | Fixed: member получает Problem Details `403` | Fixed |
+| `PATCH /api/v1/organisations/{organisation_id}/memberships/{membership_id}/role` | membership_id | Целевой membership загружается по membership_id + organisation_id | Низкий | Fixed: cross-org `membership_id` возвращает Problem Details `404`, роль не меняется | Fixed |
+| `DELETE /api/v1/organisations/{organisation_id}/memberships/{membership_id}` | membership_id | Ограничен org + правилами owner/admin | Низкий | Fixed: cross-org `membership_id` возвращает Problem Details `404`, membership остаётся active | Fixed |
+| `POST /api/v1/organisations/{organisation_id}/invites` | organisation_id | Актор должен быть owner/admin org | Низкий | Fixed: пользователь org A не создаёт invite в org B, invite не появляется в БД | Fixed |
+| `DELETE /api/v1/organisations/{organisation_id}/invites/{invite_id}` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: cross-org `invite_id` возвращает Problem Details `404`, invite остаётся pending | Fixed |
+| `POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: cross-org `invite_id` возвращает Problem Details `404`, invite token не ротируется | Fixed |
 | `POST /api/v1/invites/accept` | token | Hash токена + совпадение аутентифицированного email + verified email | Средний | Добавить audit + нормализованный error response | P1/P3 |
 | `/api/v1/platform/*` | user/org/staff/audit IDs | Platform permission guard | Средний по дизайну | Добавить rate limit и limited views для support/compliance | P2 |
 
@@ -277,7 +278,7 @@ _\* Код health router не был получен; публичный стат
 |---|---|---|---|---|
 | Unauthenticated access | Неизвестно | Все защищённые endpoints возвращают 401 | Auth bypass regression | P2 |
 | Forbidden access | Неизвестно | Матрица member/admin/owner | Privilege escalation | P2 |
-| Tenant isolation | Неизвестно | Cross-org organisation_id, membership_id, invite_id | BOLA/IDOR | P1 |
+| Tenant isolation | Покрыто `backend/tests/api/test_tenant_bola_idor_regressions.py` для organisation_id, membership_id, invite_id | Поддерживать regression tests при добавлении tenant endpoints | BOLA/IDOR | Fixed |
 | Suspended user | Частично по коду, тесты неизвестны | `/users/me` suspended должен возвращать 403 | Обход политики | P1 |
 | Suspended organisation | Неизвестно | Чтение/обновление/invite заблокированы | Обход политики тенанта | P2 |
 | Invite token expiry/replay | Код корректный, тесты неизвестны | Expired, accepted, replay, concurrent accept | Invite takeover | P1 |
@@ -328,7 +329,7 @@ ruff format --check .
 |---|---|---|---|---|
 | 1 | Добавить active-user guard для `/users/me` | `users/api/users.py`, `users/services/users.py`, `access_control/guards.py` | Приостановленный пользователь не может вызывать защищённый self endpoint | P1 |
 | 2 | Добавить invite accept audit event | `audit/models/audit_event.py`, `invites/services/invites.py`, tests | Создание membership через invite аудируемо | P1 |
-| 4 | Добавить BOLA regression tests | organisation/membership/invite tests | Cross-tenant UUID доступ остаётся заблокированным | P1 |
+| 4 | Fixed: добавить BOLA regression tests | `backend/tests/api/test_tenant_bola_idor_regressions.py` | Cross-tenant UUID доступ зафиксирован как заблокированный; чужие ресурсы не изменяются в БД | Fixed |
 | 5 | Добавить CORS настройки и middleware | `settings.py`, `main.py` | Браузерная безопасность явно настроена | P2 |
 | 6 | Добавить platform write rate limits | `core/rate_limit/policies.py`, `platform/api/*` | Злоупотребление platform write снижено | P2 |
 | 7 | Усилить logging redaction | `core/logging/processors.py` | Вариантные секретные ключи redacted | P2 |

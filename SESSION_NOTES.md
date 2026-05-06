@@ -37,3 +37,12 @@ python -m ruff check backend/app/platform/repositories/platform_staff.py backend
 ## Next Recommended Step
 
 Continue with the remaining open P1 security debts from `backend/docs/comprehensive_security_review_ru.md`, especially invite accept audit coverage and BOLA regression tests.
+
+## 2026-05-06 — Tenant BOLA / IDOR regression tests
+
+- Added tenant isolation regression coverage in `backend/tests/api/test_tenant_bola_idor_regressions.py` for cross-organisation `organisation_id`, `membership_id`, and `invite_id` access.
+- Covered blocked read/update/delete organisation flows, directory and management membership access, cross-org membership role/delete attempts, and cross-org invite create/revoke/resend attempts.
+- Verified tests assert non-2xx Problem Details responses and database non-mutation for protected resources where applicable.
+- Updated `backend/docs/comprehensive_security_review_ru.md` to mark the BOLA regression-test debt as fixed for tenant endpoints.
+- Checks run: `python -m pytest -q backend/tests/api/test_tenant_bola_idor_regressions.py` (blocked: missing `httpx`), `cd backend && python -m pip install -e ".[dev]"` (blocked: proxy 403), `python -m ruff check backend/tests/api/test_tenant_bola_idor_regressions.py`, `python -m ruff format --check backend/tests/api/test_tenant_bola_idor_regressions.py`, `python -m compileall -q backend/tests/api/test_tenant_bola_idor_regressions.py`.
+- Additional checks run after documentation update: `python -m ruff check .`, `python -m ruff format --check .`, `python -m pytest -q -m "not external_db"` (blocked: missing `httpx`), `cd backend && python -m pip install -r requirements-dev.txt` (blocked: proxy 403), `python -m compileall -q backend/app backend/tests` (blocked under Python 3.10 by project Python 3.12 syntax), `python3.12 -m compileall -q backend/app backend/tests`, `python3.12 -m pytest -q backend/tests/api/test_tenant_bola_idor_regressions.py` (blocked: pytest not installed for Python 3.12).
