@@ -12,7 +12,7 @@ from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 
-pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.audit]
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 def _seed_platform_admin(session_factory, *, external_auth_id: str, email: str):
@@ -42,6 +42,7 @@ def _seed_organisation(session_factory, *, name: str, slug: str) -> Organisation
     return run_async(_run())
 
 
+@pytest.mark.audit
 def test_platform_admin_can_suspend_organisation(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -83,6 +84,7 @@ def test_platform_admin_can_suspend_organisation(
     run_async(_verify())
 
 
+@pytest.mark.audit
 def test_platform_admin_can_restore_suspended_organisation(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -175,6 +177,7 @@ def test_restore_active_organisation_returns_409(
     assert response.status_code == 409
 
 
+@pytest.mark.audit
 def test_platform_org_correction_updates_and_audits(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -276,6 +279,7 @@ def test_platform_org_correction_no_actual_change_returns_409(
     assert response.status_code == 409
 
 
+@pytest.mark.audit
 def test_platform_org_suspend_rolls_back_on_audit_failure(
     authenticated_client_factory,
     migrated_database_url,

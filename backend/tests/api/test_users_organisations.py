@@ -17,12 +17,7 @@ from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import FakeAuthProvider
 
-pytestmark = [
-    pytest.mark.security,
-    pytest.mark.auth,
-    pytest.mark.authz,
-    pytest.mark.bola,
-]
+pytestmark = [pytest.mark.security]
 
 
 def _identity() -> AuthenticatedPrincipal:
@@ -85,6 +80,7 @@ def _create_client_and_session_factory(tmp_path):
     return app, engine, session_factory, auth_provider
 
 
+@pytest.mark.auth
 def test_protected_endpoints_return_401_without_auth(client_factory) -> None:
     with client_factory(database_url=None, redis_url=None) as client:
         endpoints = [
@@ -107,6 +103,7 @@ def test_protected_endpoints_return_401_without_auth(client_factory) -> None:
             )
 
 
+@pytest.mark.auth
 def test_authenticated_client_uses_explicit_test_auth_provider(
     authenticated_client_factory, migrated_database_url: str
 ) -> None:
@@ -425,6 +422,7 @@ def test_admin_and_owner_roles_exist_in_enum() -> None:
     assert MembershipRole.OWNER.value == "owner"
 
 
+@pytest.mark.authz
 def test_unverified_email_cannot_create_organisation(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -493,6 +491,8 @@ def test_get_organisation_not_found_returns_problem_details(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -517,6 +517,8 @@ def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> None:
     app, engine, session_factory, auth_provider = _create_client_and_session_factory(
         tmp_path
@@ -556,6 +558,7 @@ def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> N
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
 def test_get_organisation_returns_200_for_member(tmp_path) -> None:
     app, engine, _, _ = _create_client_and_session_factory(tmp_path)
 
@@ -583,6 +586,8 @@ def test_list_memberships_not_found_returns_404(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -607,6 +612,8 @@ def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> None:
     app, engine, session_factory, auth_provider = _create_client_and_session_factory(
         tmp_path
@@ -646,6 +653,7 @@ def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> N
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
 def test_list_memberships_returns_200_for_owner(tmp_path) -> None:
     app, engine, session_factory, _ = _create_client_and_session_factory(tmp_path)
 
@@ -675,6 +683,8 @@ def test_list_memberships_returns_200_for_owner(tmp_path) -> None:
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_list_memberships_returns_404_for_soft_deleted_organisation_even_for_non_member(
     tmp_path,
 ) -> None:
@@ -876,6 +886,8 @@ def _insert_membership_with_role(
     run_async(_insert())
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -976,6 +988,8 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
         assert response.status_code == 403
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -1001,6 +1015,7 @@ def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
 def test_platform_role_does_not_bypass_single_organisation_creation_rule(
     tmp_path,
 ) -> None:
@@ -1040,6 +1055,8 @@ def test_platform_role_does_not_bypass_single_organisation_creation_rule(
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
+@pytest.mark.bola
 def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -1065,6 +1082,7 @@ def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -
     run_async(engine.dispose())
 
 
+@pytest.mark.authz
 def test_owner_can_update_organisation_details_and_soft_delete_organisation(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -1157,6 +1175,7 @@ def test_soft_deleted_organisation_slug_is_released_for_reuse(
         assert recreate_response.json()["slug"] == "reusable-org"
 
 
+@pytest.mark.authz
 def test_suspended_user_cannot_create_organisation(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:
@@ -1188,6 +1207,7 @@ def test_suspended_user_cannot_create_organisation(
         assert response.status_code == 403
 
 
+@pytest.mark.authz
 def test_suspended_organisation_returns_403_for_get(
     authenticated_client_factory, migrated_database_url: str, migrated_session_factory
 ) -> None:

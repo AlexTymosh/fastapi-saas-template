@@ -14,7 +14,7 @@ from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 
-pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.audit]
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 def _seed_user(
@@ -459,6 +459,7 @@ def test_platform_staff_validation(staff_env):
         assert method(url, json=payload).status_code == 422
 
 
+@pytest.mark.audit
 def test_platform_staff_audit_events(staff_env, migrated_session_factory):
     # Perform actions within this isolated test context to generate the audit records
     candidate = _seed_user(

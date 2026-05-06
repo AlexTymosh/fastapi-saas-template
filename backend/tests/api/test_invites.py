@@ -16,12 +16,7 @@ from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.outbox import process_all_claimed_outbox_events
 
-pytestmark = [
-    pytest.mark.security,
-    pytest.mark.authz,
-    pytest.mark.audit,
-    pytest.mark.secrets,
-]
+pytestmark = [pytest.mark.security]
 
 
 class InMemoryInviteTokenSink:
@@ -81,6 +76,7 @@ def _drain_outbox(migrated_session_factory, monkeypatch) -> None:
     run_async(process_all_claimed_outbox_events(migrated_session_factory))
 
 
+@pytest.mark.authz
 def test_invite_accept_rejects_when_user_already_has_active_membership(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -194,6 +190,7 @@ def test_invite_accept_rejects_when_user_already_has_active_membership(
     run_async(_assert_membership_not_transferred())
 
 
+@pytest.mark.authz
 def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -280,6 +277,7 @@ def test_accept_invite_returns_conflict_when_user_already_has_active_membership(
     run_async(_assert_single_active_membership())
 
 
+@pytest.mark.authz
 def test_accept_invite_allows_user_with_inactive_membership(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -341,6 +339,7 @@ def test_accept_invite_allows_user_with_inactive_membership(
         assert accepted.status_code == 200
 
 
+@pytest.mark.authz
 def test_invite_accept_rejects_transfer_for_sole_owner(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -422,6 +421,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
     run_async(_assert_owner_membership_and_invite_pending())
 
 
+@pytest.mark.authz
 def test_superadmin_role_cannot_invite_without_membership(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -535,6 +535,7 @@ def test_invite_accepts_for_first_login_user_without_projection(
     run_async(_assert_user_and_membership())
 
 
+@pytest.mark.authz
 def test_accept_invite_rejects_email_mismatch(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -637,6 +638,7 @@ def test_accept_invite_rejects_expired_invite(
         assert response.status_code == 409
 
 
+@pytest.mark.authz
 def test_create_invite_rejects_owner_role(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -708,6 +710,7 @@ def test_create_invite_returns_single_resource_contract(
     assert body["status"] == "pending"
 
 
+@pytest.mark.audit
 def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -754,6 +757,8 @@ def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
     run_async(_assert_persisted())
 
 
+@pytest.mark.audit
+@pytest.mark.secrets
 def test_resend_invite_delivery_failure_updates_outbox_state(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -853,6 +858,7 @@ def test_create_invite_returns_404_for_missing_organisation(
     assert response.status_code == 404
 
 
+@pytest.mark.authz
 def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_access(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -892,6 +898,7 @@ def test_create_invite_returns_403_when_organisation_exists_but_actor_has_no_acc
     assert owner_sink._tokens_by_email == {}
 
 
+@pytest.mark.authz
 def test_suspended_user_cannot_create_invite(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -933,6 +940,7 @@ def test_suspended_user_cannot_create_invite(
         assert response.status_code == 403
 
 
+@pytest.mark.authz
 def test_suspended_organisation_blocks_invite_acceptance(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -978,6 +986,7 @@ def test_suspended_organisation_blocks_invite_acceptance(
         assert response.status_code == 403
 
 
+@pytest.mark.authz
 def test_unverified_email_cannot_accept_invite(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -1020,6 +1029,7 @@ def test_unverified_email_cannot_accept_invite(
         assert response.headers["content-type"].startswith("application/problem+json")
 
 
+@pytest.mark.secrets
 def test_invite_token_cannot_be_accepted_twice(
     authenticated_client_factory,
     migrated_database_url: str,
