@@ -9,6 +9,12 @@ from structlog.typing import EventDict
 from app.core.context import get_request_id
 
 _EMAIL_RE = re.compile(r"(?P<name>[^@\s]+)@(?P<domain>[^@\s]+\.[^@\s]+)")
+_CAMEL_CASE_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_KEY_SEPARATOR_RE = re.compile(r"[^a-z0-9]+")
+_AUTH_HEADER_VALUE_RE = re.compile(r"\b(?:bearer|basic)\s+", re.IGNORECASE)
+_JWT_COMPACT_RE = re.compile(
+    r"\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"
+)
 
 _REDACTED = "[REDACTED]"
 _SENSITIVE_KEYS = {
@@ -16,11 +22,40 @@ _SENSITIVE_KEYS = {
     "token",
     "access_token",
     "refresh_token",
+    "id_token",
     "authorization",
     "cookie",
+    "set_cookie",
     "secret",
     "api_key",
+    "apikey",
     "client_secret",
+    "private_key",
+    "raw_token",
+    "token_hash",
+    "encrypted_raw_token",
+    "session",
+    "csrf",
+}
+_SENSITIVE_KEY_MARKERS = {
+    "token",
+    "password",
+    "secret",
+    "authorization",
+    "cookie",
+    "api_key",
+    "apikey",
+    "client_secret",
+    "private_key",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "raw_token",
+    "token_hash",
+    "encrypted_raw_token",
+    "set_cookie",
+    "session",
+    "csrf",
 }
 
 
@@ -87,15 +122,34 @@ def _sanitize_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
 
     for key, value in data.items():
-        lowered = key.lower()
-
-        if lowered in _SENSITIVE_KEYS:
+        if _is_sensitive_key(key):
             result[key] = _REDACTED
             continue
 
         result[key] = _sanitize_value(value)
 
     return result
+
+
+def _is_sensitive_key(key: object) -> bool:
+    if not isinstance(key, str):
+        return False
+
+    normalized_key = _normalize_log_key(key)
+    if normalized_key in _SENSITIVE_KEYS:
+        return True
+
+    compact_key = normalized_key.replace("_", "")
+    return any(
+        marker in normalized_key or marker.replace("_", "") in compact_key
+        for marker in _SENSITIVE_KEY_MARKERS
+    )
+
+
+def _normalize_log_key(key: str) -> str:
+    separated = _CAMEL_CASE_BOUNDARY_RE.sub("_", key)
+    normalized = _KEY_SEPARATOR_RE.sub("_", separated.lower()).strip("_")
+    return normalized
 
 
 def _sanitize_value(value: Any) -> Any:
@@ -109,7 +163,7 @@ def _sanitize_value(value: Any) -> Any:
         return tuple(_sanitize_value(item) for item in value)
 
     if isinstance(value, str):
-        if "bearer " in value.lower():
+        if _is_sensitive_string_value(value):
             return _REDACTED
 
         if "@" in value:
@@ -118,6 +172,10 @@ def _sanitize_value(value: Any) -> Any:
         return value
 
     return value
+
+
+def _is_sensitive_string_value(value: str) -> bool:
+    return bool(_AUTH_HEADER_VALUE_RE.search(value) or _JWT_COMPACT_RE.search(value))
 
 
 def _mask_email(value: str) -> str:

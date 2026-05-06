@@ -168,7 +168,7 @@
 | Auth/rate-limit отключены в local defaults | `.env.example`, `compose.yaml` | Небезопасно при деплое как local | Prod validators существуют, но деплой должен принудительно устанавливать `APP__ENVIRONMENT=prod` | P3 |
 | Prod guards присутствуют | `Settings.validate_environment_security()` | Низкий | Сохранить: auth required, docs disabled, request-id trust disabled, rate limit/edge required | P4 |
 | Ключ шифрования outbox token обязателен для dev/staging/prod | `SecuritySettings`, env validator | Низкий | Хорошо. Добавить тест для отсутствующего ключа при включённой доставке invite | P3 |
-| Redaction в логировании менее строгий, чем в аудите | `logging/processors.py` vs `audit/services` | Секреты могут утекать при вариантах ключей | Нормализовать ключи и использовать substring detection, как в audit metadata | P2 |
+| Logging redaction усилен | `logging/processors.py`, `tests/logging/test_processors.py` | Низкий/контролируемый | Fixed: ключи нормализуются (`-`, `.`, camel/PascalCase), sensitive markers редактируются рекурсивно; Bearer/Basic/JWT-like значения полностью redacted; email masking сохранён | Fixed |
 
 ---
 
@@ -178,7 +178,7 @@
 
 | Область | Проблема | File / location | Риск | Рекомендация | Приоритет |
 |---|---|---|---|---|---|
-| Logging | Redaction только по точному ключу | `logging/processors.py` | raw-token, clientSecret, x-api-key, encrypted_raw_token могут не быть redacted при логировании | Нормализовать ключи: lower + replace `-` на `_`; redact по чувствительным подстрокам | P2 |
+| Logging | Fixed: redaction покрывает вариантные sensitive keys | `logging/processors.py`, `tests/logging/test_processors.py` | Низкий/контролируемый | Сохранить централизованную политику sensitive-key detection и value-based redaction для Bearer/Basic/JWT-like строк | Fixed |
 | Logging | Access logs включают path, но не query/body | `access_log.py` | Низкий | Хорошо; держать токены вне URL paths/query | P4 |
 | Logging | Валидация Request ID существует | `request_context.py` | Низкий | Хорошо. Prod validator отключает доверие входящему request ID | P4 |
 
@@ -287,7 +287,7 @@ _\* Код health router не был получен; публичный стат
 | Redis unavailable/timeout | Неизвестно | fail-closed для invite политик | Неопределённость доступности/безопасности | P2 |
 | Platform/tenant boundary | Неизвестно | Tenant user не может вызывать `/platform/*` | Platform escalation | P1 |
 | Last platform admin race | Покрыт lock-aware regression tests для demote/suspend; полноценная concurrency-гарантия зависит от PostgreSQL `SELECT ... FOR UPDATE` | PostgreSQL concurrent demote/suspend test при доступном external DB | Platform lockout | Fixed/P3 |
-| No secret logging | Неизвестно | Варианты redaction: token, raw-token, api-key, bearer, email | Утечка секретов | P2 |
+| No secret logging | Fixed for structured logging processor | Варианты redaction: exact keys, raw-token, raw_token, clientSecret, x-api-key, encrypted_raw_token, set-cookie, authorizationHeader, Bearer/Basic/JWT-like values, email masking | Риск утечки через application/security structured logs снижен; сохранять regression tests | Fixed |
 | Problem Details shape | Неизвестно | Схема 401/403/404/409/422/429/500 | Согласованность клиента/безопасности | P3 |
 | CORS | Fixed | Explicit allowlist origins, credentials validation, exposed `X-Request-ID`/`Retry-After` headers | Браузерная мисконфигурация снижена; deployment должен задать конкретные origins | Fixed |
 
@@ -313,7 +313,7 @@ ruff format --check .
 | P1 | Audit / invite | Invite accept не аудируется | `invites/services/invites.py` | Создание membership не имеет audit trail | Добавить `INVITE_ACCEPTED` audit event |
 | Fixed | CORS | Явная CORS конфигурация добавлена | `main.py`, `settings.py` | Браузерный frontend использует безопасный allowlist | Сохранять environment-based origins без wildcard в prod |
 | P2 | Rate limit | Fixed: platform writes имеют `platform_write`/`platform_staff_write` rate limit | `platform/api/*`, `core/platform/write_context.py`, `core/rate_limit/policies.py`, `tests/platform/test_platform_write_rate_limiting*.py` | Злоупотребление с валидным platform токеном ограничено fail-closed политиками; Redis/Testcontainers tests подтверждают реальные окна/429, transaction-boundary test подтверждает блокировку до platform write transaction/service body | Сохранить fake и Redis regression tests |
-| P2 | Logging | Redaction слишком точный по ключу | `logging/processors.py` | Вариантные секретные ключи могут утекать | Нормализовать и использовать substring-match чувствительных ключей |
+| Fixed | Logging | Structured logging redaction усилен | `logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и auth-token-like значения редактируются рекурсивно | Сохранять regression coverage для новых вариантов ключей |
 | P2 | Platform audit | Limited audit permission не используется | `permissions.py`, `audit_events.py` | Избыточная видимость аудита | Реализовать limited audit view/redaction |
 | P2/P3 | Soft delete | Platform org list включает удалённые orgs | `platform_organisations.py` | Раскрытие удалённых данных, если не предусмотрено | Добавить флаг/разрешение `include_deleted` |
 | P3 | Invite errors | Состояние токена различимо | `invites/services/invites.py` | Низкая вероятность перечисления | Нормализовать внешние сообщения |
@@ -332,7 +332,7 @@ ruff format --check .
 | 4 | Добавить BOLA regression tests | `backend/tests/api/test_tenant_bola_idor.py` | Fixed: cross-tenant `organisation_id`, `membership_id`, `invite_id` доступ зафиксирован как заблокированный; write-сценарии проверяют неизменность чужих ресурсов | Fixed |
 | 5 | Добавить CORS настройки и middleware | `settings.py`, `main.py`, CORS tests | Fixed: браузерная безопасность явно настроена через env-based allowlist; CORS выключен по умолчанию | Fixed |
 | 6 | Fixed: добавлены platform write rate limits | `core/rate_limit/policies.py`, `core/platform/write_context.py`, `platform/api/*`, `tests/platform/test_platform_write_rate_limiting*.py` | Злоупотребление platform write снижено; 429 + Retry-After, fail-closed 503, Redis/Testcontainers over-limit и блокировка до write transaction/service body покрыты тестами | Completed |
-| 7 | Усилить logging redaction | `core/logging/processors.py` | Вариантные секретные ключи redacted | P2 |
+| 7 | Fixed: усилить logging redaction | `core/logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и Bearer/Basic/JWT-like значения redacted рекурсивно; email masking сохранён | Completed |
 | 8 | Реализовать limited audit view или удалить неиспользуемое limited разрешение | `core/platform/permissions.py`, `platform/api/audit_events.py` | Доступ support/compliance чётко определён | P2 |
 | 9 | Нормализовать invite token error responses | `invites/services/invites.py` | Меньше утечки состояния токена | P3 |
 | 10 | Добавить security test suite markers | `tests/security/*` или существующие тесты | Security regressions становятся видимыми | P1/P2 |
@@ -354,7 +354,7 @@ ruff format --check .
 | `backend/app/main.py` | Fixed: добавлен `CORSMiddleware` в app factory, включается только при enabled + origins | Избежать будущего небезопасного wildcard patch | CORS response tests |
 | `backend/app/core/rate_limit/policies.py` | Fixed: добавлены `platform_write` и `platform_staff_write`; invite revoke policy остаётся отдельным P3 | Platform write политики зарегистрированы и fail-closed | `tests/rate_limit/test_policy_registry.py`, `tests/platform/test_platform_write_rate_limiting.py` |
 | `backend/app/core/rate_limit/dependencies.py` | Разделить authenticated и public limiter dependencies | Текущий limiter всегда требует auth | Public endpoint limiter unit test |
-| `backend/app/core/logging/processors.py` | Использовать нормализованный ключ и substring-based redaction | Точный redaction по ключу слишком слаб | Redaction tests для raw-token, clientSecret, x-api-key, encrypted_raw_token |
+| `backend/app/core/logging/processors.py` | Fixed: используется нормализованный ключ, sensitive markers и value-based redaction для Bearer/Basic/JWT-like строк | Снизить риск утечки секретов в application/security logs | Redaction tests для exact/hyphenated/snake_case/camelCase/PascalCase keys, nested/list/tuple structures, auth values и email masking |
 | `backend/app/platform/api/audit_events.py` | Добавить limited audit endpoint/filter или требовать только полный `AUDIT_READ` и удалить limited разрешение | Избегать вводящей в заблуждение модели разрешений | Permission matrix tests |
 | `backend/app/platform/services/platform_organisations.py` | Принять решение и реализовать дефолтную обработку `deleted_at` | Платформа в настоящее время видит soft-deleted orgs | `include_deleted=false/true` tests |
 | `backend/app/core/platform/write_context.py` | Рассмотреть общий helper для валидации platform audit actor | Снизить риск внутреннего злоупотребления | Platform service unit tests |
