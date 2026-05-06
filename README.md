@@ -78,6 +78,18 @@ Keycloak is the identity provider and JWT issuer.
 - Platform roles and permissions are resolved from `platform_staff`.
 - The detailed identity contract is in `backend/docs/keycloak-identity-contract.md`.
 
+
+## Browser CORS
+
+CORS is disabled by default. For a local browser frontend, enable it explicitly in `.env` and keep allowed origins as a concrete allowlist, for example:
+
+```bash
+CORS__ENABLED=true
+CORS__ALLOW_ORIGINS=["http://localhost:3000","http://localhost:5173"]
+```
+
+Do not combine wildcard origins with credentials. Production deployments must use explicit frontend origins.
+
 ## Testing
 
 From `backend/`:

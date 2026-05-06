@@ -51,7 +51,7 @@ The following areas should not be presented as complete without code verificatio
 
 - Documentation may lag code.
 - Production Docker/runtime hardening is not complete.
-- CORS policy is not yet documented/implemented if absent from code.
+- CORS policy is implemented as an explicit environment-driven allowlist and is disabled by default.
 - CI status must be verified.
 - Access-control tests need continuous expansion.
 - Deleted or renamed docs must not leave broken links.
@@ -82,7 +82,7 @@ External DB tests are opt-in and must not run by default.
 2. Add or verify CI.
 3. Add BOLA/BFLA tests.
 4. Harden Docker/runtime for production.
-5. Clarify CORS/trusted proxy policy.
+5. Continue hardening trusted proxy policy and verify deployment-specific CORS origins.
 6. Continue feature-specific docs only after code stabilises.
 
 ## Source of Truth

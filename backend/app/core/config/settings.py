@@ -8,6 +8,18 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _normalise_string_list(
+    value: list[str] | tuple[str, ...] | str | None,
+) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    else:
+        raw_items = value
+    return [item.strip() for item in raw_items if item.strip()]
+
+
 class AppSettings(BaseModel):
     name: str = "SaaS Template"
     version: str = "0.1.0"
@@ -129,6 +141,45 @@ class OutboxSettings(BaseModel):
     recovery_batch_size: int = Field(default=100, gt=0)
 
 
+class CorsSettings(BaseModel):
+    enabled: bool = False
+    allow_origins: list[str] = Field(default_factory=list)
+    allow_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
+    allow_headers: list[str] = Field(
+        default_factory=lambda: ["Authorization", "Content-Type", "X-Request-ID"]
+    )
+    expose_headers: list[str] = Field(
+        default_factory=lambda: ["X-Request-ID", "Retry-After"]
+    )
+    allow_credentials: bool = False
+    max_age: int | None = 600
+
+    @field_validator(
+        "allow_origins",
+        "allow_methods",
+        "allow_headers",
+        "expose_headers",
+        mode="before",
+    )
+    @classmethod
+    def normalise_string_lists(
+        cls, value: list[str] | tuple[str, ...] | str | None
+    ) -> list[str]:
+        return _normalise_string_list(value)
+
+    @model_validator(mode="after")
+    def validate_cors_policy(self) -> CorsSettings:
+        if self.enabled and not self.allow_origins:
+            raise ValueError("CORS__ALLOW_ORIGINS is required when CORS__ENABLED=true")
+        if self.allow_credentials and "*" in self.allow_origins:
+            raise ValueError(
+                "CORS__ALLOW_CREDENTIALS=true cannot be used with wildcard origins"
+            )
+        return self
+
+
 class ObservabilitySettings(BaseModel):
     metrics_enabled: bool = False
     exporter: Literal["none", "otlp"] = "none"
@@ -192,6 +243,7 @@ class Settings(BaseSettings):
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
     outbox: OutboxSettings = Field(default_factory=OutboxSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+    cors: CorsSettings = Field(default_factory=CorsSettings)
 
     @model_validator(mode="after")
     def validate_environment_security(self) -> Settings:
@@ -212,6 +264,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Rate limiting must be enabled in app or enforced by edge in prod"
                 )
+        if env == "prod" and "*" in self.cors.allow_origins:
+            raise ValueError("CORS wildcard origins are not allowed in prod")
         if (
             self.outbox.invite_delivery_enabled
             and env in {"dev", "staging", "prod"}
