@@ -72,20 +72,24 @@ suspended
 
 ```text
 users:read
+users:read_limited
 users:suspend
 users:restore
+users:correct_profile
 
 organisations:read
+organisations:read_limited
 organisations:suspend
 organisations:restore
+organisations:correct_profile
+organisations:emergency_owner_correction
 
 platform_staff:manage
 audit:read
+audit:read_limited
 
 gdpr:export
 gdpr:erase
-
-data:correct
 ```
 
 Рекомендуемый role mapping:
@@ -93,24 +97,32 @@ data:correct
 ```text
 platform_admin:
 - users:read
+- users:read_limited
 - users:suspend
 - users:restore
+- users:correct_profile
 - organisations:read
+- organisations:read_limited
 - organisations:suspend
 - organisations:restore
+- organisations:correct_profile
+- organisations:emergency_owner_correction
 - platform_staff:manage
 - audit:read
+- audit:read_limited
 - gdpr:export
-- data:correct
+- gdpr:erase
 
 support_agent:
-- users:read limited
-- organisations:read limited
+- users:read_limited
+- organisations:read_limited
+- audit:read_limited
 
 compliance_officer:
-- users:read limited
-- organisations:read limited
+- users:read_limited
+- organisations:read_limited
 - audit:read
+- audit:read_limited
 - gdpr:export
 ```
 
@@ -138,9 +150,12 @@ Platform actions должны использовать отдельные routes
 /api/v1/platform/organisations/*
 /api/v1/platform/staff/*
 /api/v1/platform/audit-events
+/api/v1/platform/audit-events/limited
 ```
 
 Platform actors не должны bypass ordinary tenant endpoints.
+
+Limited audit view (`/api/v1/platform/audit-events/limited`) предназначен для `AUDIT_READ_LIMITED` и не должен отдавать raw `metadata_json`, `ip_address`, `user_agent`, free-text `reason` или прямой `actor_user_id`.
 
 ## 7. Bootstrap первого Platform Admin
 

@@ -154,9 +154,12 @@ Platform actors must use dedicated routes:
 /api/v1/platform/organisations/*
 /api/v1/platform/staff/*
 /api/v1/platform/audit-events
+/api/v1/platform/audit-events/limited
 ```
 
 Platform actors must not bypass ordinary tenant endpoints.
+
+Limited audit view (`/api/v1/platform/audit-events/limited`) is for `AUDIT_READ_LIMITED` and must not expose raw `metadata_json`, `ip_address`, `user_agent`, free-text `reason`, or direct `actor_user_id`.
 
 A `platform_admin` who is not a member of organisation X must receive `403` from:
 

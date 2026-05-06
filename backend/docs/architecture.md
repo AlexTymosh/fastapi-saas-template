@@ -169,6 +169,7 @@ The database schema is managed through Alembic migrations. Model details must be
 - Audit events are stored separately from business records.
 - Audit metadata must not contain tokens, secrets, or raw credentials.
 - Audit context may include actor, IP, and user-agent data.
+- Limited platform audit views must expose only safe summary fields and must not expose raw metadata, IP addresses, user-agent strings, free-text reasons, or direct actor identifiers.
 - Retention, GDPR erasure/export, and masking policy still need project-specific production hardening.
 
 ## Observability

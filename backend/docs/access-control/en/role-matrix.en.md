@@ -86,7 +86,7 @@ compliance_officer
 | `organisations:emergency_owner_correction` | No | No | Yes |
 | `platform_staff:manage` | No | No | Yes |
 | `audit:read` | No | Yes | Yes |
-| `audit:read_limited` | Optional, support-case scoped only | No | Yes |
+| `audit:read_limited` | Yes, redacted limited view only | Yes, redacted limited view available | Yes |
 | `gdpr:export` | No | Yes | Yes |
 | `gdpr:erase` | No | With approval / explicit workflow | Yes |
 

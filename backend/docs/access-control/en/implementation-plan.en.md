@@ -382,6 +382,7 @@ POST /api/v1/platform/organisations/{organisation_id}/restore
 
 PATCH /api/v1/platform/organisations/{organisation_id}
 GET   /api/v1/platform/audit-events
+GET   /api/v1/platform/audit-events/limited
 ```
 
 ### Rules

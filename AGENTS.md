@@ -102,6 +102,7 @@ Expected flow:
 - Platform authorization is resolved from `platform_staff`.
 - Permission logic belongs in services/dependencies, not arbitrary API code.
 - Platform write endpoints must use the platform write rate limiting dependency/policy; do not add new platform write endpoints without rate limiting.
+- Limited platform audit permissions must never expose raw metadata, IP address, user-agent, free-text reason, or direct actor identifiers.
 - Do not trust client-provided identifiers, roles, or permissions.
 - Do not implement local password login unless explicitly requested.
 
