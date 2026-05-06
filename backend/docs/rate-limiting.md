@@ -6,6 +6,7 @@ Rate limiting is implemented for selected sensitive endpoints using `limits` wit
 - Status: implemented for protected invite flows and platform write operations.
 - Default mode: disabled (`RATE_LIMITING__ENABLED=false`).
 - When disabled, limiter dependencies are no-op.
+- Platform write policies are covered by fast fake-limiter API regression tests and Redis/Testcontainers integration tests that exercise the real `limits` Redis storage/runtime path.
 
 ## Configuration
 Primary settings:
@@ -120,12 +121,20 @@ Current e2e OTLP coverage validates export through OTel Collector debug logs for
 
 Prometheus/Grafana dashboards are out of scope for this phase, and `/metrics` is not exposed.
 
+## Test coverage
+
+Platform write rate limiting is covered at two levels:
+
+- fast API regression tests with a fake limiter for wiring, auth ordering, headers, fail-closed behaviour, and transaction-boundary assertions;
+- Redis/Testcontainers integration tests for `platform_write` and `platform_staff_write`, using the real app lifecycle, `limits` async Redis storage, Redis-backed windows, and real over-limit responses.
+
 ## Testing commands
 Run from `backend/`:
 
 ```bash
 pytest -q tests/rate_limit/test_policy_registry.py
 pytest -q tests/platform/test_platform_write_rate_limiting.py
+pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs
 pytest -q tests/api/test_rate_limiting.py
 pytest tests/api/test_rate_limiting_integration.py -q -m integration -rs
 pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs

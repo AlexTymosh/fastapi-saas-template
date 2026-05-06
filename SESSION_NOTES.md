@@ -184,3 +184,54 @@ git diff --check
 
 - Pytest is currently blocked in this container because `httpx` is missing; installing dev dependencies is blocked by proxy 403 while fetching `setuptools>=69`.
 - Integration tests that require external Redis/Testcontainers remain opt-in.
+
+---
+
+## Update: Platform Write Rate Limiting QA Follow-up
+
+## Current Focus
+
+Close QA review gaps for platform write rate limiting coverage.
+
+## Last Completed
+
+Added Redis/Testcontainers integration coverage for platform write policies without `FakeLimiter` or manual runtime injection:
+
+- `platform_write`: real Redis-backed over-limit coverage via repeated platform user suspend requests across unique target users.
+- `platform_staff_write`: real Redis-backed over-limit coverage via repeated platform staff creation requests across unique candidate users.
+
+Added a targeted transaction-boundary regression test proving an over-limit platform write request returns `429` before opening the platform write transaction, before platform actor resolution, and before the platform user service write method is called.
+
+Updated rate-limiting and comprehensive security review documentation to record the fake-limiter, Redis/Testcontainers, and transaction-boundary coverage.
+
+## Checks Run
+
+```bash
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && pytest -q tests/platform/test_platform_write_rate_limiting.py  # blocked: missing httpx
+cd backend && pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs  # blocked: missing httpx before Docker/Testcontainers startup
+cd backend && pytest -q tests/rate_limit/test_policy_registry.py  # blocked: missing httpx
+cd backend && pytest -q tests/api/test_rate_limiting.py  # blocked: missing httpx
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+PYENV_VERSION=3.11.14 python -m compileall -q backend/tests/platform/test_platform_write_rate_limiting.py backend/tests/platform/test_platform_write_rate_limiting_integration.py
+git diff --check
+```
+
+## Known Risks
+
+- Pytest could not run in this container because `httpx` is missing from the default Python 3.10 environment; the repository `conftest.py` imports `fastapi.testclient`, which fails before collecting tests.
+- Installing backend dev dependencies remains blocked by the configured package proxy returning `403 Forbidden` while fetching `setuptools>=69`.
+- Redis/Testcontainers integration tests were not executed here because pytest failed during `conftest.py` import before Docker/Testcontainers startup. Run them in CI/developer environment with dev dependencies and Docker available.
+
+## Next Recommended Step
+
+Run in an environment with backend dev dependencies and Docker/Testcontainers available:
+
+```bash
+cd backend
+pytest -q tests/platform/test_platform_write_rate_limiting.py
+pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs
+pytest -q tests/rate_limit/test_policy_registry.py
+pytest -q tests/api/test_rate_limiting.py
+```

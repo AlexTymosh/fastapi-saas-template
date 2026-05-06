@@ -112,7 +112,7 @@
 | `DELETE /api/v1/organisations/{organisation_id}/invites/{invite_id}` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: regression test подтверждает 404 для cross-org invite revoke и сохранение pending invite | Fixed |
 | `POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: regression test подтверждает 404 для cross-org invite resend и неизменность token/expires/status | Fixed |
 | `POST /api/v1/invites/accept` | token | Hash токена + совпадение аутентифицированного email + verified email | Средний | Добавить audit + нормализованный error response | P1/P3 |
-| `/api/v1/platform/*` | user/org/staff/audit IDs | Platform permission guard | Средний по дизайну | Добавить rate limit и limited views для support/compliance | P2 |
+| `/api/v1/platform/*` | user/org/staff/audit IDs | Platform permission guard + fixed write rate limits for user/org/staff mutations | Средний по дизайну | Rate limit для write endpoints исправлен; остаётся limited views для support/compliance | P2 |
 
 ---
 
@@ -151,7 +151,7 @@
 | `POST /organisations/{id}/invites` | `INVITE_CREATE_POLICY`: 20/hour, fail-closed | Низкий | Хороший baseline. Добавить per-org измерение при злоупотреблениях | P3 |
 | `POST /invites/accept` | `INVITE_ACCEPT_POLICY`: 5 per 5 min, fail-closed | Низкий/Средний | Хорошо. Рассмотреть комбинированный ключ IP+user для token attacks | P3 |
 | Revoke invite | Политика отсутствует | Средний | Добавить revoke политику | P3 |
-| Platform write endpoints | Fixed: `platform_write` 30/min и `platform_staff_write` 10/min, fail-closed | Низкий/контролируемый | Сохранить dependency-based защиту для всех новых platform write endpoints | P4 |
+| Platform write endpoints | Fixed: `platform_write` 30/min и `platform_staff_write` 10/min, fail-closed | Низкий/контролируемый | Сохранить dependency-based защиту для всех новых platform write endpoints; покрытие включает fake regression tests, Redis/Testcontainers integration tests и transaction-boundary проверку, что over-limit не входит в actor resolution/service body | P4 |
 | `/users/me` | Политика отсутствует | Низкий/Средний | Добавить общую authenticated read политику позже | P3 |
 | Публичные endpoints | Текущая dependency требует auth | Риск в будущем | Разделить зависимости public/authenticated limiter | P2 |
 | Redis недоступен | Чувствительные invite политики fail-closed; runtime missing возвращает unavailable | Риск доступности, не обход | Хорошо для чувствительных flows. Добавить тесты для Redis timeout/unavailable | P3 |
@@ -312,7 +312,7 @@ ruff format --check .
 | P1 | Suspended users | `/users/me` разрешён для приостановленного пользователя | `users/api/users.py`, `users/services/users.py` | Приостановленный пользователь всё ещё использует защищённый endpoint | Добавить active-user guard |
 | P1 | Audit / invite | Invite accept не аудируется | `invites/services/invites.py` | Создание membership не имеет audit trail | Добавить `INVITE_ACCEPTED` audit event |
 | Fixed | CORS | Явная CORS конфигурация добавлена | `main.py`, `settings.py` | Браузерный frontend использует безопасный allowlist | Сохранять environment-based origins без wildcard в prod |
-| P2 | Rate limit | Fixed: platform writes имеют `platform_write`/`platform_staff_write` rate limit | `platform/api/*`, `core/platform/write_context.py`, `core/rate_limit/policies.py` | Злоупотребление с валидным platform токеном ограничено fail-closed политиками | Сохранить regression tests |
+| P2 | Rate limit | Fixed: platform writes имеют `platform_write`/`platform_staff_write` rate limit | `platform/api/*`, `core/platform/write_context.py`, `core/rate_limit/policies.py` | Злоупотребление с валидным platform токеном ограничено fail-closed политиками; Redis-backed over-limit и transaction-boundary поведение покрыты тестами | Сохранить fake + Redis/Testcontainers regression tests |
 | P2 | Logging | Redaction слишком точный по ключу | `logging/processors.py` | Вариантные секретные ключи могут утекать | Нормализовать и использовать substring-match чувствительных ключей |
 | P2 | Platform audit | Limited audit permission не используется | `permissions.py`, `audit_events.py` | Избыточная видимость аудита | Реализовать limited audit view/redaction |
 | P2/P3 | Soft delete | Platform org list включает удалённые orgs | `platform_organisations.py` | Раскрытие удалённых данных, если не предусмотрено | Добавить флаг/разрешение `include_deleted` |
@@ -331,7 +331,7 @@ ruff format --check .
 | 2 | Добавить invite accept audit event | `audit/models/audit_event.py`, `invites/services/invites.py`, tests | Создание membership через invite аудируемо | P1 |
 | 4 | Добавить BOLA regression tests | `backend/tests/api/test_tenant_bola_idor.py` | Fixed: cross-tenant `organisation_id`, `membership_id`, `invite_id` доступ зафиксирован как заблокированный; write-сценарии проверяют неизменность чужих ресурсов | Fixed |
 | 5 | Добавить CORS настройки и middleware | `settings.py`, `main.py`, CORS tests | Fixed: браузерная безопасность явно настроена через env-based allowlist; CORS выключен по умолчанию | Fixed |
-| 6 | Fixed: добавлены platform write rate limits | `core/rate_limit/policies.py`, `core/platform/write_context.py`, `platform/api/*` | Злоупотребление platform write снижено; 429 + Retry-After и fail-closed 503 покрыты тестами | Completed |
+| 6 | Fixed: добавлены platform write rate limits | `core/rate_limit/policies.py`, `core/platform/write_context.py`, `platform/api/*` | Злоупотребление platform write снижено; 429 + Retry-After, fail-closed 503, Redis/Testcontainers over-limit и запрет входа over-limit request в platform write transaction/service body покрыты тестами | Completed |
 | 7 | Усилить logging redaction | `core/logging/processors.py` | Вариантные секретные ключи redacted | P2 |
 | 8 | Реализовать limited audit view или удалить неиспользуемое limited разрешение | `core/platform/permissions.py`, `platform/api/audit_events.py` | Доступ support/compliance чётко определён | P2 |
 | 9 | Нормализовать invite token error responses | `invites/services/invites.py` | Меньше утечки состояния токена | P3 |
@@ -352,7 +352,7 @@ ruff format --check .
 | `backend/app/platform/services/platform_staff.py` | Fixed: demote/suspend active platform admin проверяют наличие другого active admin после блокировки active admin rows | Предотвратить нарушение инварианта при конкурентном доступе | `test_cannot_demote_last_active_platform_admin`, `test_cannot_suspend_last_active_platform_admin`, allowed-with-other-admin tests |
 | `backend/app/core/config/settings.py` | Fixed: добавлен `CorsSettings` с enabled, allow_origins, credentials, methods, headers, exposed_headers, max_age и validation | Конфигурация браузерной части явная; wildcard + credentials и prod wildcard запрещены | Settings validation tests |
 | `backend/app/main.py` | Fixed: добавлен `CORSMiddleware` в app factory, включается только при enabled + origins | Избежать будущего небезопасного wildcard patch | CORS response tests |
-| `backend/app/core/rate_limit/policies.py` | Fixed: добавлены `platform_write` и `platform_staff_write`; invite revoke policy остаётся отдельным P3 | Platform write политики зарегистрированы и fail-closed | `tests/rate_limit/test_policy_registry.py`, `tests/platform/test_platform_write_rate_limiting.py` |
+| `backend/app/core/rate_limit/policies.py` | Fixed: добавлены `platform_write` и `platform_staff_write`; invite revoke policy остаётся отдельным P3 | Platform write политики зарегистрированы и fail-closed | `tests/rate_limit/test_policy_registry.py`, `tests/platform/test_platform_write_rate_limiting.py`, `tests/platform/test_platform_write_rate_limiting_integration.py` |
 | `backend/app/core/rate_limit/dependencies.py` | Разделить authenticated и public limiter dependencies | Текущий limiter всегда требует auth | Public endpoint limiter unit test |
 | `backend/app/core/logging/processors.py` | Использовать нормализованный ключ и substring-based redaction | Точный redaction по ключу слишком слаб | Redaction tests для raw-token, clientSecret, x-api-key, encrypted_raw_token |
 | `backend/app/platform/api/audit_events.py` | Добавить limited audit endpoint/filter или требовать только полный `AUDIT_READ` и удалить limited разрешение | Избегать вводящей в заблуждение модели разрешений | Permission matrix tests |

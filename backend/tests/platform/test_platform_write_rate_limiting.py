@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.core.platform import write_context as platform_write_context
 from app.core.platform.permissions import PlatformRole
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
@@ -10,6 +11,7 @@ from app.core.rate_limit.policies import (
 )
 from app.organisations.models.organisation import Organisation, OrganisationStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.platform.services.platform_users import PlatformUsersService
 from app.users.models.user import User, UserStatus
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
@@ -348,3 +350,89 @@ def test_platform_write_rate_limiter_failure_is_fail_closed(
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["error_code"] == "rate_limiter_unavailable"
+
+
+def test_platform_write_over_limit_does_not_enter_transaction_or_service_body(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    limiter = FakeLimiter(allow=False)
+    _install_fake_rate_limiter(monkeypatch, limiter)
+    admin, _ = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-rl-boundary-admin",
+        email="rl-boundary-admin@example.com",
+    )
+    target = _seed_user(
+        migrated_session_factory,
+        external_auth_id="kc-rl-boundary-target",
+        email="rl-boundary-target@example.com",
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(admin.external_auth_id, admin.email),
+        database_url=migrated_database_url,
+        rate_limiting_enabled=True,
+    )
+    _attach_fake_rate_limiter(bundle.client, limiter)
+
+    begin_called = 0
+    actor_resolution_called = 0
+    service_called = 0
+
+    class _UnexpectedTransaction:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+    class _SpySession:
+        def begin(self):
+            nonlocal begin_called
+            begin_called += 1
+            return _UnexpectedTransaction()
+
+    async def _spy_db_session():
+        yield _SpySession()
+
+    async def _resolve_platform_actor_spy(*args, **kwargs):
+        nonlocal actor_resolution_called
+        actor_resolution_called += 1
+        raise AssertionError("Over-limit request reached platform actor resolution")
+
+    async def _suspend_user_spy(self, *args, **kwargs):
+        nonlocal service_called
+        service_called += 1
+        raise AssertionError("Over-limit request reached platform user service body")
+
+    bundle.client.app.dependency_overrides[platform_write_context.get_db_session] = (
+        _spy_db_session
+    )
+    monkeypatch.setattr(
+        platform_write_context,
+        "resolve_platform_actor",
+        _resolve_platform_actor_spy,
+    )
+    monkeypatch.setattr(PlatformUsersService, "suspend_user", _suspend_user_spy)
+
+    response = bundle.client.post(
+        f"/api/v1/platform/users/{target.id}/suspend",
+        json={"reason": "abuse investigation"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "rate_limited"
+    assert begin_called == 0
+    assert actor_resolution_called == 0
+    assert service_called == 0
+
+    async def _verify() -> None:
+        async with migrated_session_factory() as session:
+            updated = await session.get(User, target.id)
+            assert updated is not None
+            assert updated.status == UserStatus.ACTIVE
+
+    run_async(_verify())
