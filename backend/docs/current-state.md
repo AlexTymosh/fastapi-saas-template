@@ -21,7 +21,7 @@ The following foundations are present in code and/or current documentation and s
 - Local user projection with `external_auth_id`.
 - Organisations, memberships, and invites foundation.
 - Platform staff and permissions foundation.
-- Audit events foundation.
+- Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
 - Redis/rate limiting foundation, including protected invite flows and fail-closed platform write policies.
 - Observability/OpenTelemetry foundation.

@@ -73,7 +73,7 @@ compliance_officer
 | Restore organisation | No | No | Yes |
 | Correct erroneous user data | No | No | Yes |
 | Correct erroneous organisation data | No | No | Yes |
-| Read audit events | Limited / No | Yes | Yes |
+| Read audit events | Limited redacted view | Full + limited redacted view | Full + limited redacted view |
 | Manage platform staff | No | No | Yes |
 | GDPR export | No | Yes | Yes |
 | GDPR erase/anonymise | No | With approval | Yes |

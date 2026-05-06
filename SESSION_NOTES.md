@@ -276,3 +276,41 @@ cd backend && PYENV_VERSION=3.11.14 PYTHONPATH=. pytest -q --noconftest tests/lo
 
 - Pytest remains blocked in the default Python 3.10 environment because `httpx` is missing from the installed dependencies; editable install is blocked by the configured package proxy returning 403 for `setuptools>=69`.
 - A conftest-free Python 3.11 retry bypassed the missing `httpx` import but could not run because the Python 3.11 environment does not have `structlog` installed.
+---
+
+## Current Focus
+
+Close the P2 security debt for limited platform audit visibility.
+
+## Last Completed
+
+Implemented backend-enforced limited platform audit view instead of deleting `AUDIT_READ_LIMITED`. Added `GET /api/v1/platform/audit-events/limited` requiring `AUDIT_READ_LIMITED`, with schema-level redaction that omits raw `metadata_json`, `ip_address`, `user_agent`, free-text `reason`, and direct `actor_user_id`; safe boolean indicators expose only `has_actor`, `has_metadata`, and `has_reason`. Full `GET /api/v1/platform/audit-events` remains restricted to `AUDIT_READ` and preserves the full response contract.
+
+## Files Touched
+
+- `backend/app/audit/repositories/audit_events.py`
+- `backend/app/audit/services/audit_events.py`
+- `backend/app/platform/api/audit_events.py`
+- `backend/app/platform/schemas/platform_audit_events.py`
+- `backend/tests/platform/test_platform_audit_events.py`
+- `backend/tests/api/test_openapi_contract.py`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `backend/docs/access-control/en/platform-access.en.md`
+- `backend/docs/access-control/ru/platform-access.ru.md`
+- `backend/docs/access-control/en/implementation-plan.en.md`
+- `backend/docs/access-control/ru/implementation-plan.ru.md`
+- `README.md`
+- `AGENTS.md`
+
+## Tests Added / Updated
+
+- Full audit reader regression for sensitive fields.
+- Limited audit reader regression proving raw sensitive audit fields are absent.
+- No-audit-permission 403 regression for full and limited endpoints.
+- Full/limited filtering parity regression.
+- OpenAPI path and response-model contract regression for `/platform/audit-events/limited`.
+
+## Remaining Risks
+
+- Audit retention, GDPR erasure/export, and production masking policy still need project-specific hardening.
+- Full audit access remains intentionally sensitive and should be assigned sparingly.

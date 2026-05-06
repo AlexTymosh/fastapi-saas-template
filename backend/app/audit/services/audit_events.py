@@ -33,6 +33,25 @@ class AuditEventService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = AuditEventRepository(session)
 
+    async def list_events(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        category: str | None = None,
+        action: str | None = None,
+        target_type: str | None = None,
+        target_id: UUID | None = None,
+    ) -> tuple[list[AuditEvent], int]:
+        return await self.repository.list_events(
+            limit=limit,
+            offset=offset,
+            category=category,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+        )
+
     async def record_event(
         self,
         *,
