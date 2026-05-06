@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
@@ -16,6 +16,8 @@ from app.core.platform.permissions import (
     PlatformPermission,
     PlatformRole,
 )
+from app.core.rate_limit.dependencies import check_rate_limit
+from app.core.rate_limit.policies import PLATFORM_WRITE_POLICY, RateLimitPolicy
 from app.platform.models.platform_staff import PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.users.models.user import UserStatus
@@ -69,4 +71,34 @@ def require_platform_write_context(
             )
             yield PlatformWriteContext(session=db_session, actor=actor)
 
+    return dependency
+
+
+def require_rate_limited_platform_write_context(
+    permission: PlatformPermission,
+    *,
+    policy: RateLimitPolicy = PLATFORM_WRITE_POLICY,
+) -> Callable[..., AsyncIterator[PlatformWriteContext]]:
+    async def dependency(
+        request: Request,
+        identity: Annotated[
+            AuthenticatedPrincipal, Depends(require_authenticated_principal)
+        ],
+        db_session: Annotated[AsyncSession, Depends(get_db_session)],
+    ) -> AsyncIterator[PlatformWriteContext]:
+        await check_rate_limit(
+            request=request,
+            principal=identity,
+            policy=policy,
+        )
+        async with db_session.begin():
+            actor = await resolve_platform_actor(
+                identity=identity,
+                session=db_session,
+                required_permission=permission,
+            )
+            yield PlatformWriteContext(session=db_session, actor=actor)
+
+    dependency.__rate_limit_policy_name__ = policy.name  # type: ignore[attr-defined]
+    dependency.__rate_limit_policy__ = policy  # type: ignore[attr-defined]
     return dependency

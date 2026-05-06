@@ -9,13 +9,17 @@ from starlette.requests import Request
 
 from app.audit.context import build_audit_context_from_request
 from app.core.db import get_db_session
-from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
+from app.core.errors.openapi import (
+    COMMON_ERROR_RESPONSES,
+    RATE_LIMIT_ERROR_RESPONSES,
+    WRITE_ERROR_RESPONSES,
+)
 from app.core.platform import (
     PlatformActor,
     PlatformPermission,
     PlatformWriteContext,
     require_platform_permission,
-    require_platform_write_context,
+    require_rate_limited_platform_write_context,
 )
 from app.platform.schemas.platform_organisations import (
     PlatformOrganisationPatchRequest,
@@ -77,7 +81,7 @@ async def get_platform_org(
 @router.post(
     "/{organisation_id}/suspend",
     response_model=PlatformOrganisationResponse,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def suspend_platform_org(
     organisation_id: UUID,
@@ -85,7 +89,9 @@ async def suspend_platform_org(
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
-            require_platform_write_context(PlatformPermission.ORGANISATIONS_SUSPEND),
+            require_rate_limited_platform_write_context(
+                PlatformPermission.ORGANISATIONS_SUSPEND
+            ),
             scope="function",
         ),
     ],
@@ -108,7 +114,7 @@ async def suspend_platform_org(
 @router.post(
     "/{organisation_id}/restore",
     response_model=PlatformOrganisationResponse,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def restore_platform_org(
     organisation_id: UUID,
@@ -116,7 +122,9 @@ async def restore_platform_org(
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
-            require_platform_write_context(PlatformPermission.ORGANISATIONS_RESTORE),
+            require_rate_limited_platform_write_context(
+                PlatformPermission.ORGANISATIONS_RESTORE
+            ),
             scope="function",
         ),
     ],
@@ -139,7 +147,7 @@ async def restore_platform_org(
 @router.patch(
     "/{organisation_id}",
     response_model=PlatformOrganisationResponse,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def patch_platform_org(
     organisation_id: UUID,
@@ -147,7 +155,7 @@ async def patch_platform_org(
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
-            require_platform_write_context(
+            require_rate_limited_platform_write_context(
                 PlatformPermission.ORGANISATIONS_CORRECT_PROFILE
             ),
             scope="function",

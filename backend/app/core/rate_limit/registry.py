@@ -5,6 +5,8 @@ from collections.abc import Iterable
 from app.core.rate_limit.policies import (
     INVITE_ACCEPT_POLICY,
     INVITE_CREATE_POLICY,
+    PLATFORM_STAFF_WRITE_POLICY,
+    PLATFORM_WRITE_POLICY,
     RateLimitPolicy,
 )
 
@@ -23,6 +25,8 @@ def build_policy_registry(
 _REGISTERED_POLICIES: tuple[RateLimitPolicy, ...] = (
     INVITE_ACCEPT_POLICY,
     INVITE_CREATE_POLICY,
+    PLATFORM_WRITE_POLICY,
+    PLATFORM_STAFF_WRITE_POLICY,
 )
 _POLICY_REGISTRY = build_policy_registry(_REGISTERED_POLICIES)
 

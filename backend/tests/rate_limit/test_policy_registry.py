@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 from limits import RateLimitItemPerMinute
 
-from app.core.rate_limit.policies import RateLimitPolicy
+from app.core.rate_limit.policies import (
+    PLATFORM_STAFF_WRITE_POLICY,
+    PLATFORM_WRITE_POLICY,
+    RateLimitPolicy,
+)
 from app.core.rate_limit.registry import (
     build_policy_registry,
     get_rate_limit_policy,
@@ -11,11 +15,13 @@ from app.core.rate_limit.registry import (
 )
 
 
-def test_registry_contains_invite_policies() -> None:
+def test_registry_contains_expected_policies() -> None:
     names = {policy.name for policy in iter_rate_limit_policies()}
 
     assert "invite_accept" in names
     assert "invite_create" in names
+    assert "platform_write" in names
+    assert "platform_staff_write" in names
 
 
 def test_registry_returns_policy_by_name() -> None:
@@ -30,7 +36,12 @@ def test_iter_rate_limit_policies_returns_all_policies() -> None:
     policies = iter_rate_limit_policies()
 
     assert isinstance(policies, tuple)
-    assert {policy.name for policy in policies} == {"invite_accept", "invite_create"}
+    assert {policy.name for policy in policies} == {
+        "invite_accept",
+        "invite_create",
+        "platform_write",
+        "platform_staff_write",
+    }
 
 
 def test_duplicate_policy_names_are_rejected() -> None:
@@ -68,3 +79,21 @@ def test_invite_policy_semantics_are_unchanged() -> None:
     assert invite_create.item.amount == 20
     assert invite_create.item.get_expiry() == 3600
     assert invite_create.fail_open is False
+
+
+def test_registered_policy_names_are_unique() -> None:
+    policies = iter_rate_limit_policies()
+
+    assert len({policy.name for policy in policies}) == len(policies)
+
+
+def test_platform_write_policy_semantics() -> None:
+    assert PLATFORM_WRITE_POLICY.name == "platform_write"
+    assert PLATFORM_WRITE_POLICY.item.amount == 30
+    assert PLATFORM_WRITE_POLICY.item.get_expiry() == 60
+    assert PLATFORM_WRITE_POLICY.fail_open is False
+
+    assert PLATFORM_STAFF_WRITE_POLICY.name == "platform_staff_write"
+    assert PLATFORM_STAFF_WRITE_POLICY.item.amount == 10
+    assert PLATFORM_STAFF_WRITE_POLICY.item.get_expiry() == 60
+    assert PLATFORM_STAFF_WRITE_POLICY.fail_open is False

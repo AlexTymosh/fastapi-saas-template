@@ -103,6 +103,7 @@ Expected flow:
 - Permission logic belongs in services/dependencies, not arbitrary API code.
 - Do not trust client-provided identifiers, roles, or permissions.
 - Do not implement local password login unless explicitly requested.
+- Platform write endpoints must use the reusable platform write rate limiting dependency/policy; do not add new platform write routes without rate limiting.
 
 ## Logging
 

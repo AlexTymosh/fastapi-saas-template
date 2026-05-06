@@ -24,3 +24,15 @@ INVITE_CREATE_POLICY = RateLimitPolicy(
     item=RateLimitItemPerHour(20),
     fail_open=False,
 )
+
+PLATFORM_WRITE_POLICY = RateLimitPolicy(
+    name="platform_write",
+    item=RateLimitItemPerMinute(30),
+    fail_open=False,
+)
+
+PLATFORM_STAFF_WRITE_POLICY = RateLimitPolicy(
+    name="platform_staff_write",
+    item=RateLimitItemPerMinute(10),
+    fail_open=False,
+)

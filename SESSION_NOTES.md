@@ -149,3 +149,11 @@ pytest -q -m "not external_db"
 ```
 
 Additional environment note: the default `python` is 3.10.19, while the project imports `enum.StrEnum`; a manual app import check on Python 3.10 fails on that standard-library mismatch. `PYENV_VERSION=3.11.14` is available, but this interpreter does not have backend dependencies such as `cryptography` installed in the container.
+
+## 2026-05-06 Platform Write Rate Limiting
+
+- Added fail-closed `platform_write` (30/minute) and `platform_staff_write` (10/minute) policies.
+- Added reusable platform write rate-limit context dependency so limiter checks run before platform write transaction bodies.
+- Protected platform user, organisation, and staff write endpoints; read endpoints remain unmodified.
+- Added policy registry and platform write rate-limit regression tests. Test execution in this environment is limited by missing dev dependencies and blocked package installation proxy.
+- Closed the security-review item for platform write endpoints without rate limits.
