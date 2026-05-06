@@ -12,6 +12,8 @@ from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.services.memberships import MembershipService
 from tests.helpers.asyncio_runner import run_async
 
+pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.audit]
+
 
 class _AsyncContextManager:
     async def __aenter__(self) -> None:

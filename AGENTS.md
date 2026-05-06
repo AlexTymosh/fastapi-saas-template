@@ -136,7 +136,11 @@ Expected flow:
 cd backend
 python -m pip install -e ".[dev]"
 pytest -q -m "not external_db"
+```
+
 - Prefer `pytest -q -m "not external_db"` for broad safe checks.
+- Security regression checks can be selected with `pytest -q -m "security and not external_db"`; focused slices include `bola`, `rate_limit`, `audit`, `cors`, `logging_security`, `auth`, `authz`, and `secrets`.
+- Use `pytest -q -m "security and not external_db" --collect-only` as a lightweight marker-registration sanity check when updating security markers.
 - Documentation-only changes should run grep/link sanity checks.
 
 ## Change rules

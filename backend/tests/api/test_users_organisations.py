@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -15,6 +16,13 @@ from app.organisations.models.organisation import Organisation, OrganisationStat
 from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import FakeAuthProvider
+
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.auth,
+    pytest.mark.authz,
+    pytest.mark.bola,
+]
 
 
 def _identity() -> AuthenticatedPrincipal:

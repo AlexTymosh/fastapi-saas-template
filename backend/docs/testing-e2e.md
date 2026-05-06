@@ -32,12 +32,23 @@
 
 ## Markers
 
-Use explicit markers for all tests:
+Use explicit level/infrastructure markers where they apply:
 
 - `@pytest.mark.unit`
 - `@pytest.mark.integration`
 - `@pytest.mark.e2e`
 - `@pytest.mark.external_db`
+
+Security-sensitive tests also use a base `@pytest.mark.security` marker plus stable focused slices only when relevant:
+
+- `@pytest.mark.auth`
+- `@pytest.mark.authz`
+- `@pytest.mark.bola`
+- `@pytest.mark.audit`
+- `@pytest.mark.rate_limit`
+- `@pytest.mark.cors`
+- `@pytest.mark.logging_security`
+- `@pytest.mark.secrets`
 
 ## Safe commands
 
@@ -46,13 +57,16 @@ Before running tests in a fresh environment, install dev dependencies:
 ```bash
 cd backend
 python -m pip install -e ".[dev]"
+```
 
 This installs test-only dependencies such as httpx, which is required by Starlette/FastAPI TestClient.
 
 If editable install is unavailable, use:
 
+```bash
 cd backend
 python -m pip install -r requirements-dev.txt
+```
 
 Fast safe suite:
 
@@ -64,6 +78,28 @@ Pre-push safe suite:
 
 ```bash
 pytest -q -m "not external_db"
+```
+
+Security marker collection sanity check:
+
+```bash
+pytest -q -m "security and not external_db" --collect-only
+```
+
+Security regressions only:
+
+```bash
+pytest -q -m "security and not external_db"
+```
+
+Focused security slices:
+
+```bash
+pytest -q -m bola
+pytest -q -m rate_limit
+pytest -q -m audit
+pytest -q -m cors
+pytest -q -m logging_security
 ```
 
 Integration + E2E only:

@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import pytest
+
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
 from app.audit.services.audit_events import AuditEventService
@@ -8,6 +10,8 @@ from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
+
+pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.audit]
 
 
 def _seed_platform_staff(

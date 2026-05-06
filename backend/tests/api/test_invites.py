@@ -3,6 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 from uuid import UUID
 
+import pytest
 from sqlalchemy import select
 
 from app.audit.models.audit_event import AuditEvent
@@ -14,6 +15,13 @@ from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxS
 from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.outbox import process_all_claimed_outbox_events
+
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.authz,
+    pytest.mark.audit,
+    pytest.mark.secrets,
+]
 
 
 class InMemoryInviteTokenSink:

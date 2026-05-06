@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.auth import (
@@ -8,6 +9,8 @@ from app.core.auth import (
     require_authenticated_principal,
 )
 from app.main import create_app
+
+pytestmark = [pytest.mark.security, pytest.mark.auth]
 
 
 def _principal() -> AuthenticatedPrincipal:

@@ -1,5 +1,9 @@
+import pytest
+
 from app.core.config.settings import Settings
 from app.core.secrets.env_provider import EnvSecretsProvider
+
+pytestmark = [pytest.mark.security, pytest.mark.secrets]
 
 
 def test_env_provider_returns_database_url() -> None:

@@ -1,7 +1,11 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config.settings import CorsSettings, Settings
 from app.main import create_app
+
+pytestmark = [pytest.mark.security, pytest.mark.cors]
+
 
 ALLOWED_ORIGIN = "http://localhost:3000"
 DISALLOWED_ORIGIN = "http://malicious.localhost:3000"

@@ -14,6 +14,8 @@ from app.core.rate_limit.registry import (
     iter_rate_limit_policies,
 )
 
+pytestmark = [pytest.mark.security, pytest.mark.rate_limit]
+
 
 def test_registry_contains_invite_policies() -> None:
     names = {policy.name for policy in iter_rate_limit_policies()}

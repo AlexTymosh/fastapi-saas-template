@@ -254,6 +254,7 @@ Updated the Russian comprehensive security review to mark logging redaction hard
 
 - `backend/app/core/logging/processors.py`
 - `backend/tests/logging/test_processors.py`
+- `backend/tests/outbox/test_outbox_workers.py`
 - `backend/docs/comprehensive_security_review_ru.md`
 - `AGENTS.md`
 - `SESSION_NOTES.md`
@@ -314,3 +315,85 @@ Implemented backend-enforced limited platform audit view instead of deleting `AU
 
 - Audit retention, GDPR erasure/export, and production masking policy still need project-specific hardening.
 - Full audit access remains intentionally sensitive and should be assigned sparingly.
+
+---
+
+## Update: Security Test Suite Markers
+
+## Current Focus
+
+Close technical debt #10 from the comprehensive Russian security review: add explicit pytest markers for the security regression suite.
+
+## Last Completed
+
+Registered `security` plus focused security sub-markers in `backend/pyproject.toml` and applied them to existing security-relevant tests without changing application behaviour. The selected slices cover authentication/JWT validation, authorization boundaries, tenant BOLA/IDOR regressions, audit trail and visibility checks, rate limiting abuse-prevention checks, CORS hardening, logging redaction/leakage checks, and secrets/configuration hardening.
+
+Updated README, AGENTS guidance, E2E/testing conventions, and the Russian comprehensive security review to document marker usage and mark debt #10 as fixed.
+
+## Files Touched
+
+- `backend/pyproject.toml`
+- `README.md`
+- `AGENTS.md`
+- `backend/docs/testing-e2e.md`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `backend/tests/app/test_auth_jwt_validation.py`
+- `backend/tests/app/test_auth_principal.py`
+- `backend/tests/app/test_cors.py`
+- `backend/tests/api/test_auth_boundary.py`
+- `backend/tests/api/test_keycloak_jwt_path.py`
+- `backend/tests/api/test_tenant_bola_idor.py`
+- `backend/tests/api/test_rate_limiting.py`
+- `backend/tests/api/test_rate_limiting_integration.py`
+- `backend/tests/api/test_users_organisations.py`
+- `backend/tests/api/test_organisation_directory_membership_management.py`
+- `backend/tests/api/test_invites.py`
+- `backend/tests/platform/test_platform_permissions.py`
+- `backend/tests/platform/test_platform_staff_management.py`
+- `backend/tests/platform/test_platform_users.py`
+- `backend/tests/platform/test_platform_organisations.py`
+- `backend/tests/platform/test_platform_audit_events.py`
+- `backend/tests/platform/test_platform_bootstrap.py`
+- `backend/tests/platform/test_platform_write_rate_limiting.py`
+- `backend/tests/platform/test_platform_write_rate_limiting_integration.py`
+- `backend/tests/rate_limit/test_endpoint_protection.py`
+- `backend/tests/rate_limit/test_policy_registry.py`
+- `backend/tests/rate_limit/test_rate_limit_metrics_hooks.py`
+- `backend/tests/audit/test_audit_event_service.py`
+- `backend/tests/audit/test_audit_events_api_flows.py`
+- `backend/tests/logging/test_access_log.py`
+- `backend/tests/logging/test_error_logging_redaction.py`
+- `backend/tests/logging/test_logging_redaction_integration.py`
+- `backend/tests/logging/test_processors.py`
+- `backend/tests/outbox/test_outbox_workers.py`
+- `backend/tests/config/test_settings.py`
+- `backend/tests/secrets/test_env_provider.py`
+- `backend/tests/secrets/test_factory.py`
+- `backend/tests/secrets/test_helpers.py`
+- `backend/tests/secrets/test_vault_provider.py`
+- `backend/tests/services/test_invite_service.py`
+- `backend/tests/services/test_membership_service.py`
+- `backend/tests/services/test_organisation_access_service.py`
+
+## Checks Run
+
+```bash
+cd backend && ruff format <changed security-marker test files>
+cd backend && ruff check --fix <import-order affected security-marker test files>
+cd backend && ruff format <import-order affected security-marker test files>
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && pytest -q -m "security and not external_db" --collect-only  # blocked: missing httpx before collection
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+cd backend && pytest -q -m "security and not external_db"  # blocked: missing httpx before collection
+cd backend && pytest -q -m "not external_db"  # blocked: missing httpx before collection
+cd backend && python -m compileall -q tests app  # blocked: default Python 3.10 cannot parse PEP 695 syntax
+cd backend && PYENV_VERSION=3.11.14 python -m compileall -q tests app  # blocked: Python 3.11 cannot parse PEP 695 syntax
+cd backend && PYENV_VERSION=3.12.12 python -m compileall -q tests app
+PYENV_VERSION=3.12.12 python <static marker registration script>  # passed
+```
+
+## Known Risks
+
+- Pytest could not collect or run in this container because `httpx` is not installed; installing backend dev dependencies is blocked by the configured proxy returning 403 for `setuptools>=69`.
+- Default Python 3.10 and available Python 3.11 cannot compile the suite because the tests use PEP 695 generic syntax; Python 3.12 compileall passed.

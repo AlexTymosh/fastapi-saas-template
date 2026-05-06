@@ -3,11 +3,15 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
+
 from app.core.auth import AuthenticatedPrincipal
 from app.organisations.models.organisation import Organisation
 from app.organisations.services.access import OrganisationAccessService
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
+
+pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.bola]
 
 
 def _identity() -> AuthenticatedPrincipal:

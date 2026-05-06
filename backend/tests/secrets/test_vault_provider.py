@@ -6,6 +6,8 @@ from hvac.exceptions import InvalidPath
 from app.core.config.settings import VaultSettings
 from app.core.secrets.vault_provider import VaultSecretsProvider
 
+pytestmark = [pytest.mark.security, pytest.mark.secrets]
+
 
 @patch("app.core.secrets.vault_provider.hvac.Client")
 def test_vault_provider_returns_database_url(mock_client_cls) -> None:

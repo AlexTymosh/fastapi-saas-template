@@ -336,7 +336,7 @@ ruff format --check .
 | 7 | Fixed: усилить logging redaction | `core/logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и Bearer/Basic/JWT-like значения redacted рекурсивно; email masking сохранён | Completed |
 | 8 | Fixed: реализован limited audit view для `AUDIT_READ_LIMITED` | `core/platform/permissions.py`, `platform/api/audit_events.py`, `platform/schemas/platform_audit_events.py`, tests | Support/compliance получает безопасный audit summary; raw `metadata_json`, `ip_address`, `user_agent`, `reason`, `actor_user_id` не отдаются | Completed |
 | 9 | Нормализовать invite token error responses | `invites/services/invites.py` | Меньше утечки состояния токена | P3 |
-| 10 | Добавить security test suite markers | `tests/security/*` или существующие тесты | Security regressions становятся видимыми | P1/P2 |
+| 10 | Fixed: security test suite markers добавлены | `backend/pyproject.toml`, существующие security-релевантные тесты | Security regressions запускаются явно через `security` и focused markers (`bola`, `rate_limit`, `audit`, `cors`, `logging_security`, `auth`, `authz`, `secrets`) | Fixed |
 
 ---
 

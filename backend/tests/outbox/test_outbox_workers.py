@@ -21,6 +21,8 @@ from tests.helpers.asyncio_runner import run_async
 from tests.helpers.outbox import process_all_claimed_outbox_events
 from tests.helpers.settings import reset_settings_cache
 
+pytestmark = [pytest.mark.security, pytest.mark.secrets]
+
 
 def test_claim_due_events_marks_pending_events_processing(
     migrated_session_factory,

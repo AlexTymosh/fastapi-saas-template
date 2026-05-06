@@ -13,6 +13,8 @@ from app.core.rate_limit.policies import RateLimitPolicy
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
 
+pytestmark = [pytest.mark.security, pytest.mark.rate_limit]
+
 
 @pytest.mark.integration
 @pytest.mark.anyio

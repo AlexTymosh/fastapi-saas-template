@@ -2,10 +2,13 @@ import io
 import json
 from unittest.mock import patch
 
+import pytest
 from fastapi import APIRouter, Request
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+
+pytestmark = [pytest.mark.security, pytest.mark.logging_security]
 
 
 def build_test_client(*, raise_server_exceptions: bool = False) -> TestClient:

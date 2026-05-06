@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from sqlalchemy import select
 
 from app.memberships.models.membership import Membership, MembershipRole
 from app.users.models.user import User
 from tests.api.test_users_organisations import _identity_for
 from tests.helpers.asyncio_runner import run_async
+
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 def _provision(authenticated_client_factory, database_url: str, identity) -> None:
