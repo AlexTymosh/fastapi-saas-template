@@ -35,7 +35,7 @@
 | Audit logging | `audit/models`, `audit/services`, `audit/context` | Security event trail, metadata validation, actor context. |
 | Structured logging | `core/logging/*`, `middleware/access_log.py` | Redaction, request logs, request_id. |
 | Error handling | `core/errors/handlers.py` | Problem Details, validation errors, stack trace hiding. |
-| CORS | Не найдено в fetched `main.py`/`settings.py` | CORSMiddleware не найден в проверенном коде. |
+| CORS | Fixed в локальном коде | Добавлены environment-based `CorsSettings` и централизованный `CORSMiddleware`; по умолчанию CORS выключен без wildcard. |
 | Tests / tooling | `backend/pyproject.toml`, README commands | Pytest markers, ruff config, dependency surface. |
 
 ---
@@ -210,9 +210,9 @@
 
 | Проблема CORS | File / location | Риск | Рекомендация | Приоритет |
 |---|---|---|---|---|
-| CORS middleware не найден в проверенной настройке приложения | `main.py`, `settings.py` | Интеграция с браузерным frontend либо сломается, либо будет исправлена небезопасным образом позже | Добавить явные `CorsSettings` + `CORSMiddleware` с allowlist по окружению | P2 |
-| Небезопасный wildcard не найден | Проверенная настройка приложения | Низкий | Хорошо. Не добавлять `allow_origins=["*"]` с credentials | P4 |
-| Retry-After раскрывается только в rate-limit error response | `rate_limit/dependencies.py` | Низкий | После добавления глобального CORS раскрывать Retry-After и X-Request-ID централизованно | P3 |
+| Fixed: CORS middleware добавлен в app factory и управляется настройками | `main.py`, `settings.py` | Риск небезопасного позднего wildcard-fix снижен; браузерный frontend требует явный allowlist | Поддерживать environment-based allowlist; не включать wildcard в prod | Fixed |
+| Wildcard ограничен validators | `settings.py` | Низкий | `allow_credentials=true` несовместим с `*`; в prod wildcard origins запрещены | Fixed/P4 |
+| Fixed: `Retry-After` и `X-Request-ID` централизованно exposed при включённом CORS | `settings.py`, `main.py` | Низкий | Сохранять explicit exposed headers и не раскрывать лишние sensitive headers | Fixed |
 
 ---
 
@@ -289,7 +289,7 @@ _\* Код health router не был получен; публичный стат
 | Last platform admin race | Покрыт lock-aware regression tests для demote/suspend; полноценная concurrency-гарантия зависит от PostgreSQL `SELECT ... FOR UPDATE` | PostgreSQL concurrent demote/suspend test при доступном external DB | Platform lockout | Fixed/P3 |
 | No secret logging | Неизвестно | Варианты redaction: token, raw-token, api-key, bearer, email | Утечка секретов | P2 |
 | Problem Details shape | Неизвестно | Схема 401/403/404/409/422/429/500 | Согласованность клиента/безопасности | P3 |
-| CORS | Неизвестно / не реализовано | Allowed origins, credentials, exposed headers | Браузерная мисконфигурация | P3 |
+| CORS | Fixed: реализовано через `CorsSettings` + `CORSMiddleware` | Allowed origins, credentials, exposed headers | Браузерная мисконфигурация снижена за счёт allowlist и prod/wildcard validators | Fixed |
 
 **Команды для качества, найденные/ожидаемые из метаданных проекта:**
 
@@ -311,7 +311,7 @@ ruff format --check .
 |---|---|---|---|---|---|
 | P1 | Suspended users | `/users/me` разрешён для приостановленного пользователя | `users/api/users.py`, `users/services/users.py` | Приостановленный пользователь всё ещё использует защищённый endpoint | Добавить active-user guard |
 | P1 | Audit / invite | Invite accept не аудируется | `invites/services/invites.py` | Создание membership не имеет audit trail | Добавить `INVITE_ACCEPTED` audit event |
-| P2 | CORS | Нет явной CORS конфигурации | `main.py`, `settings.py` | Браузерный frontend, вероятно, будет исправлен небезопасным образом | Добавить environment-based CORS настройки |
+| Fixed | CORS | Добавлена явная environment-based CORS конфигурация | `main.py`, `settings.py` | По умолчанию CORS выключен; включение требует allowlist; wildcard запрещён в prod и вместе с credentials | Поддерживать allowlist по окружениям |
 | P2 | Rate limit | Platform writes не имеют rate limit | `platform/api/*` | Злоупотребление с валидным platform токеном | Добавить platform write политики |
 | P2 | Logging | Redaction слишком точный по ключу | `logging/processors.py` | Вариантные секретные ключи могут утекать | Нормализовать и использовать substring-match чувствительных ключей |
 | P2 | Platform audit | Limited audit permission не используется | `permissions.py`, `audit_events.py` | Избыточная видимость аудита | Реализовать limited audit view/redaction |
@@ -330,7 +330,7 @@ ruff format --check .
 | 1 | Добавить active-user guard для `/users/me` | `users/api/users.py`, `users/services/users.py`, `access_control/guards.py` | Приостановленный пользователь не может вызывать защищённый self endpoint | P1 |
 | 2 | Добавить invite accept audit event | `audit/models/audit_event.py`, `invites/services/invites.py`, tests | Создание membership через invite аудируемо | P1 |
 | 4 | Добавить BOLA regression tests | `backend/tests/api/test_tenant_bola_idor.py` | Fixed: cross-tenant `organisation_id`, `membership_id`, `invite_id` доступ зафиксирован как заблокированный; write-сценарии проверяют неизменность чужих ресурсов | Fixed |
-| 5 | Добавить CORS настройки и middleware | `settings.py`, `main.py` | Браузерная безопасность явно настроена | P2 |
+| 5 | Fixed: добавить CORS настройки и middleware | `settings.py`, `main.py`, `.env.example`, tests | Браузерная безопасность явно настроена через disabled-by-default allowlist, exposed `X-Request-ID`/`Retry-After`, запрет wildcard+credentials и prod wildcard | Fixed |
 | 6 | Добавить platform write rate limits | `core/rate_limit/policies.py`, `platform/api/*` | Злоупотребление platform write снижено | P2 |
 | 7 | Усилить logging redaction | `core/logging/processors.py` | Вариантные секретные ключи redacted | P2 |
 | 8 | Реализовать limited audit view или удалить неиспользуемое limited разрешение | `core/platform/permissions.py`, `platform/api/audit_events.py` | Доступ support/compliance чётко определён | P2 |
@@ -350,8 +350,8 @@ ruff format --check .
 | `backend/app/invites/services/invites.py` | Нормализовать внешние ошибки для невалидного/истёкшего/использованного токена | Снизить перечисление состояний токена | `test_accept_invite_uses_generic_invalid_response` |
 | `backend/app/platform/repositories/platform_staff.py` | Fixed: добавлен метод блокировки active platform admin строк через `with_for_update()` | Предотвратить race condition последнего admin | Lock-aware service/repository regression tests; PostgreSQL concurrent test можно добавить при external DB |
 | `backend/app/platform/services/platform_staff.py` | Fixed: demote/suspend active platform admin проверяют наличие другого active admin после блокировки active admin rows | Предотвратить нарушение инварианта при конкурентном доступе | `test_cannot_demote_last_active_platform_admin`, `test_cannot_suspend_last_active_platform_admin`, allowed-with-other-admin tests |
-| `backend/app/core/config/settings.py` | Добавить `CorsSettings`: allowed_origins, credentials, methods, headers, exposed_headers | Конфигурация браузерной части должна быть явной | Settings validation tests |
-| `backend/app/main.py` | Добавить `CORSMiddleware` с использованием строгих настроек | Избежать будущего небезопасного wildcard patch | CORS response tests |
+| `backend/app/core/config/settings.py` | Fixed: добавлен `CorsSettings` с enabled, allowlist, methods, headers, exposed headers, credentials, max_age и validators | Конфигурация браузерной части должна быть явной | Settings validation tests добавлены |
+| `backend/app/main.py` | Fixed: `CORSMiddleware` подключается в `create_app()` только при enabled CORS и непустом allowlist | Избежать будущего небезопасного wildcard patch | CORS response tests добавлены |
 | `backend/app/core/rate_limit/policies.py` | Добавить platform write/revoke политики | Текущие политики охватывают только invite create/accept | Rate-limit tests для platform writes/revoke |
 | `backend/app/core/rate_limit/dependencies.py` | Разделить authenticated и public limiter dependencies | Текущий limiter всегда требует auth | Public endpoint limiter unit test |
 | `backend/app/core/logging/processors.py` | Использовать нормализованный ключ и substring-based redaction | Точный redaction по ключу слишком слаб | Redaction tests для raw-token, clientSecret, x-api-key, encrypted_raw_token |

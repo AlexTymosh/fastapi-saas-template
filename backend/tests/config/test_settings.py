@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.config.settings import get_settings
+from app.core.config.settings import Settings, get_settings
 from tests.helpers.settings import reset_settings_cache
 
 
@@ -167,5 +167,87 @@ def test_settings_reads_outbox_recovery_env(monkeypatch) -> None:
 
     assert settings.outbox.stale_processing_timeout_seconds == 120.5
     assert settings.outbox.recovery_batch_size == 75
+
+    reset_settings_cache()
+
+
+def test_cors_defaults_to_disabled() -> None:
+    settings = get_settings()
+
+    assert settings.cors.enabled is False
+    assert settings.cors.allow_origins == []
+    assert settings.cors.allow_credentials is False
+    assert settings.cors.allow_methods == [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ]
+    assert settings.cors.allow_headers == [
+        "Authorization",
+        "Content-Type",
+        "X-Request-ID",
+    ]
+    assert settings.cors.expose_headers == ["X-Request-ID", "Retry-After"]
+    assert settings.cors.max_age == 600
+
+
+def test_enabled_cors_requires_at_least_one_origin(monkeypatch) -> None:
+    monkeypatch.setenv("CORS__ENABLED", "true")
+    monkeypatch.setenv("CORS__ALLOW_ORIGINS", "[]")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="CORS__ALLOW_ORIGINS"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+def test_cors_rejects_wildcard_with_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("CORS__ENABLED", "true")
+    monkeypatch.setenv("CORS__ALLOW_ORIGINS", '["*"]')
+    monkeypatch.setenv("CORS__ALLOW_CREDENTIALS", "true")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="CORS__ALLOW_CREDENTIALS"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+def test_prod_rejects_cors_wildcard_origin() -> None:
+    with pytest.raises(ValueError, match="CORS__ALLOW_ORIGINS"):
+        Settings(
+            app={"environment": "prod"},
+            auth={"enabled": True},
+            api={"docs_enabled": False},
+            request_context={"trust_incoming_request_id": False},
+            rate_limiting={"enforced_by_edge": True},
+            outbox={"invite_delivery_enabled": False},
+            cors={"enabled": True, "allow_origins": ["*"]},
+        )
+
+
+def test_cors_list_normalization_removes_empty_values(monkeypatch) -> None:
+    monkeypatch.setenv("CORS__ENABLED", "true")
+    monkeypatch.setenv(
+        "CORS__ALLOW_ORIGINS",
+        '[" http://localhost:3000 ", "", "   ", "http://localhost:5173"]',
+    )
+    monkeypatch.setenv(
+        "CORS__ALLOW_HEADERS",
+        '[" Authorization ", "", " X-Request-ID "]',
+    )
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.cors.allow_origins == [
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
+    assert settings.cors.allow_headers == ["Authorization", "X-Request-ID"]
 
     reset_settings_cache()

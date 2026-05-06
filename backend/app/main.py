@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from scalar_fastapi import get_scalar_api_reference
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 
 from app.api.master_router import build_master_router
@@ -65,6 +66,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
         lifespan=lifespan,
     )
+
+    if resolved_settings.cors.enabled and resolved_settings.cors.allow_origins:
+        # CORS is added before local observability/context middleware so existing
+        # request instrumentation still wraps browser preflight requests.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=resolved_settings.cors.allow_origins,
+            allow_methods=resolved_settings.cors.allow_methods,
+            allow_headers=resolved_settings.cors.allow_headers,
+            allow_credentials=resolved_settings.cors.allow_credentials,
+            expose_headers=resolved_settings.cors.expose_headers,
+            max_age=resolved_settings.cors.max_age,
+        )
 
     app.add_middleware(
         RequestContextMiddleware,

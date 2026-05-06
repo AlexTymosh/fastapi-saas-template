@@ -110,6 +110,55 @@ class AuthSettings(BaseModel):
         return "RS256"
 
 
+class CorsSettings(BaseModel):
+    enabled: bool = False
+    allow_origins: list[str] = Field(default_factory=list)
+    allow_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
+    allow_headers: list[str] = Field(
+        default_factory=lambda: ["Authorization", "Content-Type", "X-Request-ID"]
+    )
+    expose_headers: list[str] = Field(
+        default_factory=lambda: ["X-Request-ID", "Retry-After"]
+    )
+    allow_credentials: bool = False
+    max_age: int | None = Field(default=600, ge=0)
+
+    @field_validator(
+        "allow_origins",
+        "allow_methods",
+        "allow_headers",
+        "expose_headers",
+        mode="before",
+    )
+    @classmethod
+    def normalize_string_list(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return []
+            return normalized
+        if isinstance(value, list):
+            return [
+                item.strip() for item in value if isinstance(item, str) and item.strip()
+            ]
+        return value
+
+    @model_validator(mode="after")
+    def validate_cors_policy(self) -> CorsSettings:
+        if self.enabled and not self.allow_origins:
+            raise ValueError("CORS__ALLOW_ORIGINS is required when CORS__ENABLED=true")
+        if self.allow_credentials and "*" in self.allow_origins:
+            raise ValueError(
+                "CORS__ALLOW_ORIGINS cannot contain '*' when "
+                "CORS__ALLOW_CREDENTIALS=true"
+            )
+        return self
+
+
 class RateLimitingSettings(BaseModel):
     enabled: bool = False
     enforced_by_edge: bool = False
@@ -189,6 +238,7 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    cors: CorsSettings = Field(default_factory=CorsSettings)
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
     outbox: OutboxSettings = Field(default_factory=OutboxSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
@@ -199,6 +249,8 @@ class Settings(BaseSettings):
         if env in {"staging", "prod"} and not self.auth.enabled:
             raise ValueError("AUTH__ENABLED must be true in staging/prod")
         if env == "prod":
+            if "*" in self.cors.allow_origins:
+                raise ValueError("CORS__ALLOW_ORIGINS cannot contain '*' in prod")
             if self.api.docs_enabled:
                 raise ValueError("API__DOCS_ENABLED must be false in prod")
             if self.request_context.trust_incoming_request_id:

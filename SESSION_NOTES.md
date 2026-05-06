@@ -77,3 +77,88 @@ cd backend && python -m pip install httpx --no-index
 - Local branch `main` is not present in this checkout; the only available branch is `work`.
 - Targeted and full pytest could not run in this container because `httpx` is not installed. Network/proxy restrictions prevented installing editable dev dependencies, and no cached `httpx` wheel is available for `--no-index` installation.
 - Full `pytest -q -m "not external_db"` still needs to be run in an environment with dev dependencies installed.
+
+---
+
+## Update: Explicit CORS Settings and Middleware
+
+## Current Focus
+
+Close the P2 browser-facing CORS security debt from `backend/docs/comprehensive_security_review_ru.md`.
+
+## Last Completed
+
+Added disabled-by-default, environment-driven CORS configuration and wired `CORSMiddleware` in the FastAPI app factory. CORS now requires an explicit origin allowlist when enabled, rejects wildcard origins with credentials, rejects wildcard origins in prod, normalises list values by trimming and dropping empty strings, and centrally exposes `X-Request-ID` plus `Retry-After` when CORS is enabled.
+
+## Files Recently Changed
+
+- `backend/app/core/config/settings.py`
+- `backend/app/main.py`
+- `backend/tests/config/test_settings.py`
+- `backend/tests/app/test_cors.py`
+- `.env.example`
+- `README.md`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `SESSION_NOTES.md`
+
+## Checks Run
+
+```bash
+pwd
+git branch --show-current
+git status --short
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && pytest -q tests/config/test_settings.py
+cd backend && pytest -q tests/app/test_cors.py
+cd backend && pytest -q -m "not external_db"
+cd backend && python -m pip install -e ".[dev]"
+python -m pip install httpx --no-index
+cd backend && python3.12 -m pytest -q tests/config/test_settings.py tests/app/test_cors.py
+cd backend && python3.12 -m pip install -e ".[dev]"
+python3.12 -m compileall -q backend/app/core/config/settings.py backend/app/main.py backend/tests/config/test_settings.py backend/tests/app/test_cors.py
+cd backend && python - <<'PY'
+from pydantic import ValidationError
+from app.core.config.settings import Settings
+
+assert Settings().cors.enabled is False
+try:
+    Settings(cors={"enabled": True, "allow_origins": []})
+except ValidationError as exc:
+    assert "CORS__ALLOW_ORIGINS" in str(exc)
+else:
+    raise AssertionError("missing origin validation failed")
+try:
+    Settings(cors={"enabled": True, "allow_origins": ["*"], "allow_credentials": True})
+except ValidationError as exc:
+    assert "CORS__ALLOW_CREDENTIALS" in str(exc)
+else:
+    raise AssertionError("wildcard credential validation failed")
+try:
+    Settings(
+        app={"environment": "prod"},
+        auth={"enabled": True},
+        api={"docs_enabled": False},
+        request_context={"trust_incoming_request_id": False},
+        rate_limiting={"enforced_by_edge": True},
+        outbox={"invite_delivery_enabled": False},
+        cors={"enabled": True, "allow_origins": ["*"]},
+    )
+except ValidationError as exc:
+    assert "CORS__ALLOW_ORIGINS" in str(exc)
+else:
+    raise AssertionError("prod wildcard validation failed")
+assert Settings(cors={"enabled": True, "allow_origins": [" http://localhost:3000 ", "", "   "]}).cors.allow_origins == ["http://localhost:3000"]
+print("manual settings checks passed")
+PY
+```
+
+## Known Risks
+
+- Pytest could not run in this container because the default Python is 3.10 while the project requires Python >=3.12 and `httpx` is not installed for `starlette.testclient`.
+- Installing dev dependencies could not complete because the configured package proxy returned `403 Forbidden`; `python3.12` is present but has no `pip`, `pytest`, or project dependencies installed.
+- Full `pytest -q -m "not external_db"` and targeted CORS/API tests still need to run in a Python 3.12 environment with dev dependencies installed.
+
+## Next Recommended Step
+
+Run the targeted and broad pytest commands in a fully provisioned Python 3.12 dev environment, then continue with the remaining open security debts from `backend/docs/comprehensive_security_review_ru.md`.
