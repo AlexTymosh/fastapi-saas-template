@@ -109,6 +109,7 @@ Expected flow:
 
 - Use structured JSON logging when configured.
 - Never log passwords, tokens, API keys, or raw personal data such as email/IP.
+- Logs must redact tokens, passwords, secrets, cookies, authorization headers, and API keys across common key variants.
 - Mask or hash identifiers when needed.
 
 ## Configuration

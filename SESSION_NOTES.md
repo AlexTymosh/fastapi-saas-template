@@ -232,3 +232,47 @@ cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching s
 - Pytest still cannot run in this container because `httpx` is not installed; installing backend dev dependencies is blocked by the configured proxy returning 403 for `setuptools>=69`.
 - The new Redis/Testcontainers integration tests could not reach Docker/Testcontainers execution because pytest stops while importing `tests/conftest.py` due missing `httpx`.
 - Run the targeted fake and integration suites in CI/developer environment with backend dev dependencies and Docker/Testcontainers available.
+
+
+---
+
+## Update: Structured Logging Redaction Hardening
+
+## Current Focus
+
+Close the P2 security debt for structured logging redaction coverage.
+
+## Last Completed
+
+Strengthened `backend/app/core/logging/processors.py` so structured application/security logs redact sensitive keys after normalising hyphenated, dotted, snake_case, camelCase, and PascalCase variants. Redaction now applies recursively through mappings, lists, and tuples, and value-based protection redacts Bearer, Basic, and JWT-like compact token strings before email masking.
+
+Updated `backend/tests/logging/test_processors.py` with regression coverage for exact, hyphenated, snake_case, camel/PascalCase, nested, list, tuple, authorization-key, auth-value, JWT-like, non-sensitive, email masking, sensitive-key-with-email, and no-input-mutation cases.
+
+Updated the Russian comprehensive security review to mark logging redaction hardening as fixed.
+
+## Files Recently Changed
+
+- `backend/app/core/logging/processors.py`
+- `backend/tests/logging/test_processors.py`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `AGENTS.md`
+- `SESSION_NOTES.md`
+
+## Checks Run
+
+```bash
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+cd backend && pytest -q tests/logging/test_processors.py  # blocked: missing httpx before test collection
+cd backend && pytest -q -m "not external_db"  # blocked: missing httpx before test collection
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && python -m compileall -q app/core/logging tests/logging/test_processors.py
+git diff --check
+cd backend && PYTHONPATH=. pytest -q --noconftest tests/logging/test_processors.py  # blocked: Python 3.10 lacks StrEnum
+cd backend && PYENV_VERSION=3.11.14 PYTHONPATH=. pytest -q --noconftest tests/logging/test_processors.py  # blocked: structlog not installed for Python 3.11 env
+```
+
+## Known Risks
+
+- Pytest remains blocked in the default Python 3.10 environment because `httpx` is missing from the installed dependencies; editable install is blocked by the configured package proxy returning 403 for `setuptools>=69`.
+- A conftest-free Python 3.11 retry bypassed the missing `httpx` import but could not run because the Python 3.11 environment does not have `structlog` installed.
