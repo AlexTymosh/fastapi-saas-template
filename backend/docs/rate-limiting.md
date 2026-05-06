@@ -120,12 +120,17 @@ Current e2e OTLP coverage validates export through OTel Collector debug logs for
 
 Prometheus/Grafana dashboards are out of scope for this phase, and `/metrics` is not exposed.
 
+## Testing coverage
+
+Platform write policies are covered by both fast fake-limiter API regression tests and Redis/Testcontainers integration tests. The fake tests keep fail-closed and transaction-boundary behaviour cheap to validate, while the integration tests exercise `limits`, async Redis storage, real Redis windows, and real over-limit responses for `platform_write` and `platform_staff_write`.
+
 ## Testing commands
 Run from `backend/`:
 
 ```bash
 pytest -q tests/rate_limit/test_policy_registry.py
 pytest -q tests/platform/test_platform_write_rate_limiting.py
+pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs
 pytest -q tests/api/test_rate_limiting.py
 pytest tests/api/test_rate_limiting_integration.py -q -m integration -rs
 pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
