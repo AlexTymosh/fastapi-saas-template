@@ -11,7 +11,7 @@ from app.organisations.services.access import OrganisationAccessService
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
-pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.bola]
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 def _identity() -> AuthenticatedPrincipal:

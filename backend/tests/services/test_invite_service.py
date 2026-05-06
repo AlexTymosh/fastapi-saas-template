@@ -20,12 +20,7 @@ from app.outbox.models.outbox_event import OutboxEventType
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
-pytestmark = [
-    pytest.mark.security,
-    pytest.mark.authz,
-    pytest.mark.audit,
-    pytest.mark.secrets,
-]
+pytestmark = [pytest.mark.security]
 
 
 @asynccontextmanager
@@ -52,6 +47,7 @@ def _identity(email: str = "user@example.com") -> AuthenticatedPrincipal:
     )
 
 
+@pytest.mark.authz
 def test_accept_invite_rejects_email_mismatch() -> None:
     service = _service()
     service.invite_repository = AsyncMock()
@@ -119,6 +115,7 @@ def test_accept_invite_provisions_missing_projection_user() -> None:
     service.user_service.get_or_create_current_user.assert_awaited_once()
 
 
+@pytest.mark.authz
 def test_user_with_active_membership_cannot_accept_invite_to_another_organisation() -> (
     None
 ):
@@ -178,6 +175,7 @@ def test_user_with_active_membership_cannot_accept_invite_to_another_organisatio
     service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
 
 
+@pytest.mark.authz
 def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
     service = _service()
     organisation_id = uuid4()
@@ -220,6 +218,7 @@ def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
     service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
 
 
+@pytest.mark.authz
 def test_sole_owner_cannot_be_transferred_by_accepting_invite() -> None:
     service = _service()
     invite_organisation_id = uuid4()
@@ -342,6 +341,7 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
     service.user_service.get_or_create_current_user.assert_not_called()
 
 
+@pytest.mark.authz
 def test_create_invite_admin_cannot_assign_admin_role() -> None:
     service = _service()
     service.user_service = AsyncMock()
@@ -376,6 +376,7 @@ def test_create_invite_admin_cannot_assign_admin_role() -> None:
         )
 
 
+@pytest.mark.authz
 def test_create_invite_rejects_owner_role() -> None:
     service = _service()
     service.user_service = AsyncMock()
@@ -489,6 +490,8 @@ def test_create_invite_translates_integrity_error_to_conflict() -> None:
         )
 
 
+@pytest.mark.audit
+@pytest.mark.secrets
 def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     service = _service()
     org_id = uuid4()
@@ -562,6 +565,8 @@ def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     service.token_sink.deliver.assert_not_called()
 
 
+@pytest.mark.audit
+@pytest.mark.secrets
 def test_resend_invite_updates_token_hash_and_publishes_outbox_event() -> None:
     service = _service()
     org_id = uuid4()
