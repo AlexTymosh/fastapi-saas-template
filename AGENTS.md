@@ -93,6 +93,7 @@ Expected flow:
 - Services raise application/domain exceptions.
 - Global FastAPI handlers format Problem Details responses.
 - Do not leak internals, stack traces, tokens, secrets, or raw sensitive data.
+- Token/credential-like flows must not reveal whether a token exists, expired, was revoked, or was already used; normalise external error responses.
 
 ## Security and auth
 

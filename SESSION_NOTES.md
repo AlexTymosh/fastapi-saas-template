@@ -397,3 +397,34 @@ PYENV_VERSION=3.12.12 python <static marker registration script>  # passed
 
 - Pytest could not collect or run in this container because `httpx` is not installed; installing backend dev dependencies is blocked by the configured proxy returning 403 for `setuptools>=69`.
 - Default Python 3.10 and available Python 3.11 cannot compile the suite because the tests use PEP 695 generic syntax; Python 3.12 compileall passed.
+
+
+## Update: Normalised Invite Token Error Responses
+
+## Current Focus
+
+Close security debt #9 from `backend/docs/comprehensive_security_review_ru.md`: normalise external invite accept errors for unusable invite token states.
+
+## Last Completed
+
+Implemented a single external Problem Details contract for unknown, expired pending, accepted, revoked, and expired invite tokens: HTTP 400 / `problem:bad-request` / `bad_request` / `Invalid or expired invite`. Raw invite tokens and token hashes remain out of logs/audit metadata, and the successful accept flow is not broadened.
+
+## Files Touched
+
+- `AGENTS.md`
+- `SESSION_NOTES.md`
+- `backend/app/invites/services/invites.py`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `backend/tests/api/test_invites.py`
+- `backend/tests/services/test_invite_service.py`
+
+## Checks Run
+
+```bash
+cd backend && pytest -q tests/services/test_invite_service.py  # blocked: missing httpx in default Python 3.10 env
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+cd backend && pytest -q tests/api/test_invites.py  # blocked: missing httpx in default Python 3.10 env
+cd backend && pytest -q -m "not external_db"  # blocked: missing httpx in default Python 3.10 env
+cd backend && ruff check .
+cd backend && ruff format --check .
+```

@@ -76,6 +76,24 @@ def _drain_outbox(migrated_session_factory, monkeypatch) -> None:
     run_async(process_all_claimed_outbox_events(migrated_session_factory))
 
 
+_INVALID_INVITE_PROBLEM = {
+    "type": "problem:bad-request",
+    "title": "Bad Request",
+    "status": 400,
+    "detail": "Invalid or expired invite",
+    "error_code": "bad_request",
+}
+
+
+def _assert_invalid_invite_problem(response) -> None:
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("application/problem+json")
+    body = response.json()
+    assert {
+        key: body[key] for key in _INVALID_INVITE_PROBLEM
+    } == _INVALID_INVITE_PROBLEM
+
+
 @pytest.mark.authz
 def test_invite_accept_rejects_when_user_already_has_active_membership(
     authenticated_client_factory,
@@ -577,6 +595,89 @@ def test_accept_invite_rejects_email_mismatch(
     assert response.status_code == 403
 
 
+@pytest.mark.integration
+@pytest.mark.secrets
+def test_invite_accept_normalises_unusable_token_state_problem_details(
+    authenticated_client_factory,
+    migrated_database_url: str,
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    owner_bundle = authenticated_client_factory(
+        identity=_identity_for("kc-owner-normalised", "owner-normalised@example.com"),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    sink = _override_token_sink(monkeypatch)
+    invite_emails = [
+        "normalised-expired@example.com",
+        "normalised-accepted@example.com",
+        "normalised-revoked@example.com",
+    ]
+    with owner_bundle.client as client:
+        created = client.post(
+            "/api/v1/organisations",
+            json={"name": "Normalised Invite Errors", "slug": "normalised-invites"},
+        )
+        assert created.status_code == 201
+        organisation_id = created.json()["id"]
+        for email in invite_emails:
+            invited = client.post(
+                f"/api/v1/organisations/{organisation_id}/invites",
+                json={"email": email, "role": "member"},
+            )
+            assert invited.status_code == 201
+
+    _drain_outbox(migrated_session_factory, monkeypatch)
+    expired_token = sink.token_for_email("normalised-expired@example.com")
+    accepted_token = sink.token_for_email("normalised-accepted@example.com")
+    revoked_token = sink.token_for_email("normalised-revoked@example.com")
+
+    async def _prepare_token_states() -> None:
+        from datetime import UTC, datetime, timedelta
+
+        async with migrated_session_factory() as session:
+            expired_invite = await session.scalar(
+                select(Invite).where(
+                    Invite.token_hash == sha256(expired_token.encode()).hexdigest()
+                )
+            )
+            revoked_invite = await session.scalar(
+                select(Invite).where(
+                    Invite.token_hash == sha256(revoked_token.encode()).hexdigest()
+                )
+            )
+            assert expired_invite is not None
+            assert revoked_invite is not None
+            expired_invite.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+            revoked_invite.status = InviteStatus.REVOKED
+            await session.commit()
+
+    run_async(_prepare_token_states())
+
+    invitee_bundle = authenticated_client_factory(
+        identity=_identity_for(
+            "kc-normalised-accepted",
+            "normalised-accepted@example.com",
+        ),
+        database_url=migrated_database_url,
+        redis_url=None,
+    )
+    with invitee_bundle.client as client:
+        accepted = client.post("/api/v1/invites/accept", json={"token": accepted_token})
+        assert accepted.status_code == 200
+
+        responses = [
+            client.post("/api/v1/invites/accept", json={"token": "unknown-token"}),
+            client.post("/api/v1/invites/accept", json={"token": expired_token}),
+            client.post("/api/v1/invites/accept", json={"token": accepted_token}),
+            client.post("/api/v1/invites/accept", json={"token": revoked_token}),
+        ]
+
+    for response in responses:
+        _assert_invalid_invite_problem(response)
+
+
 def test_accept_invite_rejects_expired_invite(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -635,7 +736,7 @@ def test_accept_invite_rejects_expired_invite(
     invitee_client = invitee_client_bundle.client
     with invitee_client as client:
         response = client.post("/api/v1/invites/accept", json={"token": token})
-        assert response.status_code == 409
+        _assert_invalid_invite_problem(response)
 
 
 @pytest.mark.authz
@@ -1070,9 +1171,7 @@ def test_invite_token_cannot_be_accepted_twice(
         assert first.status_code == 200
 
         second = client.post("/api/v1/invites/accept", json={"token": token})
-        assert second.status_code == 409
-        assert second.headers["content-type"].startswith("application/problem+json")
-        assert second.json()["error_code"] == "conflict"
+        _assert_invalid_invite_problem(second)
 
     async def _assert_state() -> None:
         async with migrated_session_factory() as session:
