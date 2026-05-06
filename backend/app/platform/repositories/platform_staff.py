@@ -81,6 +81,19 @@ class PlatformStaffRepository:
         await self.session.refresh(staff)
         return staff
 
+    async def lock_active_platform_admins(self) -> list[PlatformStaff]:
+        result = await self.session.execute(
+            select(PlatformStaff)
+            .where(
+                PlatformStaff.role == PlatformStaffRole.PLATFORM_ADMIN.value,
+                PlatformStaff.status == PlatformStaffStatus.ACTIVE.value,
+            )
+            .order_by(PlatformStaff.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars().all())
+
     async def count_active_platform_admins(self) -> int:
         count = (
             await self.session.execute(

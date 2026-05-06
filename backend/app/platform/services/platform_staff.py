@@ -85,7 +85,11 @@ class PlatformStaffService:
             staff.role == PlatformStaffRole.PLATFORM_ADMIN.value
             and role != PlatformStaffRole.PLATFORM_ADMIN
         ):
-            if await self.repository.count_active_platform_admins() <= 1:
+            active_admins = await self.repository.lock_active_platform_admins()
+            has_another_active_admin = any(
+                active_admin.id != staff.id for active_admin in active_admins
+            )
+            if not has_another_active_admin:
                 raise ConflictError(detail="Cannot demote last active platform admin")
         old_role = staff.role
         staff = await self.repository.update_role(staff=staff, role=role)
@@ -117,11 +121,13 @@ class PlatformStaffService:
             raise ConflictError(detail="Platform staff already suspended")
         if staff.user_id == actor.user.id:
             raise ConflictError(detail="Cannot suspend own platform staff record")
-        if (
-            staff.role == PlatformStaffRole.PLATFORM_ADMIN.value
-            and await self.repository.count_active_platform_admins() <= 1
-        ):
-            raise ConflictError(detail="Cannot suspend last active platform admin")
+        if staff.role == PlatformStaffRole.PLATFORM_ADMIN.value:
+            active_admins = await self.repository.lock_active_platform_admins()
+            has_another_active_admin = any(
+                active_admin.id != staff.id for active_admin in active_admins
+            )
+            if not has_another_active_admin:
+                raise ConflictError(detail="Cannot suspend last active platform admin")
         staff = await self.repository.suspend(staff=staff, reason=reason)
         await AuditEventService(self.session).record_event(
             audit_context=audit_context,

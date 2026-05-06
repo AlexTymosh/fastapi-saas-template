@@ -54,7 +54,7 @@
 | Секреты в логах/аудите | Утечка token/password/key | logging processors, audit metadata |
 | Утечка информации через ошибки | Перечисление token/email/resource | errors, invites |
 | Потеря аудита / неполный аудит | Пробел в криминалистике | audit service, transaction boundaries |
-| Race condition в admin/staff операциях | Удалён последний platform admin, нарушен owner invariant | membership/platform staff |
+| Конкурентные admin/staff операции | Удалён последний platform admin или нарушен owner invariant при похожих ошибках синхронизации | membership/platform staff |
 | Soft-deleted данные всё ещё видны | Раскрытие удалённых данных тенанта | organisation repositories/platform service |
 | Некорректная обработка будущих медицинских документов | Высокорисковое нарушение приватности | future file/document module, GDPR |
 
@@ -84,7 +84,7 @@
 
 | Проблема | File / location | Риск | Сценарий эксплуатации | Рекомендация | Приоритет |
 |---|---|---|---|---|---|
-| Защита последнего platform admin имеет race condition | `PlatformStaffService.change_role/suspend_staff()` | Блокировка платформы / нарушение управления | Два администратора понижаются/приостанавливаются одновременно; оба видят count > 1 | Блокировать строки активных platform admin через `SELECT ... FOR UPDATE` внутри write транзакции. Добавить concurrent test | P1 |
+| Защита последнего platform admin от race condition | `PlatformStaffService.change_role/suspend_staff()`, `PlatformStaffRepository.lock_active_platform_admins()` | Исправлено | Active platform admin rows блокируются через SQLAlchemy `with_for_update()` перед demote/suspend; PostgreSQL применяет `SELECT ... FOR UPDATE`, SQLite-тесты покрывают lock-aware path без имитации row-lock semantics | Сохранить regression tests для последнего admin и сценариев с другим active admin | Fixed |
 | Ограниченные audit permissions объявлены, но не применяются в audit list API | `permissions.py`, `platform/api/audit_events.py` | Избыточная видимость аудита | Будущая support/compliance роль получает слишком много данных аудита | Реализовать отдельный limited audit endpoint/filter/redaction или удалить неиспользуемый `AUDIT_READ_LIMITED` до реализации | P2 |
 | Platform role отделена от tenant role | `core/platform/write_context.py` | Низкий | Tenant owner пытается вызвать platform endpoints | Требует local user + active platform_staff + permission. Хороший baseline. Сохранить — нет superadmin bypass в tenant flows | — |
 
@@ -219,7 +219,7 @@
 
 | Проблема БД | File / location | Риск | Сценарий эксплуатации / сбоя | Рекомендация | Приоритет |
 |---|---|---|---|---|---|
-| Race condition последнего platform admin | `PlatformStaffService`, `PlatformStaffRepository` | Блокировка платформы | Одновременное понижение/приостановка обходит проверку count | Использовать row locks/serializable transaction для мутаций platform admin | P1 |
+| Race condition последнего platform admin | `PlatformStaffService`, `PlatformStaffRepository` | Исправлено | Demote/suspend active platform admin блокирует active platform admin rows перед проверкой инварианта | Fixed by row-level locking of active platform admin records before demote/suspend | Fixed |
 | Soft-deleted orgs видны через platform service | `platform_organisations.py` | Раскрытие удалённых данных, если не предусмотрено | Platform list/get возвращает все организации, включая строки с `deleted_at` | Добавить дефолтное `deleted_at is None` или явный флаг/разрешение `include_deleted` | P2/P3 |
 | Tenant soft delete обрабатывается в repository | `organisations/repositories.py` | Низкий | Tenant reads фильтруют `deleted_at is None`; slug переименовывается при удалении | Сохранить. Добавить тесты: удалённая org недоступна и slug можно переиспользовать | P3 |
 | One-user-one-org enforced для membership | `membership.py` | Низкий | Пользователь пытается создать активное членство в двух org | Хороший partial unique index | P4 |
@@ -261,8 +261,8 @@
 | GET | `/api/v1/platform/audit-events` | Да | AUDIT_READ | Global platform | Нет | Нет | Средний |
 | GET | `/api/v1/platform/staff` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Нет | Средний |
 | POST | `/api/v1/platform/staff` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Да | Средний |
-| PATCH | `/api/v1/platform/staff/{staff_id}/role` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Да | Средний/Высокий: риск race condition |
-| POST | `/api/v1/platform/staff/{staff_id}/suspend` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Да | Средний/Высокий: риск race condition |
+| PATCH | `/api/v1/platform/staff/{staff_id}/role` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Да | Низкий/Средний: last-admin invariant защищён row-level lock |
+| POST | `/api/v1/platform/staff/{staff_id}/suspend` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Да | Низкий/Средний: last-admin invariant защищён row-level lock |
 | POST | `/api/v1/platform/staff/{staff_id}/restore` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Да | Средний |
 
 _\* Код health router не был получен; публичный статус выведен из README/API wiring._
@@ -285,7 +285,7 @@ _\* Код health router не был получен; публичный стат
 | Invite brute force/rate limit | Неизвестно | 429 + Retry-After + Redis failure | Token attack | P2 |
 | Redis unavailable/timeout | Неизвестно | fail-closed для invite политик | Неопределённость доступности/безопасности | P2 |
 | Platform/tenant boundary | Неизвестно | Tenant user не может вызывать `/platform/*` | Platform escalation | P1 |
-| Last platform admin race | Вероятно отсутствует | Concurrent demote/suspend test | Platform lockout | P1 |
+| Last platform admin race | Покрыт lock-aware regression tests для demote/suspend; полноценная concurrency-гарантия зависит от PostgreSQL `SELECT ... FOR UPDATE` | PostgreSQL concurrent demote/suspend test при доступном external DB | Platform lockout | Fixed/P3 |
 | No secret logging | Неизвестно | Варианты redaction: token, raw-token, api-key, bearer, email | Утечка секретов | P2 |
 | Problem Details shape | Неизвестно | Схема 401/403/404/409/422/429/500 | Согласованность клиента/безопасности | P3 |
 | CORS | Неизвестно / не реализовано | Allowed origins, credentials, exposed headers | Браузерная мисконфигурация | P3 |
@@ -310,7 +310,6 @@ ruff format --check .
 |---|---|---|---|---|---|
 | P1 | Suspended users | `/users/me` разрешён для приостановленного пользователя | `users/api/users.py`, `users/services/users.py` | Приостановленный пользователь всё ещё использует защищённый endpoint | Добавить active-user guard |
 | P1 | Audit / invite | Invite accept не аудируется | `invites/services/invites.py` | Создание membership не имеет audit trail | Добавить `INVITE_ACCEPTED` audit event |
-| P1 | Platform admin | Race condition последнего platform admin | `platform/services/platform_staff.py` | Одновременное понижение/приостановка может заблокировать платформу | Блокировать строки / сериализовать admin мутации |
 | P2 | CORS | Нет явной CORS конфигурации | `main.py`, `settings.py` | Браузерный frontend, вероятно, будет исправлен небезопасным образом | Добавить environment-based CORS настройки |
 | P2 | Rate limit | Platform writes не имеют rate limit | `platform/api/*` | Злоупотребление с валидным platform токеном | Добавить platform write политики |
 | P2 | Logging | Redaction слишком точный по ключу | `logging/processors.py` | Вариантные секретные ключи могут утекать | Нормализовать и использовать substring-match чувствительных ключей |
@@ -329,7 +328,6 @@ ruff format --check .
 |---|---|---|---|---|
 | 1 | Добавить active-user guard для `/users/me` | `users/api/users.py`, `users/services/users.py`, `access_control/guards.py` | Приостановленный пользователь не может вызывать защищённый self endpoint | P1 |
 | 2 | Добавить invite accept audit event | `audit/models/audit_event.py`, `invites/services/invites.py`, tests | Создание membership через invite аудируемо | P1 |
-| 3 | Исправить race condition последнего platform admin | `platform/services/platform_staff.py`, `platform/repositories/platform_staff.py` | Одновременное понижение/приостановка не может удалить последнего admin | P1 |
 | 4 | Добавить BOLA regression tests | organisation/membership/invite tests | Cross-tenant UUID доступ остаётся заблокированным | P1 |
 | 5 | Добавить CORS настройки и middleware | `settings.py`, `main.py` | Браузерная безопасность явно настроена | P2 |
 | 6 | Добавить platform write rate limits | `core/rate_limit/policies.py`, `platform/api/*` | Злоупотребление platform write снижено | P2 |
@@ -349,8 +347,8 @@ ruff format --check .
 | `backend/app/audit/models/audit_event.py` | Добавить `INVITE_ACCEPTED` или `MEMBERSHIP_CREATED` action | Отсутствующий audit action | Enum/schema migration test |
 | `backend/app/invites/services/invites.py` | После создания membership в `accept_invite()` записать audit event | Принятие invite должно быть трассируемым | `test_accept_invite_records_audit_event` |
 | `backend/app/invites/services/invites.py` | Нормализовать внешние ошибки для невалидного/истёкшего/использованного токена | Снизить перечисление состояний токена | `test_accept_invite_uses_generic_invalid_response` |
-| `backend/app/platform/repositories/platform_staff.py` | Добавить метод для блокировки активных platform admins или целевой staff строки с `FOR UPDATE` | Предотвратить race condition последнего admin | Concurrent transaction test |
-| `backend/app/platform/services/platform_staff.py` | Обернуть count + demote/suspend в locked транзакцию | Предотвратить нарушение инварианта при конкурентном доступе | `test_cannot_concurrently_demote_last_admins` |
+| `backend/app/platform/repositories/platform_staff.py` | Fixed: добавлен метод блокировки active platform admin строк через `with_for_update()` | Предотвратить race condition последнего admin | Lock-aware service/repository regression tests; PostgreSQL concurrent test можно добавить при external DB |
+| `backend/app/platform/services/platform_staff.py` | Fixed: demote/suspend active platform admin проверяют наличие другого active admin после блокировки active admin rows | Предотвратить нарушение инварианта при конкурентном доступе | `test_cannot_demote_last_active_platform_admin`, `test_cannot_suspend_last_active_platform_admin`, allowed-with-other-admin tests |
 | `backend/app/core/config/settings.py` | Добавить `CorsSettings`: allowed_origins, credentials, methods, headers, exposed_headers | Конфигурация браузерной части должна быть явной | Settings validation tests |
 | `backend/app/main.py` | Добавить `CORSMiddleware` с использованием строгих настроек | Избежать будущего небезопасного wildcard patch | CORS response tests |
 | `backend/app/core/rate_limit/policies.py` | Добавить platform write/revoke политики | Текущие политики охватывают только invite create/accept | Rate-limit tests для platform writes/revoke |
