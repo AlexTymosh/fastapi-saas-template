@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from scalar_fastapi import get_scalar_api_reference
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 
 from app.api.master_router import build_master_router
@@ -75,6 +76,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(HttpMetricsMiddleware)
     app.add_middleware(AccessLogMiddleware)
+
+    if resolved_settings.cors.enabled and resolved_settings.cors.allow_origins:
+        cors_options = {
+            "allow_origins": resolved_settings.cors.allow_origins,
+            "allow_methods": resolved_settings.cors.allow_methods,
+            "allow_headers": resolved_settings.cors.allow_headers,
+            "expose_headers": resolved_settings.cors.expose_headers,
+            "allow_credentials": resolved_settings.cors.allow_credentials,
+        }
+        if resolved_settings.cors.max_age is not None:
+            cors_options["max_age"] = resolved_settings.cors.max_age
+
+        # Added after local middleware so CORS wraps the stack and also covers errors.
+        app.add_middleware(CORSMiddleware, **cors_options)
 
     register_exception_handlers(
         app,

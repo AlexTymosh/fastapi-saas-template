@@ -77,3 +77,75 @@ cd backend && python -m pip install httpx --no-index
 - Local branch `main` is not present in this checkout; the only available branch is `work`.
 - Targeted and full pytest could not run in this container because `httpx` is not installed. Network/proxy restrictions prevented installing editable dev dependencies, and no cached `httpx` wheel is available for `--no-index` installation.
 - Full `pytest -q -m "not external_db"` still needs to be run in an environment with dev dependencies installed.
+
+---
+
+## Update: Explicit CORS Settings and Middleware
+
+## Current Focus
+
+Close the P2 CORS security debt from `backend/docs/comprehensive_security_review_ru.md` by adding environment-driven CORS settings, validation, middleware wiring, and regression tests.
+
+## Last Completed
+
+Added `CorsSettings` under the central `Settings` model with safe defaults, JSON-list env parsing through pydantic-settings, list normalisation, and validation that:
+
+- keeps CORS disabled by default;
+- requires at least one origin when CORS is enabled;
+- rejects wildcard origins when credentials are enabled;
+- rejects wildcard origins in `prod`.
+
+Wired Starlette `CORSMiddleware` in `create_app()` only when CORS is enabled and origins are configured. CORS is added after the existing request context, metrics, and access-log middleware so it wraps the app stack without moving router registration into domain routers.
+
+## Files Recently Changed
+
+- `backend/app/core/config/settings.py`
+- `backend/app/main.py`
+- `backend/tests/config/test_settings.py`
+- `backend/tests/app/test_cors.py`
+- `.env.example`
+- `README.md`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `backend/docs/current-state.md`
+- `SESSION_NOTES.md`
+
+## Checks Run
+
+```bash
+cd backend && python -m pip install -e ".[dev]"
+python -m pip install httpx --no-index
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && pytest -q tests/config/test_settings.py
+cd backend && pytest -q tests/app/test_cors.py
+cd backend && pytest -q -m "not external_db"
+python -m compileall -q backend/app/core/config/settings.py backend/app/main.py backend/tests/config/test_settings.py backend/tests/app/test_cors.py
+cd backend && python - <<'PY'
+import os
+from app.core.config.settings import Settings
+os.environ['CORS__ENABLED'] = 'true'
+os.environ['CORS__ALLOW_ORIGINS'] = '[" http://localhost:3000 ", "", "http://localhost:5173"]'
+settings = Settings()
+assert settings.cors.allow_origins == ["http://localhost:3000", "http://localhost:5173"]
+print('cors settings import/normalisation ok')
+PY
+```
+
+## Known Risks
+
+- Local branch `main` is not present in this checkout; work was done on the current branch `work`.
+- Pytest commands could not run in this container because `httpx` is missing and package installation is blocked by proxy restrictions / absent no-index wheels.
+- Run the targeted CORS/settings tests and the broad non-external-db suite in an environment with dev dependencies installed.
+
+## Next Recommended Step
+
+Install backend dev dependencies in CI/developer environment and run:
+
+```bash
+cd backend
+pytest -q tests/config/test_settings.py
+pytest -q tests/app/test_cors.py
+pytest -q -m "not external_db"
+```
+
+Additional environment note: the default `python` is 3.10.19, while the project imports `enum.StrEnum`; a manual app import check on Python 3.10 fails on that standard-library mismatch. `PYENV_VERSION=3.11.14` is available, but this interpreter does not have backend dependencies such as `cryptography` installed in the container.

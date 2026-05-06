@@ -169,3 +169,81 @@ def test_settings_reads_outbox_recovery_env(monkeypatch) -> None:
     assert settings.outbox.recovery_batch_size == 75
 
     reset_settings_cache()
+
+
+def test_default_cors_disabled(monkeypatch) -> None:
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.cors.enabled is False
+    assert settings.cors.allow_origins == []
+    assert settings.cors.allow_credentials is False
+
+    reset_settings_cache()
+
+
+def test_enabled_cors_requires_origin(monkeypatch) -> None:
+    monkeypatch.setenv("CORS__ENABLED", "true")
+    monkeypatch.setenv("CORS__ALLOW_ORIGINS", "[]")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="CORS__ALLOW_ORIGINS"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+def test_cors_rejects_wildcard_with_credentials(monkeypatch) -> None:
+    monkeypatch.setenv("CORS__ENABLED", "true")
+    monkeypatch.setenv("CORS__ALLOW_ORIGINS", '["*"]')
+    monkeypatch.setenv("CORS__ALLOW_CREDENTIALS", "true")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="wildcard origins"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+def test_prod_rejects_cors_wildcard_origin(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "prod")
+    monkeypatch.setenv("AUTH__ENABLED", "true")
+    monkeypatch.setenv("API__DOCS_ENABLED", "false")
+    monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv(
+        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    )
+    monkeypatch.setenv("CORS__ENABLED", "true")
+    monkeypatch.setenv("CORS__ALLOW_ORIGINS", '["*"]')
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="CORS wildcard origins"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+def test_cors_list_normalisation_removes_empty_values(monkeypatch) -> None:
+    monkeypatch.setenv("CORS__ENABLED", "true")
+    monkeypatch.setenv(
+        "CORS__ALLOW_ORIGINS",
+        '[" http://localhost:3000 ", "", "  ", "http://localhost:5173"]',
+    )
+    monkeypatch.setenv("CORS__ALLOW_METHODS", '["GET", " ", "POST"]')
+    monkeypatch.setenv("CORS__ALLOW_HEADERS", '[" Authorization ", "", "Content-Type"]')
+    monkeypatch.setenv("CORS__EXPOSE_HEADERS", '[" X-Request-ID ", "", "Retry-After"]')
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.cors.allow_origins == [
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
+    assert settings.cors.allow_methods == ["GET", "POST"]
+    assert settings.cors.allow_headers == ["Authorization", "Content-Type"]
+    assert settings.cors.expose_headers == ["X-Request-ID", "Retry-After"]
+
+    reset_settings_cache()
