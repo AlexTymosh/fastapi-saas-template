@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
+from typing import NoReturn
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -14,7 +15,12 @@ from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTarget
 from app.audit.services.audit_events import AuditEventService
 from app.core.auth import AuthenticatedPrincipal
 from app.core.config.settings import get_settings
-from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.errors.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.logging import get_logger
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.repositories.invites import InviteRepository
@@ -25,6 +31,12 @@ from app.outbox.models.outbox_event import OutboxEventType
 from app.outbox.services.outbox import OutboxService
 from app.outbox.services.payload_crypto import OutboxPayloadCrypto
 from app.users.services.users import UserService
+
+_INVALID_INVITE_DETAIL = "Invalid or expired invite"
+
+
+def _raise_invalid_invite_token() -> NoReturn:
+    raise BadRequestError(detail=_INVALID_INVITE_DETAIL)
 
 
 class InviteService:
@@ -163,13 +175,8 @@ class InviteService:
                 mark_expired_by_hash = (
                     self.invite_repository.mark_pending_invite_expired_by_token_hash
                 )
-                expired = await mark_expired_by_hash(token_hash=token_hash, now=now)
-                if expired is not None:
-                    raise ConflictError(detail="Invite has expired")
-                existing = await self.invite_repository.get_by_token_hash(token_hash)
-                if existing is None:
-                    raise NotFoundError(detail="Invite not found")
-                raise ConflictError(detail="Invite is no longer pending")
+                await mark_expired_by_hash(token_hash=token_hash, now=now)
+                _raise_invalid_invite_token()
             if identity.email is None or invite.email.lower() != identity.email.lower():
                 raise ForbiddenError(
                     detail="Invite email does not match authenticated user"

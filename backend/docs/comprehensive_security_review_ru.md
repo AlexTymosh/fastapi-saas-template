@@ -111,7 +111,7 @@
 | `POST /api/v1/organisations/{organisation_id}/invites` | organisation_id | Актор должен быть owner/admin org | Низкий | Fixed: regression test подтверждает 403 для cross-org invite create и отсутствие созданного invite | Fixed |
 | `DELETE /api/v1/organisations/{organisation_id}/invites/{invite_id}` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: regression test подтверждает 404 для cross-org invite revoke и сохранение pending invite | Fixed |
 | `POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: regression test подтверждает 404 для cross-org invite resend и неизменность token/expires/status | Fixed |
-| `POST /api/v1/invites/accept` | token | Hash токена + совпадение аутентифицированного email + verified email | Средний | Добавить audit + нормализованный error response | P1/P3 |
+| `POST /api/v1/invites/accept` | token | Hash токена + совпадение аутентифицированного email + verified email | Средний | Fixed: неиспользуемые/неизвестные/истёкшие/повторно использованные/отозванные token states возвращают единый Problem Details 400 `Invalid or expired invite`; invite accept audit остаётся отдельным P1 debt | Fixed/P1 audit |
 | `/api/v1/platform/*` | user/org/staff/audit IDs | Platform permission guard + write rate limits + limited audit view | Средний по дизайну | Сохранять rate-limit и limited-view regression coverage | Fixed/P2 ongoing hardening |
 
 ---
@@ -121,7 +121,7 @@
 | Проблема | File / location | Риск | Сценарий эксплуатации | Рекомендация | Приоритет |
 |---|---|---|---|---|---|
 | Принятие invite не аудируется | `InviteService.accept_invite()` | Создание membership происходит без audit trail | Пользователь принимает invite; система создаёт membership, но нет события invite_accepted / membership-created-by-invite | Добавить `AuditAction.INVITE_ACCEPTED` или `MEMBERSHIP_CREATED`. Включить organisation_id, invite_id, membership_id, role. Добавить тест | P1 |
-| Состояние токена различимо | `accept_invite()` возвращает: Invite not found, Invite has expired, Invite is no longer pending | Перечисление состояний токена для аутентифицированных атакующих | Атакующий перебирает токены и узнаёт, существовал ли токен / истёк / был использован | Вернуть одно обобщённое сообщение для невалидного invite токена. Сохранять подробную причину только в audit/metrics | P3 |
+| Fixed: состояние invite token больше не различимо внешним API | `accept_invite()` нормализует unknown / expired pending / accepted / revoked / expired token states | Снижено | Внешний ответ больше не раскрывает, существовал ли токен, истёк ли он или был использован/отозван | Сохранять единый Problem Details 400 `Invalid or expired invite`; подробности не отдавать клиенту и не писать raw token/token hash в audit/logs | Fixed |
 | Отзыв invite не имеет rate limit | `invites/api/invites.py` | Перебор invite ID / злоупотребление скомпрометированным admin | Admin токен используется для brute-force invite ID внутри org | Добавить политику для invite revoke/resend/admin write действий | P3 |
 | Сырой токен не хранится в таблице invites | `InviteService`, Invite model | Низкий | Утечка БД раскрывает только хэши токенов, не сырые токены | Хорошо. Сохранить SHA-256 hash + high entropy token. Рассмотреть HMAC с server secret для усиления token_hash | P3 |
 | Accept атомарен по статусу invite | `accept_pending_invite_by_token_hash()` | Низкий | Два пользователя пытаются использовать один токен | Атомарный `UPDATE ... WHERE status=pending` блокирует replay. Добавить concurrency regression test | — |
@@ -200,7 +200,7 @@
 | Необработанное исключение | Общий Internal Server Error Problem Details | Низкий | Хорошо; стек трейс не утекает | P4 |
 | Route 404 | Общий ответ 404 | Низкий | Хорошо | P4 |
 | Validation errors | Возвращаются поле-уровень invalid params | Низкий/Средний | Приемлемо для API клиентов. Избегать включения сырых входных значений | P4 |
-| Invite accept невалидный токен | Различает: not found / expired / no longer pending | Средний | Нормализовать внешний ответ до "Invalid or expired invite" | P3 |
+| Invite accept невалидный токен | Fixed: unknown / expired pending / accepted / revoked / expired states возвращают единый Problem Details 400 `Invalid or expired invite` | Снижено | Сохранять нормализованный внешний ответ без token-state details | Fixed |
 | Auth errors | Конкретные сообщения об issuer/audience/expired | Низкий | Приемлемо для dev/API клиентов; рассмотреть обобщённые auth details в prod | P4 |
 | Дублирующийся slug/email | Сообщения о конфликте раскрывают существование | Низкий/Средний | Для tenant-аутентифицированных flows приемлемо. Для будущей публичной регистрации использовать обобщённые формулировки | P3 |
 
@@ -317,7 +317,7 @@ ruff format --check .
 | Fixed | Logging | Structured logging redaction усилен | `logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и auth-token-like значения редактируются рекурсивно | Сохранять regression coverage для новых вариантов ключей |
 | Fixed | Platform audit | Limited audit permission применяется | `permissions.py`, `audit_events.py`, `platform_audit_events.py` | Limited actors получают только safe summary audit view | Сохранять redaction regression tests |
 | P2/P3 | Soft delete | Platform org list включает удалённые orgs | `platform_organisations.py` | Раскрытие удалённых данных, если не предусмотрено | Добавить флаг/разрешение `include_deleted` |
-| P3 | Invite errors | Состояние токена различимо | `invites/services/invites.py` | Низкая вероятность перечисления | Нормализовать внешние сообщения |
+| Fixed | Invite errors | Invite token state oracle закрыт | `invites/services/invites.py`, `tests/services/test_invite_service.py`, `tests/api/test_invites.py` | Unknown/expired/accepted/revoked states получают одинаковый внешний Problem Details contract | Сохранять regression coverage |
 | P3 | Rate limit | Invite revoke не имеет rate limit | `invites/api/invites.py` | Злоупотребление/перебор с admin токеном | Добавить revoke политику |
 | P3 | Audit | Platform services не имеют actor-match guard | `platform/services/*` | Риск внутреннего злоупотребления | Добавить `_ensure_audit_actor_matches()` |
 | P4 | Auth claims | Неиспользуемый `resource_client_id` | `auth_claims.py` | Путаница разработчика | Удалить или применить |
@@ -335,7 +335,7 @@ ruff format --check .
 | 6 | Fixed: добавлены platform write rate limits | `core/rate_limit/policies.py`, `core/platform/write_context.py`, `platform/api/*`, `tests/platform/test_platform_write_rate_limiting*.py` | Злоупотребление platform write снижено; 429 + Retry-After, fail-closed 503, Redis/Testcontainers over-limit и блокировка до write transaction/service body покрыты тестами | Completed |
 | 7 | Fixed: усилить logging redaction | `core/logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и Bearer/Basic/JWT-like значения redacted рекурсивно; email masking сохранён | Completed |
 | 8 | Fixed: реализован limited audit view для `AUDIT_READ_LIMITED` | `core/platform/permissions.py`, `platform/api/audit_events.py`, `platform/schemas/platform_audit_events.py`, tests | Support/compliance получает безопасный audit summary; raw `metadata_json`, `ip_address`, `user_agent`, `reason`, `actor_user_id` не отдаются | Completed |
-| 9 | Нормализовать invite token error responses | `invites/services/invites.py` | Меньше утечки состояния токена | P3 |
+| 9 | Fixed: нормализованы invite token error responses | `invites/services/invites.py`, `tests/services/test_invite_service.py`, `tests/api/test_invites.py` | Unknown / expired pending / accepted / revoked / expired token states возвращают одинаковый Problem Details 400 `Invalid or expired invite` | Fixed |
 | 10 | Fixed: security test suite markers добавлены | `backend/pyproject.toml`, существующие security-релевантные тесты | Security regressions запускаются явно через `security` и focused markers (`bola`, `rate_limit`, `audit`, `cors`, `logging_security`, `auth`, `authz`, `secrets`) | Fixed |
 
 ---
@@ -348,7 +348,7 @@ ruff format --check .
 | `backend/app/users/api/users.py` | Предпочтительно использовать централизованный `CurrentUserContext` / active user dependency | Избегать разбросанных проверок активности | Auth dependency tests |
 | `backend/app/audit/models/audit_event.py` | Добавить `INVITE_ACCEPTED` или `MEMBERSHIP_CREATED` action | Отсутствующий audit action | Enum/schema migration test |
 | `backend/app/invites/services/invites.py` | После создания membership в `accept_invite()` записать audit event | Принятие invite должно быть трассируемым | `test_accept_invite_records_audit_event` |
-| `backend/app/invites/services/invites.py` | Нормализовать внешние ошибки для невалидного/истёкшего/использованного токена | Снизить перечисление состояний токена | `test_accept_invite_uses_generic_invalid_response` |
+| `backend/app/invites/services/invites.py` | Fixed: внешние ошибки для невалидного/истёкшего/использованного/отозванного invite token нормализованы | Снизить перечисление состояний токена | `test_accept_invite_normalises_unusable_token_state_errors`, `test_invite_accept_normalises_unusable_token_state_problem_details` |
 | `backend/app/platform/repositories/platform_staff.py` | Fixed: добавлен метод блокировки active platform admin строк через `with_for_update()` | Предотвратить race condition последнего admin | Lock-aware service/repository regression tests; PostgreSQL concurrent test можно добавить при external DB |
 | `backend/app/platform/services/platform_staff.py` | Fixed: demote/suspend active platform admin проверяют наличие другого active admin после блокировки active admin rows | Предотвратить нарушение инварианта при конкурентном доступе | `test_cannot_demote_last_active_platform_admin`, `test_cannot_suspend_last_active_platform_admin`, allowed-with-other-admin tests |
 | `backend/app/core/config/settings.py` | Fixed: добавлен `CorsSettings` с enabled, allow_origins, credentials, methods, headers, exposed_headers, max_age и validation | Конфигурация браузерной части явная; wildcard + credentials и prod wildcard запрещены | Settings validation tests |

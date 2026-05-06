@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.audit.context import AuditContext
 from app.core.auth import AuthenticatedPrincipal
-from app.core.errors.exceptions import ConflictError, ForbiddenError
+from app.core.errors.exceptions import BadRequestError, ConflictError, ForbiddenError
 from app.invites.models.invite import Invite, InviteStatus
 from app.invites.services.invites import InviteService
 from app.memberships.models.membership import Membership, MembershipRole
@@ -20,7 +20,7 @@ from app.outbox.models.outbox_event import OutboxEventType
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
-pytestmark = [pytest.mark.security]
+pytestmark = [pytest.mark.security, pytest.mark.unit]
 
 
 @asynccontextmanager
@@ -45,6 +45,74 @@ def _identity(email: str = "user@example.com") -> AuthenticatedPrincipal:
         email=email,
         email_verified=True,
     )
+
+
+def _assert_no_accept_success_side_effects(service: InviteService) -> None:
+    service.user_service.get_or_create_current_user.assert_not_awaited()
+    service.membership_service.create_membership.assert_not_awaited()
+    service.outbox_service.publish_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("existing_invite_status", "expired_invite_returned"),
+    [
+        (None, False),
+        (InviteStatus.PENDING, True),
+        (InviteStatus.ACCEPTED, False),
+        (InviteStatus.REVOKED, False),
+        (InviteStatus.EXPIRED, False),
+    ],
+)
+def test_accept_invite_normalises_unusable_token_state_errors(
+    existing_invite_status: InviteStatus | None, expired_invite_returned: bool
+) -> None:
+    service = _service()
+    service.invite_repository = AsyncMock()
+    service.invite_repository.accept_pending_invite_by_token_hash = AsyncMock(
+        return_value=None
+    )
+    service.invite_repository.mark_pending_invite_expired_by_token_hash = AsyncMock(
+        return_value=Invite(
+            email="invited@example.com",
+            organisation_id=uuid4(),
+            role=MembershipRole.MEMBER,
+            status=InviteStatus.EXPIRED,
+            token_hash="x",
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+        if expired_invite_returned
+        else None
+    )
+    service.invite_repository.get_by_token_hash = AsyncMock(
+        return_value=Invite(
+            email="invited@example.com",
+            organisation_id=uuid4(),
+            role=MembershipRole.MEMBER,
+            status=existing_invite_status,
+            token_hash="x",
+        )
+        if existing_invite_status is not None
+        else None
+    )
+    service.user_service = AsyncMock()
+    service.user_service.get_or_create_current_user = AsyncMock()
+    service.membership_service = AsyncMock()
+    service.membership_service.create_membership = AsyncMock()
+
+    with pytest.raises(BadRequestError) as exc_info:
+        run_async(
+            service.accept_invite(
+                token="abc",
+                identity=_identity("invited@example.com"),
+            )
+        )
+
+    assert exc_info.value.detail == "Invalid or expired invite"
+    assert exc_info.value.status_code == 400
+    assert str(exc_info.value.error_code) == "bad_request"
+    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
+    service.invite_repository.get_by_token_hash.assert_not_awaited()
+    _assert_no_accept_success_side_effects(service)
 
 
 @pytest.mark.authz
@@ -296,7 +364,7 @@ def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
     service.user_service = AsyncMock()
     service.user_service.ensure_user_is_active = AsyncMock()
 
-    with pytest.raises(ConflictError):
+    with pytest.raises(BadRequestError) as exc_info:
         run_async(
             service.accept_invite(
                 token="abc",
@@ -304,6 +372,7 @@ def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
             )
         )
 
+    assert exc_info.value.detail == "Invalid or expired invite"
     service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
     service.user_service.get_or_create_current_user.assert_not_called()
 
@@ -329,7 +398,7 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
     service.user_service = AsyncMock()
     service.user_service.ensure_user_is_active = AsyncMock()
 
-    with pytest.raises(ConflictError):
+    with pytest.raises(BadRequestError) as exc_info:
         run_async(
             service.accept_invite(
                 token="abc",
@@ -337,6 +406,7 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
             )
         )
 
+    assert exc_info.value.detail == "Invalid or expired invite"
     service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
     service.user_service.get_or_create_current_user.assert_not_called()
 
