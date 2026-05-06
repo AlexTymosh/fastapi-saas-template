@@ -37,3 +37,43 @@ python -m ruff check backend/app/platform/repositories/platform_staff.py backend
 ## Next Recommended Step
 
 Continue with the remaining open P1 security debts from `backend/docs/comprehensive_security_review_ru.md`, especially invite accept audit coverage and BOLA regression tests.
+
+---
+
+## Update: Tenant BOLA / IDOR Regression Tests
+
+## Current Focus
+
+Close the P1/P3 tenant isolation security debt from `backend/docs/comprehensive_security_review_ru.md` by adding API regression tests for BOLA/IDOR scenarios across organisation, membership, directory, and invite tenant endpoints.
+
+## Last Completed
+
+Added `backend/tests/api/test_tenant_bola_idor.py` with regression coverage for:
+
+- Cross-org organisation read/update/delete attempts.
+- Directory and management membership authorisation boundaries.
+- Cross-org `membership_id` role-change/delete attempts returning not found and leaving the foreign membership unchanged.
+- Cross-org invite create/revoke/resend attempts returning forbidden/not found and leaving foreign invite state unchanged.
+- Problem Details response assertions for the blocked tenant access paths.
+
+Updated `backend/docs/comprehensive_security_review_ru.md` so the BOLA/IDOR review, security test coverage, and fix plan no longer state that these tenant UUID regression tests are missing.
+
+## Checks Run
+
+```bash
+cd backend && ruff check tests/api/test_tenant_bola_idor.py
+cd backend && ruff format --check tests/api/test_tenant_bola_idor.py
+cd backend && ruff check .
+cd backend && ruff format --check .
+python -m compileall -q backend/tests/api/test_tenant_bola_idor.py
+cd backend && pytest -q tests/api/test_tenant_bola_idor.py
+cd backend && pytest -q -m "not external_db"
+cd backend && python -m pip install -e ".[dev]"
+cd backend && python -m pip install httpx --no-index
+```
+
+## Known Risks
+
+- Local branch `main` is not present in this checkout; the only available branch is `work`.
+- Targeted and full pytest could not run in this container because `httpx` is not installed. Network/proxy restrictions prevented installing editable dev dependencies, and no cached `httpx` wheel is available for `--no-index` installation.
+- Full `pytest -q -m "not external_db"` still needs to be run in an environment with dev dependencies installed.
