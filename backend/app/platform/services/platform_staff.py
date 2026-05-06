@@ -85,8 +85,10 @@ class PlatformStaffService:
             staff.role == PlatformStaffRole.PLATFORM_ADMIN.value
             and role != PlatformStaffRole.PLATFORM_ADMIN
         ):
-            if await self.repository.count_active_platform_admins() <= 1:
-                raise ConflictError(detail="Cannot demote last active platform admin")
+            await self._ensure_other_active_platform_admin_exists(
+                staff_id=staff.id,
+                detail="Cannot demote last active platform admin",
+            )
         old_role = staff.role
         staff = await self.repository.update_role(staff=staff, role=role)
         await AuditEventService(self.session).record_event(
@@ -117,11 +119,11 @@ class PlatformStaffService:
             raise ConflictError(detail="Platform staff already suspended")
         if staff.user_id == actor.user.id:
             raise ConflictError(detail="Cannot suspend own platform staff record")
-        if (
-            staff.role == PlatformStaffRole.PLATFORM_ADMIN.value
-            and await self.repository.count_active_platform_admins() <= 1
-        ):
-            raise ConflictError(detail="Cannot suspend last active platform admin")
+        if staff.role == PlatformStaffRole.PLATFORM_ADMIN.value:
+            await self._ensure_other_active_platform_admin_exists(
+                staff_id=staff.id,
+                detail="Cannot suspend last active platform admin",
+            )
         staff = await self.repository.suspend(staff=staff, reason=reason)
         await AuditEventService(self.session).record_event(
             audit_context=audit_context,
@@ -133,6 +135,14 @@ class PlatformStaffService:
             metadata_json={"target_user_id": str(staff.user_id), "role": staff.role},
         )
         return staff
+
+    async def _ensure_other_active_platform_admin_exists(
+        self, *, staff_id: UUID, detail: str
+    ) -> None:
+        active_admins = await self.repository.lock_active_platform_admins()
+        has_other_active_admin = any(admin.id != staff_id for admin in active_admins)
+        if not has_other_active_admin:
+            raise ConflictError(detail=detail)
 
     async def restore_staff(
         self, *, staff_id: UUID, reason: str, audit_context: AuditContext

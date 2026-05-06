@@ -2,36 +2,34 @@
 
 ## Current Focus
 
-Align documentation with the actual backend architecture and create a stable AI-agent handoff structure.
+Close P1 security debt for the last active platform admin race condition.
 
 ## Last Completed
 
-Initial documentation alignment created canonical architecture/current-state handoff documents and removed references to deleted draft docs.
+Implemented transaction-safe protection for the invariant that at least one active platform admin remains after platform staff demote/suspend operations. Active platform admin rows are locked with SQLAlchemy `with_for_update()` before checking the invariant.
 
 ## Files Recently Changed
 
-- `AGENTS.md`
-- `README.md`
+- `backend/app/platform/repositories/platform_staff.py`
+- `backend/app/platform/services/platform_staff.py`
+- `backend/tests/platform/test_platform_staff_management.py`
+- `backend/docs/comprehensive_security_review_ru.md`
 - `SESSION_NOTES.md`
-- `backend/docs/architecture.md`
-- `backend/docs/current-state.md`
 
 ## Known Risks
 
-- README must not link to deleted files.
-- `backend/docs/rate-limiting.md` must remain the only canonical rate-limiting doc.
-- Documentation must not claim planned features as implemented.
-- CI status still needs separate verification.
+- SQLite test databases do not provide PostgreSQL row-level locking semantics; regression tests cover the lock-aware path, while PostgreSQL `SELECT ... FOR UPDATE` provides the production concurrency guarantee.
+- CI status still needs separate verification after dependencies are available in the environment.
 
 ## Next Recommended Step
 
-Run documentation link/grep checks, then review whether CI and access-control tests need expansion.
+Continue with the remaining P1 security debt from `backend/docs/comprehensive_security_review_ru.md`: add an active-user guard for `/users/me` and audit invite acceptance.
 
-## Checks To Run
+## Checks Run
 
 ```bash
-grep -R "README[.]draft[.]md" -n .
-grep -R "rate[_]limiting[.]md" -n .
-grep -R "Keycloak . coarse roles" -n .
-grep -R "Metrics and tracing are optional and not incl[u]ded" -n .
+pytest -q backend/tests/platform/test_platform_staff_management.py
+python -m pip install -e ".[dev]"
+python -m ruff format backend/app/platform/services/platform_staff.py backend/app/platform/repositories/platform_staff.py backend/tests/platform/test_platform_staff_management.py
+python -m ruff check backend/app/platform/services/platform_staff.py backend/app/platform/repositories/platform_staff.py backend/tests/platform/test_platform_staff_management.py
 ```

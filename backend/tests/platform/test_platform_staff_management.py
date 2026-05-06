@@ -2,10 +2,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
-from app.core.platform import PlatformRole
-from app.platform.models.platform_staff import PlatformStaffStatus
+from app.core.errors.exceptions import ConflictError
+from app.core.platform import PlatformActor, PlatformPermission, PlatformRole
+from app.platform.models.platform_staff import PlatformStaffRole, PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.platform.services.platform_staff import PlatformStaffService
 from app.users.models.user import UserStatus
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
@@ -109,6 +112,159 @@ def staff_env(
         comp_bundle=comp_bundle,
         admin_bundle=admin_bundle,
     )
+
+
+def _platform_actor(user, staff) -> PlatformActor:
+    return PlatformActor(
+        user=user,
+        staff=staff,
+        permissions=frozenset({PlatformPermission.PLATFORM_STAFF_MANAGE}),
+    )
+
+
+def test_platform_staff_repository_locks_active_platform_admins(
+    migrated_session_factory,
+):
+    _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-lock-admin",
+        email="lock-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-lock-admin-suspended",
+        email="lock-admin-suspended@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+    _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-lock-support",
+        email="lock-support@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                # SQLite does not enforce PostgreSQL row-level lock semantics in tests;
+                # production uses SELECT ... FOR UPDATE through with_for_update().
+                admins = await PlatformStaffRepository(
+                    session
+                ).lock_active_platform_admins()
+                assert len(admins) == 1
+                assert admins[0].role == PlatformRole.PLATFORM_ADMIN.value
+                assert admins[0].status == PlatformStaffStatus.ACTIVE.value
+
+    run_async(_run())
+
+
+def test_cannot_demote_last_active_platform_admin(staff_env, migrated_session_factory):
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                service = PlatformStaffService(session)
+                with pytest.raises(ConflictError, match="last active platform admin"):
+                    await service.change_role(
+                        staff_id=staff_env.admin_staff.id,
+                        actor=_platform_actor(
+                            staff_env.comp_user, staff_env.admin_staff
+                        ),
+                        role=PlatformStaffRole.SUPPORT_AGENT,
+                        reason="last admin regression",
+                        audit_context=AuditContext(
+                            actor_user_id=staff_env.comp_user.id
+                        ),
+                    )
+
+    run_async(_run())
+
+
+def test_cannot_suspend_last_active_platform_admin(staff_env, migrated_session_factory):
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                service = PlatformStaffService(session)
+                with pytest.raises(ConflictError, match="last active platform admin"):
+                    await service.suspend_staff(
+                        staff_id=staff_env.admin_staff.id,
+                        actor=_platform_actor(
+                            staff_env.comp_user, staff_env.admin_staff
+                        ),
+                        reason="last admin regression",
+                        audit_context=AuditContext(
+                            actor_user_id=staff_env.comp_user.id
+                        ),
+                    )
+
+    run_async(_run())
+
+
+def test_can_demote_platform_admin_when_another_active_admin_exists(
+    staff_env, migrated_session_factory
+):
+    _, second_admin_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-second-admin-demote",
+        email="second-admin-demote@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    response = staff_env.admin_bundle.client.patch(
+        f"/api/v1/platform/staff/{second_admin_staff.id}/role",
+        json={"role": "support_agent", "reason": "covered by another admin"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == PlatformRole.SUPPORT_AGENT.value
+
+
+def test_can_suspend_platform_admin_when_another_active_admin_exists(
+    staff_env, migrated_session_factory
+):
+    _, second_admin_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-second-admin-suspend",
+        email="second-admin-suspend@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    response = staff_env.admin_bundle.client.post(
+        f"/api/v1/platform/staff/{second_admin_staff.id}/suspend",
+        json={"reason": "covered by another admin"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == PlatformStaffStatus.SUSPENDED.value
+
+
+def test_platform_admin_demote_uses_locked_admin_path(
+    staff_env, migrated_session_factory, monkeypatch
+):
+    _, second_admin_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-second-admin-lock-path",
+        email="second-admin-lock-path@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    calls = 0
+    original = PlatformStaffRepository.lock_active_platform_admins
+
+    async def _spy(self):
+        nonlocal calls
+        calls += 1
+        return await original(self)
+
+    monkeypatch.setattr(PlatformStaffRepository, "lock_active_platform_admins", _spy)
+
+    response = staff_env.admin_bundle.client.patch(
+        f"/api/v1/platform/staff/{second_admin_staff.id}/role",
+        json={"role": "support_agent", "reason": "lock-aware path"},
+    )
+
+    assert response.status_code == 200
+    assert calls == 1
 
 
 def test_platform_staff_access_control(staff_env):
