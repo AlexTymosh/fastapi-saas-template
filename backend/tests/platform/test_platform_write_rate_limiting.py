@@ -348,3 +348,72 @@ def test_platform_write_rate_limiter_failure_is_fail_closed(
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["error_code"] == "rate_limiter_unavailable"
+
+
+def test_platform_write_over_limit_does_not_enter_transaction_or_service_body(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    limiter = FakeLimiter(allow=False)
+    _install_fake_rate_limiter(monkeypatch, limiter)
+    admin, _ = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-rl-boundary-admin",
+        email="rl-boundary-admin@example.com",
+    )
+    target = _seed_user(
+        migrated_session_factory,
+        external_auth_id="kc-rl-boundary-target",
+        email="rl-boundary-target@example.com",
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(admin.external_auth_id, admin.email),
+        database_url=migrated_database_url,
+        rate_limiting_enabled=True,
+    )
+    _attach_fake_rate_limiter(bundle.client, limiter)
+
+    begin_calls = 0
+    actor_resolution_calls = 0
+    service_calls = 0
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.platform.services.platform_users import PlatformUsersService
+
+    original_begin = AsyncSession.begin
+
+    def _spy_begin(self):
+        nonlocal begin_calls
+        begin_calls += 1
+        return original_begin(self)
+
+    async def _spy_resolve_platform_actor(**kwargs):
+        nonlocal actor_resolution_calls
+        actor_resolution_calls += 1
+        raise AssertionError("over-limit request must not resolve platform actor")
+
+    async def _spy_suspend_user(self, **kwargs):
+        nonlocal service_calls
+        service_calls += 1
+        raise AssertionError("over-limit request must not call platform write service")
+
+    monkeypatch.setattr(AsyncSession, "begin", _spy_begin)
+    monkeypatch.setattr(
+        "app.core.platform.write_context.resolve_platform_actor",
+        _spy_resolve_platform_actor,
+    )
+    monkeypatch.setattr(PlatformUsersService, "suspend_user", _spy_suspend_user)
+
+    response = bundle.client.post(
+        f"/api/v1/platform/users/{target.id}/suspend",
+        json={"reason": "boundary probe"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert begin_calls == 0
+    assert actor_resolution_calls == 0
+    assert service_calls == 0

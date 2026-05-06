@@ -184,3 +184,51 @@ git diff --check
 
 - Pytest is currently blocked in this container because `httpx` is missing; installing dev dependencies is blocked by proxy 403 while fetching `setuptools>=69`.
 - Integration tests that require external Redis/Testcontainers remain opt-in.
+
+---
+
+## Update: Platform Write Rate Limiting QA Coverage
+
+## Current Focus
+
+Close QA review gaps for platform write rate limiting test confidence.
+
+## Last Completed
+
+Added Redis/Testcontainers integration coverage for platform write rate limiting without `FakeLimiter` or manual `app.state.rate_limiter_runtime` replacement. The new tests initialise the limiter through the application lifespan with real `limits` async Redis storage, unique Redis prefixes, and real over-limit windows for:
+
+- `platform_write` via `POST /api/v1/platform/users/{user_id}/suspend` after 30 allowed writes against distinct target users.
+- `platform_staff_write` via `POST /api/v1/platform/staff` after 10 allowed staff creations against distinct candidate users.
+
+Added a targeted transaction-boundary regression test proving an over-limit platform write returns `429` before opening `AsyncSession.begin()`, before `resolve_platform_actor()`, and before `PlatformUsersService.suspend_user()`.
+
+Updated rate-limiting and Russian security review documentation to record fake-limiter regression coverage, Redis/Testcontainers integration coverage, and transaction-boundary coverage.
+
+## Files Recently Changed
+
+- `backend/tests/platform/test_platform_write_rate_limiting.py`
+- `backend/tests/platform/test_platform_write_rate_limiting_integration.py`
+- `backend/docs/rate-limiting.md`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `SESSION_NOTES.md`
+
+## Checks Run
+
+```bash
+cd backend && ruff check tests/platform/test_platform_write_rate_limiting.py tests/platform/test_platform_write_rate_limiting_integration.py
+cd backend && ruff format --check tests/platform/test_platform_write_rate_limiting.py tests/platform/test_platform_write_rate_limiting_integration.py
+cd backend && ruff check .
+cd backend && ruff format --check .
+python -m compileall -q backend/tests/platform/test_platform_write_rate_limiting.py backend/tests/platform/test_platform_write_rate_limiting_integration.py
+cd backend && pytest -q tests/platform/test_platform_write_rate_limiting.py  # blocked: missing httpx
+cd backend && pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs  # blocked: missing httpx before Docker/Testcontainers startup
+cd backend && pytest -q tests/rate_limit/test_policy_registry.py  # blocked: missing httpx
+cd backend && pytest -q tests/api/test_rate_limiting.py  # blocked: missing httpx
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+```
+
+## Known Risks
+
+- Pytest still cannot run in this container because `httpx` is not installed; installing backend dev dependencies is blocked by the configured proxy returning 403 for `setuptools>=69`.
+- The new Redis/Testcontainers integration tests could not reach Docker/Testcontainers execution because pytest stops while importing `tests/conftest.py` due missing `httpx`.
+- Run the targeted fake and integration suites in CI/developer environment with backend dev dependencies and Docker/Testcontainers available.
