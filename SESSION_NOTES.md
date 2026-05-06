@@ -2,36 +2,38 @@
 
 ## Current Focus
 
-Align documentation with the actual backend architecture and create a stable AI-agent handoff structure.
+Close the P1 security debt for preserving at least one active platform admin during platform staff demote/suspend flows.
 
 ## Last Completed
 
-Initial documentation alignment created canonical architecture/current-state handoff documents and removed references to deleted draft docs.
+Fixed the last-active-platform-admin race condition by locking active `platform_admin` staff rows with SQLAlchemy `with_for_update()` before demote/suspend invariant checks. PostgreSQL enforces the row-level lock through `SELECT ... FOR UPDATE`; SQLite tests cover the lock-aware path without claiming real row-lock concurrency semantics.
 
 ## Files Recently Changed
 
-- `AGENTS.md`
-- `README.md`
+- `backend/app/platform/repositories/platform_staff.py`
+- `backend/app/platform/services/platform_staff.py`
+- `backend/tests/platform/test_platform_staff_management.py`
+- `backend/docs/comprehensive_security_review_ru.md`
 - `SESSION_NOTES.md`
-- `backend/docs/architecture.md`
-- `backend/docs/current-state.md`
+
+## Checks Run
+
+```bash
+python -m pytest -q backend/tests/platform/test_platform_staff_management.py
+cd backend && python -m pip install -e ".[dev]"
+cd backend && python -m pip install -r requirements-dev.txt
+cd backend && python -m pip install httpx==0.28.1 aiosqlite==0.22.1 --no-index
+python -m compileall -q backend/app/platform backend/tests/platform/test_platform_staff_management.py
+python -m ruff format backend/tests/platform/test_platform_staff_management.py
+python -m ruff format --check backend/app/platform/repositories/platform_staff.py backend/app/platform/services/platform_staff.py backend/tests/platform/test_platform_staff_management.py
+python -m ruff check backend/app/platform/repositories/platform_staff.py backend/app/platform/services/platform_staff.py backend/tests/platform/test_platform_staff_management.py
+```
 
 ## Known Risks
 
-- README must not link to deleted files.
-- `backend/docs/rate-limiting.md` must remain the only canonical rate-limiting doc.
-- Documentation must not claim planned features as implemented.
-- CI status still needs separate verification.
+- Targeted pytest could not run in this container because `httpx` is not installed and network/proxy restrictions prevented installing dev dependencies.
+- SQLite does not provide PostgreSQL row-level locking semantics; a true concurrent regression should be added against PostgreSQL when external DB tests are available.
 
 ## Next Recommended Step
 
-Run documentation link/grep checks, then review whether CI and access-control tests need expansion.
-
-## Checks To Run
-
-```bash
-grep -R "README[.]draft[.]md" -n .
-grep -R "rate[_]limiting[.]md" -n .
-grep -R "Keycloak . coarse roles" -n .
-grep -R "Metrics and tracing are optional and not incl[u]ded" -n .
-```
+Continue with the remaining open P1 security debts from `backend/docs/comprehensive_security_review_ru.md`, especially invite accept audit coverage and BOLA regression tests.
