@@ -23,6 +23,8 @@ def test_settings_parses_nested_env(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.auth
 def test_settings_parse_auth_algorithms_from_csv(monkeypatch) -> None:
     monkeypatch.setenv("AUTH__ALGORITHMS", "RS256")
     monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-api")
@@ -38,6 +40,8 @@ def test_settings_parse_auth_algorithms_from_csv(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.auth
 def test_settings_rejects_unsupported_auth_algorithm(monkeypatch) -> None:
     monkeypatch.setenv("AUTH__ALGORITHMS", "RS256,ES256")
 
@@ -48,6 +52,8 @@ def test_settings_rejects_unsupported_auth_algorithm(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.auth
 def test_legacy_security_keycloak_env_vars_are_ignored_for_runtime_auth(
     monkeypatch,
 ) -> None:
@@ -69,6 +75,8 @@ def test_legacy_security_keycloak_env_vars_are_ignored_for_runtime_auth(
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.rate_limit
 def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "custom-prefix")
@@ -86,6 +94,8 @@ def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.auth
 def test_prod_requires_auth_enabled(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     monkeypatch.setenv("AUTH__ENABLED", "false")
@@ -94,6 +104,8 @@ def test_prod_requires_auth_enabled(monkeypatch) -> None:
         get_settings()
 
 
+@pytest.mark.security
+@pytest.mark.auth
 def test_staging_requires_auth_enabled(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "staging")
     monkeypatch.setenv("AUTH__ENABLED", "false")
@@ -102,6 +114,9 @@ def test_staging_requires_auth_enabled(monkeypatch) -> None:
         get_settings()
 
 
+@pytest.mark.security
+@pytest.mark.auth
+@pytest.mark.secrets
 def test_prod_rejects_docs_and_request_id_trust(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     monkeypatch.setenv("AUTH__ENABLED", "true")
@@ -116,6 +131,9 @@ def test_prod_rejects_docs_and_request_id_trust(monkeypatch) -> None:
         get_settings()
 
 
+@pytest.mark.security
+@pytest.mark.rate_limit
+@pytest.mark.secrets
 def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     monkeypatch.setenv("AUTH__ENABLED", "true")
@@ -142,6 +160,8 @@ def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.secrets
 def test_dev_requires_outbox_key_when_invite_delivery_enabled(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "dev")
     monkeypatch.setenv("OUTBOX__INVITE_DELIVERY_ENABLED", "true")
@@ -151,6 +171,8 @@ def test_dev_requires_outbox_key_when_invite_delivery_enabled(monkeypatch) -> No
         get_settings()
 
 
+@pytest.mark.security
+@pytest.mark.secrets
 def test_settings_rejects_invalid_fernet_key(monkeypatch) -> None:
     monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", "invalid-key")
     reset_settings_cache()
@@ -171,6 +193,8 @@ def test_settings_reads_outbox_recovery_env(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.cors
 def test_default_cors_disabled(monkeypatch) -> None:
     reset_settings_cache()
     settings = get_settings()
@@ -182,6 +206,8 @@ def test_default_cors_disabled(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.cors
 def test_enabled_cors_requires_origin(monkeypatch) -> None:
     monkeypatch.setenv("CORS__ENABLED", "true")
     monkeypatch.setenv("CORS__ALLOW_ORIGINS", "[]")
@@ -193,6 +219,8 @@ def test_enabled_cors_requires_origin(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.cors
 def test_cors_rejects_wildcard_with_credentials(monkeypatch) -> None:
     monkeypatch.setenv("CORS__ENABLED", "true")
     monkeypatch.setenv("CORS__ALLOW_ORIGINS", '["*"]')
@@ -205,6 +233,8 @@ def test_cors_rejects_wildcard_with_credentials(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.cors
 def test_prod_rejects_cors_wildcard_origin(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     monkeypatch.setenv("AUTH__ENABLED", "true")
@@ -225,6 +255,8 @@ def test_prod_rejects_cors_wildcard_origin(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.security
+@pytest.mark.cors
 def test_cors_list_normalisation_removes_empty_values(monkeypatch) -> None:
     monkeypatch.setenv("CORS__ENABLED", "true")
     monkeypatch.setenv(

@@ -12,6 +12,8 @@ from app.users.models.user import User
 from tests.api.test_users_organisations import _identity_for
 from tests.helpers.asyncio_runner import run_async
 
+pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.bola]
+
 
 def _assert_problem_details(response, *, expected_status: int) -> None:
     assert response.status_code == expected_status

@@ -2,9 +2,14 @@ import io
 import json
 from unittest.mock import patch
 
+import pytest
+
 from app.core.config.settings import get_settings
 from app.core.context import request_id_ctx
 from app.core.logging.factory import configure_logging, get_logger
+
+pytestmark = [pytest.mark.security, pytest.mark.logging_security]
+
 
 settings = get_settings()
 

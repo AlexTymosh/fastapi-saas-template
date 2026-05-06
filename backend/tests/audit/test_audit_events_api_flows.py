@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from sqlalchemy import select
 
 from app.audit.models.audit_event import AuditEvent
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 from tests.helpers.outbox import process_all_claimed_outbox_events
+
+pytestmark = [pytest.mark.security, pytest.mark.audit, pytest.mark.authz]
 
 
 class InMemoryInviteTokenSink:

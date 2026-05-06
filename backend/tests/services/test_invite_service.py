@@ -20,6 +20,13 @@ from app.outbox.models.outbox_event import OutboxEventType
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
+pytestmark = [
+    pytest.mark.security,
+    pytest.mark.authz,
+    pytest.mark.audit,
+    pytest.mark.secrets,
+]
+
 
 @asynccontextmanager
 async def _transaction_context():

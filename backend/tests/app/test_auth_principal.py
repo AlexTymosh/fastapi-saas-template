@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from app.core.auth import AuthenticatedPrincipal, JwtClaimsPayload
 
+pytestmark = [pytest.mark.security, pytest.mark.auth, pytest.mark.authz]
+
 
 def test_jwt_claim_mapping_supports_standard_name_claims() -> None:
     claims = JwtClaimsPayload.model_validate(

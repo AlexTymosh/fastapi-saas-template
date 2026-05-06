@@ -1,9 +1,13 @@
+import pytest
+
 from app.core.config.settings import Settings
 from app.core.secrets.helpers import (
     get_database_url,
     get_keycloak_client_secret,
     get_redis_url,
 )
+
+pytestmark = [pytest.mark.security, pytest.mark.secrets]
 
 
 class DummyProvider:

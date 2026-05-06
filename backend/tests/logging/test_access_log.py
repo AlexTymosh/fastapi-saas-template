@@ -2,6 +2,7 @@ import io
 import json
 from unittest.mock import patch
 
+import pytest
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
@@ -97,6 +98,8 @@ def test_access_log_middleware_logs_failed_request(monkeypatch) -> None:
     assert record["request_id"] == "req-500"
 
 
+@pytest.mark.security
+@pytest.mark.logging_security
 def test_access_log_does_not_leak_invite_token_from_request_body(monkeypatch) -> None:
     stream = io.StringIO()
     monkeypatch.setenv("LOGGING__AS_JSON", "true")

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from app.core.platform.permissions import PlatformRole
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
@@ -15,6 +17,8 @@ from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 from tests.helpers.settings import reset_settings_cache
+
+pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.rate_limit]
 
 
 @dataclass

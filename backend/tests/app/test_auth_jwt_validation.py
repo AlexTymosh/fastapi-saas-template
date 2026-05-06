@@ -14,6 +14,9 @@ from tests.helpers.asyncio_runner import run_async
 from tests.helpers.jwt import generate_rsa_jwk, issue_access_token
 from tests.helpers.settings import reset_settings_cache
 
+pytestmark = [pytest.mark.security, pytest.mark.auth]
+
+
 ISSUER = "http://localhost:8080/realms/fastapi-saas"
 JWKS_URL = "http://mock-idp/jwks"
 DISCOVERY_URL = f"{ISSUER}/.well-known/openid-configuration"

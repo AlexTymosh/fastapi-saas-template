@@ -107,6 +107,16 @@ Safe broad suite:
 pytest -q -m "not external_db"
 ```
 
+Security regression suites are explicitly marked and can be collected or run independently:
+
+```bash
+pytest -q -m "security and not external_db" --collect-only
+pytest -q -m "security and not external_db"
+pytest -q -m "security and integration"
+pytest -q -m bola
+pytest -q -m rate_limit
+```
+
 External DB tests are opt-in. See `backend/docs/testing-e2e.md` for integration/e2e conventions.
 
 ## Documentation

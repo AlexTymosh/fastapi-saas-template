@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from tests.helpers.jwt import generate_rsa_jwk, issue_access_token
+
+pytestmark = [pytest.mark.security, pytest.mark.auth]
 
 
 def test_users_me_accepts_validated_jwt_with_api_audience_and_web_resource_roles(

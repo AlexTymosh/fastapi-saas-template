@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.core.platform.dependencies import require_platform_permission
 from app.core.platform.permissions import PlatformPermission, PlatformRole
 from app.organisations.models.organisation import Organisation
@@ -9,6 +11,8 @@ from app.users.models.user import UserStatus
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
+
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 def _seed_platform_staff(

@@ -1,8 +1,12 @@
 from unittest.mock import patch
 
+import pytest
+
 from app.core.config.settings import Settings
 from app.core.secrets.env_provider import EnvSecretsProvider
 from app.core.secrets.factory import build_secrets_provider
+
+pytestmark = [pytest.mark.security, pytest.mark.secrets]
 
 
 def test_builds_env_provider_when_vault_disabled() -> None:
