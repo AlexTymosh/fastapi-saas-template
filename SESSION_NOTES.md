@@ -232,3 +232,18 @@ cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching s
 - Pytest still cannot run in this container because `httpx` is not installed; installing backend dev dependencies is blocked by the configured proxy returning 403 for `setuptools>=69`.
 - The new Redis/Testcontainers integration tests could not reach Docker/Testcontainers execution because pytest stops while importing `tests/conftest.py` due missing `httpx`.
 - Run the targeted fake and integration suites in CI/developer environment with backend dev dependencies and Docker/Testcontainers available.
+---
+
+## Update: Structured Logging Redaction
+
+## Current Focus
+
+Close P2 security debt for structured logging redaction variants.
+
+## Last Completed
+
+Strengthened `backend/app/core/logging/processors.py` so application/security log event metadata recursively redacts sensitive keys after normalising hyphenated, dotted, snake_case, camelCase, and PascalCase variants. The processor also fully redacts obvious Bearer, Basic, and JWT-like string values while preserving email masking for non-sensitive fields.
+
+Updated `backend/tests/logging/test_processors.py` with coverage for exact, hyphenated, snake_case, camel/PascalCase, nested mapping, list, tuple, authorization variants, Bearer/Basic/JWT-like values, non-sensitive fields, email masking, sensitive-key precedence, and side-effect-free behaviour.
+
+Updated `backend/docs/comprehensive_security_review_ru.md` to mark the logging redaction task as fixed/completed.

@@ -108,7 +108,7 @@ Expected flow:
 ## Logging
 
 - Use structured JSON logging when configured.
-- Never log passwords, tokens, API keys, or raw personal data such as email/IP.
+- Never log passwords, tokens, API keys, cookies, authorization values, secrets, or raw personal data such as email/IP in any key naming variant.
 - Mask or hash identifiers when needed.
 
 ## Configuration

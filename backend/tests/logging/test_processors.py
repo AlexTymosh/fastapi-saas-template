@@ -56,22 +56,170 @@ def test_ensure_category_does_not_override_existing_value() -> None:
     assert result["category"] == "security"
 
 
-def test_redact_sensitive_fields_redacts_flat_fields() -> None:
+def test_redact_sensitive_fields_redacts_exact_sensitive_keys() -> None:
     event = {
-        "password": "secret123",
-        "token": "abc",
-        "authorization": "Bearer xyz",
-        "cookie": "session=123",
-        "api_key": "key-123",
+        "password": "fake-password",
+        "token": "fake-token",
+        "authorization": "Bearer fake-token",
+        "cookie": "session=fake-session",
+        "api_key": "fake-api-key",
     }
 
     result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
 
-    assert result["password"] == "[REDACTED]"
-    assert result["token"] == "[REDACTED]"
-    assert result["authorization"] == "[REDACTED]"
-    assert result["cookie"] == "[REDACTED]"
-    assert result["api_key"] == "[REDACTED]"
+    assert result == {
+        "password": "[REDACTED]",
+        "token": "[REDACTED]",
+        "authorization": "[REDACTED]",
+        "cookie": "[REDACTED]",
+        "api_key": "[REDACTED]",
+    }
+
+
+def test_redact_sensitive_fields_redacts_hyphenated_keys() -> None:
+    event = {
+        "raw-token": "fake-raw-token",
+        "x-api-key": "fake-api-key",
+        "set-cookie": "session=fake-session",
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["raw-token"] == "[REDACTED]"
+    assert result["x-api-key"] == "[REDACTED]"
+    assert result["set-cookie"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_redacts_snake_case_keys() -> None:
+    event = {
+        "raw_token": "fake-raw-token",
+        "encrypted_raw_token": "fake-encrypted-raw-token",
+        "token_hash": "fake-token-hash",
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["raw_token"] == "[REDACTED]"
+    assert result["encrypted_raw_token"] == "[REDACTED]"
+    assert result["token_hash"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_redacts_camel_and_pascal_case_keys() -> None:
+    event = {
+        "clientSecret": "fake-client-secret",
+        "refreshToken": "fake-refresh-token",
+        "AccessToken": "fake-access-token",
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["clientSecret"] == "[REDACTED]"
+    assert result["refreshToken"] == "[REDACTED]"
+    assert result["AccessToken"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_redacts_authorization_variants() -> None:
+    event = {
+        "Authorization": "Bearer fake-token",
+        "authorizationHeader": "Bearer fake-token",
+        "auth_header": "Basic fake-credentials",
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["Authorization"] == "[REDACTED]"
+    assert result["authorizationHeader"] == "[REDACTED]"
+    assert result["auth_header"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_redacts_nested_mappings() -> None:
+    event = {
+        "payload": {
+            "email": "alex@example.com",
+            "token": "fake-token",
+            "details": {
+                "client-secret": "fake-client-secret",
+                "safe_field": "visible",
+            },
+        }
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["payload"]["token"] == "[REDACTED]"
+    assert result["payload"]["details"]["client-secret"] == "[REDACTED]"
+    assert result["payload"]["details"]["safe_field"] == "visible"
+    assert result["payload"]["email"] != "alex@example.com"
+    assert result["payload"]["email"].endswith("@example.com")
+
+
+def test_redact_sensitive_fields_redacts_list_of_mappings() -> None:
+    event = {
+        "items": [
+            {"name": "public", "raw-token": "fake-raw-token"},
+            {"name": "public-2", "x-api-key": "fake-api-key"},
+        ]
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["items"] == [
+        {"name": "public", "raw-token": "[REDACTED]"},
+        {"name": "public-2", "x-api-key": "[REDACTED]"},
+    ]
+
+
+def test_redact_sensitive_fields_redacts_tuple_of_mappings() -> None:
+    event = {
+        "items": (
+            {"name": "public", "refreshToken": "fake-refresh-token"},
+            {"name": "public-2", "set-cookie": "session=fake-session"},
+        )
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["items"] == (
+        {"name": "public", "refreshToken": "[REDACTED]"},
+        {"name": "public-2", "set-cookie": "[REDACTED]"},
+    )
+
+
+def test_redact_sensitive_fields_redacts_bearer_values() -> None:
+    event = {"message": "upstream returned Bearer fake-token"}
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["message"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_redacts_basic_authorization_values() -> None:
+    event = {"message": "upstream returned Basic fake-credentials"}
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["message"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_redacts_jwt_like_values() -> None:
+    event = {"message": "JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.fakeSignature"}
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result["message"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_keeps_non_sensitive_fields_unchanged() -> None:
+    event = {
+        "event": "something_happened",
+        "status": "ok",
+        "nested": {"safe_field": "visible"},
+        "items": ["visible", {"safe_field": "also-visible"}],
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert result == event
 
 
 def test_redact_sensitive_fields_masks_email() -> None:
@@ -82,21 +230,30 @@ def test_redact_sensitive_fields_masks_email() -> None:
     result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
 
     assert result["email"] != "alex@example.com"
-    assert result["email"].endswith("@example.com")
+    assert result["email"] == "a***x@example.com"
 
 
-def test_redact_sensitive_fields_redacts_nested_mapping() -> None:
-    event = {
-        "payload": {
-            "email": "alex@example.com",
-            "token": "abc123",
-            "password": "secret123",
-        }
-    }
+def test_redact_sensitive_fields_redacts_sensitive_key_with_email_value() -> None:
+    event = {"inviteToken": "alex@example.com"}
 
     result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
 
-    assert result["payload"]["token"] == "[REDACTED]"
-    assert result["payload"]["password"] == "[REDACTED]"
-    assert result["payload"]["email"] != "alex@example.com"
-    assert result["payload"]["email"].endswith("@example.com")
+    assert result["inviteToken"] == "[REDACTED]"
+
+
+def test_redact_sensitive_fields_does_not_mutate_original_event_dict() -> None:
+    event = {
+        "payload": {
+            "email": "alex@example.com",
+            "token": "fake-token",
+        },
+        "items": [{"clientSecret": "fake-client-secret"}],
+    }
+    original = copy.deepcopy(event)
+
+    result = redact_sensitive_fields(None, "info", event)
+
+    assert result is not event
+    assert result["payload"] is not event["payload"]
+    assert result["items"] is not event["items"]
+    assert event == original

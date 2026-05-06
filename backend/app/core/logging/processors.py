@@ -9,18 +9,55 @@ from structlog.typing import EventDict
 from app.core.context import get_request_id
 
 _EMAIL_RE = re.compile(r"(?P<name>[^@\s]+)@(?P<domain>[^@\s]+\.[^@\s]+)")
+_CAMEL_CASE_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_JWT_COMPACT_RE = re.compile(
+    r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b"
+)
 
 _REDACTED = "[REDACTED]"
 _SENSITIVE_KEYS = {
-    "password",
-    "token",
     "access_token",
-    "refresh_token",
-    "authorization",
-    "cookie",
-    "secret",
     "api_key",
+    "apikey",
+    "auth_header",
+    "authorization",
+    "authorization_header",
     "client_secret",
+    "cookie",
+    "csrf",
+    "encrypted_raw_token",
+    "id_token",
+    "password",
+    "private_key",
+    "raw_token",
+    "refresh_token",
+    "secret",
+    "session",
+    "set_cookie",
+    "token",
+    "token_hash",
+}
+_SENSITIVE_MARKERS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth_header",
+    "authorization",
+    "authorization_header",
+    "client_secret",
+    "cookie",
+    "csrf",
+    "encrypted_raw_token",
+    "id_token",
+    "password",
+    "private_key",
+    "raw_token",
+    "refresh_token",
+    "secret",
+    "session",
+    "set_cookie",
+    "token",
+    "token_hash",
 }
 
 
@@ -87,15 +124,25 @@ def _sanitize_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
 
     for key, value in data.items():
-        lowered = key.lower()
-
-        if lowered in _SENSITIVE_KEYS:
+        if _is_sensitive_key(key):
             result[key] = _REDACTED
             continue
 
         result[key] = _sanitize_value(value)
 
     return result
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalised_key = _normalise_key(key)
+    return normalised_key in _SENSITIVE_KEYS or any(
+        marker in normalised_key for marker in _SENSITIVE_MARKERS
+    )
+
+
+def _normalise_key(key: Any) -> str:
+    camel_split = _CAMEL_CASE_BOUNDARY_RE.sub("_", str(key))
+    return camel_split.lower().replace("-", "_").replace(".", "_")
 
 
 def _sanitize_value(value: Any) -> Any:
@@ -109,7 +156,8 @@ def _sanitize_value(value: Any) -> Any:
         return tuple(_sanitize_value(item) for item in value)
 
     if isinstance(value, str):
-        if "bearer " in value.lower():
+        lowered = value.lower()
+        if "bearer " in lowered or "basic " in lowered or _JWT_COMPACT_RE.search(value):
             return _REDACTED
 
         if "@" in value:
