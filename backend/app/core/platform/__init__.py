@@ -7,6 +7,7 @@ from app.core.platform.permissions import (
 from app.core.platform.write_context import (
     PlatformWriteContext,
     require_platform_write_context,
+    require_rate_limited_platform_write_context,
 )
 from app.platform.models.platform_staff import PlatformStaffStatus
 
@@ -18,4 +19,5 @@ __all__ = [
     "PlatformStaffStatus",
     "require_platform_permission",
     "require_platform_write_context",
+    "require_rate_limited_platform_write_context",
 ]

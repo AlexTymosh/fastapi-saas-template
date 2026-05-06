@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-05-05
+2026-05-06
 
 ## Project Phase
 
@@ -23,7 +23,7 @@ The following foundations are present in code and/or current documentation and s
 - Platform staff and permissions foundation.
 - Audit events foundation.
 - Outbox foundation.
-- Redis/rate limiting foundation.
+- Redis/rate limiting foundation, including protected invite flows and fail-closed platform write policies.
 - Observability/OpenTelemetry foundation.
 - pytest/Testcontainers foundation.
 

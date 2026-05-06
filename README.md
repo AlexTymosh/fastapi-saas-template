@@ -76,6 +76,7 @@ Keycloak is the identity provider and JWT issuer.
 - Local user projection uses `external_auth_id == sub`.
 - Tenant roles are resolved from database memberships.
 - Platform roles and permissions are resolved from `platform_staff`.
+- Sensitive platform write endpoints are protected by fail-closed Redis-backed rate limiting (`platform_write` / `platform_staff_write`).
 - The detailed identity contract is in `backend/docs/keycloak-identity-contract.md`.
 
 

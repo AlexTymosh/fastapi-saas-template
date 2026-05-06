@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 from limits import RateLimitItemPerMinute
 
-from app.core.rate_limit.policies import RateLimitPolicy
+from app.core.rate_limit.policies import (
+    PLATFORM_STAFF_WRITE_POLICY,
+    PLATFORM_WRITE_POLICY,
+    RateLimitPolicy,
+)
 from app.core.rate_limit.registry import (
     build_policy_registry,
     get_rate_limit_policy,
@@ -16,6 +20,8 @@ def test_registry_contains_invite_policies() -> None:
 
     assert "invite_accept" in names
     assert "invite_create" in names
+    assert "platform_write" in names
+    assert "platform_staff_write" in names
 
 
 def test_registry_returns_policy_by_name() -> None:
@@ -30,7 +36,33 @@ def test_iter_rate_limit_policies_returns_all_policies() -> None:
     policies = iter_rate_limit_policies()
 
     assert isinstance(policies, tuple)
-    assert {policy.name for policy in policies} == {"invite_accept", "invite_create"}
+    assert {policy.name for policy in policies} == {
+        "invite_accept",
+        "invite_create",
+        "platform_write",
+        "platform_staff_write",
+    }
+
+
+def test_registered_policy_names_are_unique() -> None:
+    names = [policy.name for policy in iter_rate_limit_policies()]
+
+    assert len(names) == len(set(names))
+
+
+def test_platform_write_policy_semantics() -> None:
+    platform_write = get_rate_limit_policy("platform_write")
+    platform_staff_write = get_rate_limit_policy("platform_staff_write")
+
+    assert platform_write is PLATFORM_WRITE_POLICY
+    assert platform_write.item.amount == 30
+    assert platform_write.item.get_expiry() == 60
+    assert platform_write.fail_open is False
+
+    assert platform_staff_write is PLATFORM_STAFF_WRITE_POLICY
+    assert platform_staff_write.item.amount == 10
+    assert platform_staff_write.item.get_expiry() == 60
+    assert platform_staff_write.fail_open is False
 
 
 def test_duplicate_policy_names_are_rejected() -> None:

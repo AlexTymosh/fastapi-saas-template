@@ -3,7 +3,7 @@
 ## Current status
 Rate limiting is implemented for selected sensitive endpoints using `limits` with async Redis backend.
 
-- Status: implemented for protected invite flows.
+- Status: implemented for protected invite flows and platform write operations.
 - Default mode: disabled (`RATE_LIMITING__ENABLED=false`).
 - When disabled, limiter dependencies are no-op.
 
@@ -29,6 +29,8 @@ Rules:
 |---|---:|---|---|---|
 | `invite_accept` | 5 | 5 minutes | fail-closed | Protect invite acceptance from brute force/token guessing |
 | `invite_create` | 20 | 1 hour | fail-closed | Protect invite creation from abuse |
+| `platform_write` | 30 | 1 minute | fail-closed | Protect sensitive platform user/organisation writes from abuse with a valid platform token |
+| `platform_staff_write` | 10 | 1 minute | fail-closed | Protect high-impact platform staff management writes |
 
 ## Protected endpoint matrix
 
@@ -36,6 +38,15 @@ Rules:
 |---|---|---|
 | POST | `/api/v1/organisations/{organisation_id}/invites` | `invite_create` |
 | POST | `/api/v1/invites/accept` | `invite_accept` |
+| POST | `/api/v1/platform/users/{user_id}/suspend` | `platform_write` |
+| POST | `/api/v1/platform/users/{user_id}/restore` | `platform_write` |
+| POST | `/api/v1/platform/organisations/{organisation_id}/suspend` | `platform_write` |
+| POST | `/api/v1/platform/organisations/{organisation_id}/restore` | `platform_write` |
+| PATCH | `/api/v1/platform/organisations/{organisation_id}` | `platform_write` |
+| POST | `/api/v1/platform/staff` | `platform_staff_write` |
+| PATCH | `/api/v1/platform/staff/{staff_id}/role` | `platform_staff_write` |
+| POST | `/api/v1/platform/staff/{staff_id}/suspend` | `platform_staff_write` |
+| POST | `/api/v1/platform/staff/{staff_id}/restore` | `platform_staff_write` |
 
 ## Identifier strategy
 - Authenticated requests are bucketed by principal identity.
@@ -54,7 +65,7 @@ For protected endpoints:
 ## Redis outage behaviour
 Runtime/backend failures follow policy fail mode.
 
-- **Fail-closed** (`fail_open=false`): return `503` (`error_code=rate_limiter_unavailable`).
+- **Fail-closed** (`fail_open=false`): return `503` (`error_code=rate_limiter_unavailable`). Platform write policies are fail-closed so Redis/rate-limiter outages block sensitive writes instead of allowing unthrottled administrative changes.
 - **Fail-open** (`fail_open=true`): allow request, emit backend-error metric, log security warning.
 - **Runtime unavailable** (limiter/runtime missing): return `503` (`error_code=rate_limiter_unavailable`).
 
@@ -113,7 +124,9 @@ Prometheus/Grafana dashboards are out of scope for this phase, and `/metrics` is
 Run from `backend/`:
 
 ```bash
-pytest tests/api/test_rate_limiting.py -q
+pytest -q tests/rate_limit/test_policy_registry.py
+pytest -q tests/platform/test_platform_write_rate_limiting.py
+pytest -q tests/api/test_rate_limiting.py
 pytest tests/api/test_rate_limiting_integration.py -q -m integration -rs
 pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
 ```
@@ -130,4 +143,4 @@ pytest tests/observability/test_otlp_export_integration.py -q -m "integration an
 - [ ] Over-limit requests do not perform DB I/O.
 - [ ] Fail-closed backend outage returns `503`.
 - [ ] Rate-limit metrics are recorded.
-- [ ] Sensitive endpoint protection is covered by tests.
+- [ ] Sensitive endpoint protection is covered by tests, including platform write endpoints.

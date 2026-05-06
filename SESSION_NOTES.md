@@ -149,3 +149,38 @@ pytest -q -m "not external_db"
 ```
 
 Additional environment note: the default `python` is 3.10.19, while the project imports `enum.StrEnum`; a manual app import check on Python 3.10 fails on that standard-library mismatch. `PYENV_VERSION=3.11.14` is available, but this interpreter does not have backend dependencies such as `cryptography` installed in the container.
+
+---
+
+## Update: Platform Write Rate Limiting
+
+## Current Focus
+
+Close the P2 security debt for platform write endpoint rate limiting from `backend/docs/comprehensive_security_review_ru.md`.
+
+## Last Completed
+
+Added reusable platform write rate limiting by splitting `check_rate_limit()` from the FastAPI dependency wrapper and introducing `require_rate_limited_platform_write_context()`, which checks the limiter before opening the platform write transaction. Added fail-closed policies:
+
+- `platform_write`: 30 requests/minute for platform user and organisation writes.
+- `platform_staff_write`: 10 requests/minute for platform staff management writes.
+
+Protected platform user suspend/restore, organisation suspend/restore/profile correction, and staff create/role-change/suspend/restore endpoints. Updated rate-limit registry tests, platform write rate-limit regression tests, and rate-limiting/security documentation.
+
+## Checks Run
+
+```bash
+cd backend && pytest -q tests/rate_limit/test_policy_registry.py  # blocked: missing httpx
+cd backend && pytest -q tests/platform/test_platform_write_rate_limiting.py  # blocked: missing httpx
+cd backend && pytest -q tests/api/test_rate_limiting.py  # blocked: missing httpx
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+cd backend && ruff check .
+cd backend && ruff format --check .
+PYENV_VERSION=3.11.14 python -m compileall -q backend/app/core/rate_limit backend/app/core/platform backend/app/platform/api backend/tests/platform/test_platform_write_rate_limiting.py backend/tests/rate_limit/test_policy_registry.py
+git diff --check
+```
+
+## Known Risks
+
+- Pytest is currently blocked in this container because `httpx` is missing; installing dev dependencies is blocked by proxy 403 while fetching `setuptools>=69`.
+- Integration tests that require external Redis/Testcontainers remain opt-in.

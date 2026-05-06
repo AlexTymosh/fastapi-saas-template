@@ -101,6 +101,7 @@ Expected flow:
 - Tenant authorization is resolved from local database memberships.
 - Platform authorization is resolved from `platform_staff`.
 - Permission logic belongs in services/dependencies, not arbitrary API code.
+- Platform write endpoints must use the platform write rate limiting dependency/policy; do not add new platform write endpoints without rate limiting.
 - Do not trust client-provided identifiers, roles, or permissions.
 - Do not implement local password login unless explicitly requested.
 
