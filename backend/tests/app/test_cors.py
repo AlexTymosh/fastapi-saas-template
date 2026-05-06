@@ -81,3 +81,20 @@ def test_disallowed_origin_does_not_receive_permissive_cors_headers() -> None:
     assert "access-control-allow-origin" not in simple_response.headers
     assert preflight_response.status_code == 400
     assert "access-control-allow-origin" not in preflight_response.headers
+
+
+def test_cors_headers_are_added_to_error_responses_for_allowed_origin() -> None:
+    with _client_with_cors(
+        CorsSettings(enabled=True, allow_origins=[ALLOWED_ORIGIN])
+    ) as client:
+        response = client.get(
+            "/api/v1/does-not-exist",
+            headers={"Origin": ALLOWED_ORIGIN},
+        )
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.headers["access-control-allow-origin"] == ALLOWED_ORIGIN
+    assert response.headers["access-control-expose-headers"] == (
+        "X-Request-ID, Retry-After"
+    )
