@@ -17,32 +17,31 @@ class UserService:
         self.session = session
         self.user_repository = UserRepository(session)
 
-    async def get_or_create_current_user(
+    async def _create_current_user_projection(
         self, identity: AuthenticatedPrincipal
     ) -> User:
-        user = await self.user_repository.get_by_external_auth_id(
-            identity.external_auth_id
-        )
-        if user is None:
-            try:
-                async with self.session.begin_nested():
-                    return await self.user_repository.create(
-                        external_auth_id=identity.external_auth_id,
-                        email=identity.email,
-                        email_verified=identity.email_verified,
-                        first_name=identity.first_name,
-                        last_name=identity.last_name,
-                    )
-            except IntegrityError as exc:
-                existing = await self.user_repository.get_by_external_auth_id(
-                    identity.external_auth_id
+        try:
+            async with self.session.begin_nested():
+                return await self.user_repository.create(
+                    external_auth_id=identity.external_auth_id,
+                    email=identity.email,
+                    email_verified=identity.email_verified,
+                    first_name=identity.first_name,
+                    last_name=identity.last_name,
                 )
-                if existing is not None:
-                    return existing
-                raise ConflictError(
-                    detail="Unable to provision local user projection"
-                ) from exc
+        except IntegrityError as exc:
+            existing = await self.user_repository.get_by_external_auth_id(
+                identity.external_auth_id
+            )
+            if existing is not None:
+                return existing
+            raise ConflictError(
+                detail="Unable to provision local user projection"
+            ) from exc
 
+    async def _sync_current_user_profile(
+        self, user: User, identity: AuthenticatedPrincipal
+    ) -> User:
         needs_update = any(
             [
                 user.email != identity.email,
@@ -51,21 +50,32 @@ class UserService:
                 user.last_name != identity.last_name,
             ]
         )
-        if needs_update:
-            try:
-                return await self.user_repository.update_profile_fields(
-                    user,
-                    email=identity.email,
-                    email_verified=identity.email_verified,
-                    first_name=identity.first_name,
-                    last_name=identity.last_name,
-                )
-            except IntegrityError as exc:
-                raise ConflictError(
-                    detail="User profile conflicts with existing data"
-                ) from exc
+        if not needs_update:
+            return user
 
-        return user
+        try:
+            return await self.user_repository.update_profile_fields(
+                user,
+                email=identity.email,
+                email_verified=identity.email_verified,
+                first_name=identity.first_name,
+                last_name=identity.last_name,
+            )
+        except IntegrityError as exc:
+            raise ConflictError(
+                detail="User profile conflicts with existing data"
+            ) from exc
+
+    async def get_or_create_current_user(
+        self, identity: AuthenticatedPrincipal
+    ) -> User:
+        user = await self.user_repository.get_by_external_auth_id(
+            identity.external_auth_id
+        )
+        if user is None:
+            return await self._create_current_user_projection(identity)
+
+        return await self._sync_current_user_profile(user, identity)
 
     async def provision_current_user(self, identity: AuthenticatedPrincipal) -> User:
         """Persist JIT user projection changes with explicit transaction boundaries."""
@@ -91,8 +101,24 @@ class UserService:
             onboarding_completed=True,
         )
 
+    async def _get_me_with_active_guard(self, identity: AuthenticatedPrincipal) -> User:
+        user = await self.user_repository.get_by_external_auth_id(
+            identity.external_auth_id
+        )
+        if user is None:
+            user = await self._create_current_user_projection(identity)
+            ensure_user_active(user)
+            return await self._sync_current_user_profile(user, identity)
+
+        ensure_user_active(user)
+        return await self._sync_current_user_profile(user, identity)
+
     async def get_me(self, identity: AuthenticatedPrincipal) -> User:
-        return await self.provision_current_user(identity)
+        if self.session.in_transaction():
+            return await self._get_me_with_active_guard(identity)
+
+        async with self.session.begin():
+            return await self._get_me_with_active_guard(identity)
 
     async def get_user_by_id(self, user_id: UUID) -> User:
         user = await self.user_repository.get_by_id(user_id)

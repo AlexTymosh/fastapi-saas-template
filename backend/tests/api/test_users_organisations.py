@@ -198,16 +198,83 @@ def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
             _identity_for(
                 external_auth_id="kc-user-1",
                 email="owner-updated@example.com",
+                email_verified=False,
                 first_name="OwnerUpdated",
+                last_name="UserUpdated",
             )
         )
 
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
 
-    assert second.json()["email"] == "owner-updated@example.com"
-    assert second.json()["first_name"] == "OwnerUpdated"
-    assert second.json()["updated_at"] != first.json()["updated_at"]
+    second_payload = second.json()
+    assert second_payload["email"] == "owner-updated@example.com"
+    assert second_payload["email_verified"] is False
+    assert second_payload["first_name"] == "OwnerUpdated"
+    assert second_payload["last_name"] == "UserUpdated"
+    assert second_payload["updated_at"] != first.json()["updated_at"]
+    run_async(engine.dispose())
+
+
+def test_users_me_blocks_suspended_user_before_updating_claims(tmp_path) -> None:
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
+
+    with TestClient(app) as client:
+        created = client.get("/api/v1/users/me")
+        assert created.status_code == 200
+
+    async def _suspend_and_snapshot() -> dict[str, object]:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            user = result.scalar_one()
+            user.status = UserStatus.SUSPENDED
+            await session.commit()
+            await session.refresh(user)
+            return {
+                "email": user.email,
+                "email_verified": user.email_verified,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "updated_at": user.updated_at,
+            }
+
+    suspended_snapshot = run_async(_suspend_and_snapshot())
+
+    auth_provider.set_identity(
+        _identity_for(
+            external_auth_id="kc-user-1",
+            email="suspended-updated@example.com",
+            email_verified=False,
+            first_name="SuspendedUpdated",
+            last_name="BlockedUpdate",
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/users/me")
+
+    async def _fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            return result.scalar_one()
+
+    persisted = run_async(_fetch_user())
+
+    assert response.status_code == 403
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "forbidden"
+    assert persisted.status == UserStatus.SUSPENDED
+    assert persisted.email == suspended_snapshot["email"]
+    assert persisted.email_verified == suspended_snapshot["email_verified"]
+    assert persisted.first_name == suspended_snapshot["first_name"]
+    assert persisted.last_name == suspended_snapshot["last_name"]
+    assert persisted.updated_at == suspended_snapshot["updated_at"]
     run_async(engine.dispose())
 
 
