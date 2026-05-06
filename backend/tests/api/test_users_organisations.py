@@ -188,7 +188,9 @@ def test_users_me_does_not_update_row_when_claims_unchanged(tmp_path) -> None:
 
 
 def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
-    app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
 
     with TestClient(app) as client:
         first = client.get("/api/v1/users/me")
@@ -198,16 +200,33 @@ def test_users_me_updates_row_when_claims_change(tmp_path) -> None:
             _identity_for(
                 external_auth_id="kc-user-1",
                 email="owner-updated@example.com",
+                email_verified=False,
                 first_name="OwnerUpdated",
+                last_name="UserUpdated",
             )
         )
 
         second = client.get("/api/v1/users/me")
         assert second.status_code == 200
 
+    async def _fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            return result.scalar_one()
+
+    persisted_user = run_async(_fetch_user())
+
     assert second.json()["email"] == "owner-updated@example.com"
+    assert second.json()["email_verified"] is False
     assert second.json()["first_name"] == "OwnerUpdated"
+    assert second.json()["last_name"] == "UserUpdated"
     assert second.json()["updated_at"] != first.json()["updated_at"]
+    assert persisted_user.email == "owner-updated@example.com"
+    assert persisted_user.email_verified is False
+    assert persisted_user.first_name == "OwnerUpdated"
+    assert persisted_user.last_name == "UserUpdated"
     run_async(engine.dispose())
 
 
@@ -252,6 +271,104 @@ def test_users_me_updates_email_verified_for_same_sub_across_requests(tmp_path) 
     assert second_payload["email_verified"] is False
     assert persisted_after_second.email_verified is False
     assert persisted_after_second.updated_at > persisted_after_first.updated_at
+    run_async(engine.dispose())
+
+
+def test_users_me_forbids_suspended_user_without_refreshing_claims(tmp_path) -> None:
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
+
+    with TestClient(app) as client:
+        first = client.get("/api/v1/users/me")
+        assert first.status_code == 200
+
+    async def _suspend_and_fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            user = result.scalar_one()
+            user.status = UserStatus.SUSPENDED
+            await session.commit()
+            await session.refresh(user)
+            return user
+
+    suspended_user = run_async(_suspend_and_fetch_user())
+    original_email = suspended_user.email
+    original_first_name = suspended_user.first_name
+    original_last_name = suspended_user.last_name
+    original_email_verified = suspended_user.email_verified
+    original_updated_at = suspended_user.updated_at
+
+    auth_provider.set_identity(
+        _identity_for(
+            external_auth_id="kc-user-1",
+            email="suspended-updated@example.com",
+            email_verified=False,
+            first_name="SuspendedUpdated",
+            last_name="Blocked",
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/users/me")
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    async def _fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-user-1")
+            )
+            return result.scalar_one()
+
+    persisted_user = run_async(_fetch_user())
+
+    assert persisted_user.status == UserStatus.SUSPENDED
+    assert persisted_user.email == original_email
+    assert persisted_user.first_name == original_first_name
+    assert persisted_user.last_name == original_last_name
+    assert persisted_user.email_verified == original_email_verified
+    assert persisted_user.updated_at == original_updated_at
+    run_async(engine.dispose())
+
+
+def test_users_me_keeps_provisioning_new_users(tmp_path) -> None:
+    app, engine, session_factory, auth_provider = _create_client_and_session_factory(
+        tmp_path
+    )
+    auth_provider.set_identity(
+        _identity_for(
+            external_auth_id="kc-new-users-me",
+            email="new-users-me@example.com",
+            first_name="New",
+            last_name="Provisioned",
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/users/me")
+        assert response.status_code == 200
+
+    payload = response.json()
+
+    async def _fetch_user() -> User:
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.external_auth_id == "kc-new-users-me")
+            )
+            return result.scalar_one()
+
+    persisted_user = run_async(_fetch_user())
+
+    assert payload["external_auth_id"] == "kc-new-users-me"
+    assert payload["email"] == "new-users-me@example.com"
+    assert payload["first_name"] == "New"
+    assert payload["last_name"] == "Provisioned"
+    assert payload["status"] == UserStatus.ACTIVE.value
+    assert persisted_user.id == UUID(payload["id"])
+    assert persisted_user.status == UserStatus.ACTIVE
     run_async(engine.dispose())
 
 

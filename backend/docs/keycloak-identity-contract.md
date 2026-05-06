@@ -26,6 +26,7 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
    - The same `sub` must always resolve to the same local `users` row.
    - Changes to `email`/profile claims update that same row in place and must not create a second user.
    - When projected claims are unchanged, no unnecessary write should be performed.
+   - `/api/v1/users/me` must not refresh profile claims for an existing suspended local user. It must fail authorization before mutating local projection fields.
 
 4. **Identity before authorization**
    - Local user projection is created/refreshed before organisation-scoped authorization checks.
