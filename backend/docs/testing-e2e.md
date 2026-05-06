@@ -41,6 +41,19 @@ Use explicit markers for all tests:
 
 ## Safe commands
 
+Before running tests in a fresh environment, install dev dependencies:
+
+```bash
+cd backend
+python -m pip install -e ".[dev]"
+
+This installs test-only dependencies such as httpx, which is required by Starlette/FastAPI TestClient.
+
+If editable install is unavailable, use:
+
+cd backend
+python -m pip install -r requirements-dev.txt
+
 Fast safe suite:
 
 ```bash

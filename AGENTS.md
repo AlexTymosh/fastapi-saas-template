@@ -123,6 +123,16 @@ Expected flow:
 - Test business logic in services.
 - Mock external dependencies in unit tests.
 - Cover API behaviour with integration/e2e tests.
+- Before running pytest in a fresh environment, install dev dependencies from `backend/`:
+  `python -m pip install -e ".[dev]"`.
+- If editable install is unavailable, use:
+  `python -m pip install -r requirements-dev.txt`.
+- Recommended test bootstrap:
+
+```bash
+cd backend
+python -m pip install -e ".[dev]"
+pytest -q -m "not external_db"
 - Prefer `pytest -q -m "not external_db"` for broad safe checks.
 - Documentation-only changes should run grep/link sanity checks.
 
@@ -145,7 +155,7 @@ Expected flow:
 - Over-abstraction.
 - Catch-all `utils`/`helpers` modules without narrow scope.
 - Exposing ORM models directly as API responses.
-- - Unjustified try/except blocks around imports. Optional dependency/version compatibility fallbacks are allowed only when documented and tested.
+- Unjustified try/except blocks around imports. Optional dependency/version compatibility fallbacks are allowed only when documented and tested.
 
 ## Source of truth
 
