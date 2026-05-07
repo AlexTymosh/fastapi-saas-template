@@ -1,3 +1,91 @@
+## Update: Authenticated/Tenant/Platform Rate-Limit Coverage
+
+## Current Focus
+
+Close technical debt around incomplete endpoint-level rate limiting for authenticated, tenant, invite mutation, platform read, and audit read endpoints.
+
+## Last Completed
+
+Added explicit rate-limit policies for authenticated defaults, tenant reads/writes, organisation creation, invite mutation, platform reads, and audit reads. Applied endpoint-level dependencies and documented 429/503 Problem Details responses for newly protected routes while preserving existing invite accept/create and platform write policies. Added a platform read helper that checks rate limits after authentication and before platform permission/service work. Health endpoints remain intentionally unprotected by the app-level limiter.
+
+## Files Touched
+
+- `AGENTS.md`
+- `README.md`
+- `SESSION_NOTES.md`
+- `backend/app/core/platform/__init__.py`
+- `backend/app/core/platform/dependencies.py`
+- `backend/app/core/rate_limit/__init__.py`
+- `backend/app/core/rate_limit/policies.py`
+- `backend/app/core/rate_limit/registry.py`
+- `backend/app/invites/api/invites.py`
+- `backend/app/organisations/api/organisations.py`
+- `backend/app/platform/api/audit_events.py`
+- `backend/app/platform/api/organisations.py`
+- `backend/app/platform/api/staff.py`
+- `backend/app/platform/api/users.py`
+- `backend/app/users/api/users.py`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `backend/docs/current-state.md`
+- `backend/docs/rate-limiting.md`
+- `backend/tests/api/test_rate_limiting.py`
+- `backend/tests/rate_limit/test_endpoint_protection.py`
+- `backend/tests/rate_limit/test_policy_registry.py`
+
+## Checks Run
+
+```bash
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && python - <<'PY'  # create_app + selected policy introspection smoke check
+from fastapi.routing import APIRoute
+from app.main import create_app
+app = create_app()
+checks = [
+    ("GET", "/api/v1/users/me", "authenticated_default"),
+    ("POST", "/api/v1/organisations", "organisation_create"),
+    ("GET", "/api/v1/platform/audit-events", "audit_read"),
+]
+def calls(dep):
+    for item in dep.dependencies:
+        if item.call:
+            yield item.call
+        yield from calls(item)
+for method, path, policy in checks:
+    route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == path and method in route.methods
+    )
+    names = {getattr(call, "__rate_limit_policy_name__", None) for call in calls(route.dependant)}
+    assert policy in names
+PY
+PYENV_VERSION=3.12.13 python -m compileall -q backend/app backend/tests
+git diff --check
+```
+
+## Checks That Could Not Run
+
+```bash
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+cd backend && pytest -q tests/rate_limit/test_policy_registry.py  # blocked: missing httpx in default Python 3.14 env
+cd backend && PYENV_VERSION=3.12.13 pytest -q tests/rate_limit/test_policy_registry.py  # blocked: Python 3.12 env does not have fastapi installed
+cd backend && pytest -q tests/rate_limit/test_endpoint_protection.py  # blocked: missing httpx in default Python 3.14 env
+cd backend && pytest -q tests/api/test_rate_limiting.py  # blocked: missing httpx in default Python 3.14 env
+cd backend && pytest -q tests/platform/test_platform_write_rate_limiting.py  # blocked: missing httpx in default Python 3.14 env
+cd backend && pytest -q -m "security and not external_db"  # blocked: missing httpx in default Python 3.14 env
+cd backend && pytest -q -m "not external_db"  # blocked: missing httpx in default Python 3.14 env
+```
+
+Fetching `origin/main` was attempted but blocked by the configured proxy with HTTP 403, so the working branch was created from the only available local HEAD.
+
+## Remaining Risks
+
+- Redis-backed integration coverage for new tenant/platform read policies is not yet added; current coverage is focused on declarative route protection and fake-limiter API behaviour.
+- Production deployments still need edge/WAF rate limiting for unauthenticated health/docs/static traffic if those endpoints are externally exposed.
+
+---
+
 # SESSION_NOTES
 
 ## Current Focus

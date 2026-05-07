@@ -9,8 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.models.audit_event import AuditEvent
 from app.audit.services.audit_events import AuditEventService
 from app.core.db import get_db_session
-from app.core.errors.openapi import COMMON_ERROR_RESPONSES
-from app.core.platform import PlatformPermission, require_platform_permission
+from app.core.errors.openapi import COMMON_ERROR_RESPONSES, RATE_LIMIT_ERROR_RESPONSES
+from app.core.platform import (
+    PlatformPermission,
+    require_rate_limited_platform_permission,
+)
+from app.core.rate_limit import AUDIT_READ_POLICY
 from app.platform.schemas.platform_audit_events import (
     PlatformAuditEventResponse,
     PlatformAuditEventsCollectionResponse,
@@ -45,12 +49,16 @@ async def _list_audit_events(
 @router.get(
     "/limited",
     response_model=PlatformLimitedAuditEventsCollectionResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def list_limited_platform_audit_events(
     _: Annotated[
         object,
-        Depends(require_platform_permission(PlatformPermission.AUDIT_READ_LIMITED)),
+        Depends(
+            require_rate_limited_platform_permission(
+                PlatformPermission.AUDIT_READ_LIMITED, policy=AUDIT_READ_POLICY
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
@@ -79,11 +87,16 @@ async def list_limited_platform_audit_events(
 @router.get(
     "",
     response_model=PlatformAuditEventsCollectionResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def list_platform_audit_events(
     _: Annotated[
-        object, Depends(require_platform_permission(PlatformPermission.AUDIT_READ))
+        object,
+        Depends(
+            require_rate_limited_platform_permission(
+                PlatformPermission.AUDIT_READ, policy=AUDIT_READ_POLICY
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),

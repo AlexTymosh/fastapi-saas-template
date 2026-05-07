@@ -526,3 +526,176 @@ def test_runtime_code_uses_limits_aio_namespace() -> None:
     lifecycle_source = inspect.getsource(lifecycle)
 
     assert "limits.aio" in dependency_source or "limits.aio" in lifecycle_source
+
+
+def _install_noop_db_session(app) -> AsyncMock:
+    session = AsyncMock(spec=AsyncSession)
+    session.execute = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.connection = AsyncMock()
+    session.begin = MagicMock()
+    session.scalar = AsyncMock()
+    session.scalars = AsyncMock()
+    session.get = AsyncMock()
+    session.delete = AsyncMock()
+    session.merge = AsyncMock()
+
+    async def _db_override():
+        yield session
+
+    app.dependency_overrides[get_db_session] = _db_override
+    return session
+
+
+def test_over_limit_tenant_write_returns_429_before_service_execution(
+    monkeypatch,
+) -> None:
+    from uuid import uuid4
+
+    from app.organisations.services.organisations import OrganisationService
+
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    app = client.app
+    app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    _install_noop_db_session(app)
+
+    service_calls = 0
+
+    async def _spy_update_organisation_details(self, **kwargs):
+        nonlocal service_calls
+        service_calls += 1
+        raise AssertionError("over-limit request must not execute tenant write service")
+
+    monkeypatch.setattr(
+        OrganisationService,
+        "update_organisation_details",
+        _spy_update_organisation_details,
+    )
+
+    with client as api_client:
+        response = api_client.patch(
+            f"/api/v1/organisations/{uuid4()}",
+            json={"name": "Blocked Ltd"},
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert fake.hit_calls[0][0].startswith("test-rl:tenant_write:")
+    assert service_calls == 0
+
+
+def test_over_limit_platform_audit_read_returns_429_before_service_execution(
+    monkeypatch,
+) -> None:
+    from app.audit.services.audit_events import AuditEventService
+
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    app = client.app
+    app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    _install_noop_db_session(app)
+
+    actor_resolution_calls = 0
+    service_calls = 0
+
+    async def _spy_resolve_platform_actor(**kwargs):
+        nonlocal actor_resolution_calls
+        actor_resolution_calls += 1
+        raise AssertionError("over-limit request must not resolve platform actor")
+
+    async def _spy_list_events(self, **kwargs):
+        nonlocal service_calls
+        service_calls += 1
+        raise AssertionError("over-limit request must not list audit events")
+
+    monkeypatch.setattr(
+        "app.core.platform.dependencies.resolve_platform_actor",
+        _spy_resolve_platform_actor,
+    )
+    monkeypatch.setattr(AuditEventService, "list_events", _spy_list_events)
+
+    with client as api_client:
+        response = api_client.get("/api/v1/platform/audit-events")
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert fake.hit_calls[0][0].startswith("test-rl:audit_read:")
+    assert actor_resolution_calls == 0
+    assert service_calls == 0
+
+
+def test_over_limit_organisation_create_returns_429_before_onboarding_execution(
+    monkeypatch,
+) -> None:
+    from app.organisations.services.onboarding import OnboardingService
+
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    app = client.app
+    app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    _install_noop_db_session(app)
+
+    service_calls = 0
+
+    async def _spy_create_organisation_for_current_user(self, **kwargs):
+        nonlocal service_calls
+        service_calls += 1
+        raise AssertionError("over-limit request must not execute onboarding service")
+
+    monkeypatch.setattr(
+        OnboardingService,
+        "create_organisation_for_current_user",
+        _spy_create_organisation_for_current_user,
+    )
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations",
+            json={"name": "Blocked Ltd", "slug": "blocked-ltd"},
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert fake.hit_calls[0][0].startswith("test-rl:organisation_create:")
+    assert service_calls == 0
+
+
+def test_unauthenticated_users_me_returns_401_before_rate_limiter(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=False, raise_error=RuntimeError("limiter must not run"))
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+
+    with client as api_client:
+        response = api_client.get("/api/v1/users/me")
+
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "unauthorized"
+    assert fake.hit_calls == []

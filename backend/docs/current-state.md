@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-05-06
+2026-05-07
 
 ## Project Phase
 
@@ -23,7 +23,7 @@ The following foundations are present in code and/or current documentation and s
 - Platform staff and permissions foundation.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
-- Redis/rate limiting foundation, including protected invite flows and fail-closed platform write policies.
+- Redis/rate limiting foundation, including authenticated default, tenant read/write, organisation create, invite, platform read, audit read, and fail-closed platform write policies.
 - Observability/OpenTelemetry foundation.
 - pytest/Testcontainers foundation.
 
@@ -34,7 +34,7 @@ The following foundations are present in code and/or current documentation and s
 - Platform workflows.
 - Invite delivery pipeline.
 - Observability integration.
-- Full contract/security test coverage.
+- Full contract/security test coverage beyond the currently covered security marker slices and rate-limit endpoint coverage tests.
 
 ## Not Implemented / Planned
 

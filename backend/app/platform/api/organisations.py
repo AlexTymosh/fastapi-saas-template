@@ -18,7 +18,7 @@ from app.core.platform import (
     PlatformActor,
     PlatformPermission,
     PlatformWriteContext,
-    require_platform_permission,
+    require_rate_limited_platform_permission,
     require_rate_limited_platform_write_context,
 )
 from app.platform.schemas.platform_organisations import (
@@ -36,12 +36,16 @@ router = APIRouter(prefix="/platform/organisations", tags=["platform"])
 @router.get(
     "",
     response_model=PlatformOrganisationsCollectionResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def list_platform_orgs(
     _: Annotated[
         PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.ORGANISATIONS_READ)),
+        Depends(
+            require_rate_limited_platform_permission(
+                PlatformPermission.ORGANISATIONS_READ
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
@@ -62,13 +66,17 @@ async def list_platform_orgs(
 @router.get(
     "/{organisation_id}",
     response_model=PlatformOrganisationResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def get_platform_org(
     organisation_id: UUID,
     _: Annotated[
         PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.ORGANISATIONS_READ)),
+        Depends(
+            require_rate_limited_platform_permission(
+                PlatformPermission.ORGANISATIONS_READ
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformOrganisationResponse:

@@ -18,7 +18,7 @@ from app.core.platform import (
     PlatformActor,
     PlatformPermission,
     PlatformWriteContext,
-    require_platform_permission,
+    require_rate_limited_platform_permission,
     require_rate_limited_platform_write_context,
 )
 from app.platform.schemas.platform_users import (
@@ -33,12 +33,16 @@ router = APIRouter(prefix="/platform/users", tags=["platform"])
 
 
 @router.get(
-    "", response_model=PlatformUsersCollectionResponse, responses=COMMON_ERROR_RESPONSES
+    "",
+    response_model=PlatformUsersCollectionResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def list_platform_users(
     _: Annotated[
         PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.USERS_READ)),
+        Depends(
+            require_rate_limited_platform_permission(PlatformPermission.USERS_READ)
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
@@ -55,13 +59,17 @@ async def list_platform_users(
 
 
 @router.get(
-    "/{user_id}", response_model=PlatformUserResponse, responses=COMMON_ERROR_RESPONSES
+    "/{user_id}",
+    response_model=PlatformUserResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def get_platform_user(
     user_id: UUID,
     _: Annotated[
         PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.USERS_READ)),
+        Depends(
+            require_rate_limited_platform_permission(PlatformPermission.USERS_READ)
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PlatformUserResponse:

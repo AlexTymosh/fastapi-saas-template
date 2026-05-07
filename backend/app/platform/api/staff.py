@@ -18,7 +18,7 @@ from app.core.platform import (
     PlatformActor,
     PlatformPermission,
     PlatformWriteContext,
-    require_platform_permission,
+    require_rate_limited_platform_permission,
     require_rate_limited_platform_write_context,
 )
 from app.core.rate_limit import PLATFORM_STAFF_WRITE_POLICY
@@ -36,12 +36,18 @@ router = APIRouter(prefix="/platform/staff", tags=["platform"])
 
 
 @router.get(
-    "", response_model=PlatformStaffCollectionResponse, responses=COMMON_ERROR_RESPONSES
+    "",
+    response_model=PlatformStaffCollectionResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def list_platform_staff(
     _: Annotated[
         PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.PLATFORM_STAFF_MANAGE)),
+        Depends(
+            require_rate_limited_platform_permission(
+                PlatformPermission.PLATFORM_STAFF_MANAGE
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
