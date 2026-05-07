@@ -6,7 +6,7 @@
 
 | Step | Action | Files / areas | Ожидаемый результат | Приоритет |
 |---|---|---|---|---|
-| 1 | Добавить фактические тесты порядка зависимостей endpoint для invite create/accept/resend | `backend/tests/api/test_rate_limiting.py` или новый `tests/rate_limit/test_actual_endpoint_order.py` | 429 до тела endpoint и до DB I/O на реальных маршрутах | P1 |
+| 1 | [Fixed] Добавить фактические тесты порядка зависимостей endpoint для invite create/accept/resend | `backend/tests/api/test_rate_limiting.py` | 429 до тела endpoint и до DB I/O на реальных маршрутах | Fixed |
 | 2 | Добавить таксономию политик | `policies.py`, `registry.py` | authenticated_default, tenant_write, platform_read, platform_write, audit_read, invite_create, invite_accept | P1 |
 | 3 | Привязать settings к политикам или удалить неиспользуемые settings | `settings.py`, `policies.py` | Нет вводящей в заблуждение конфигурации; fail-open/closed контролируется согласованно | P1 |
 | 4 | Добавить вариант dependency для публичного/опционального principal | `dependencies.py`, `identifiers.py` | Будущие публичные endpoints могут иметь IP-ограничение | P1 |
@@ -29,7 +29,7 @@
 | `backend/app/core/rate_limit/registry.py` | Зарегистрировать новые политики и предоставить канонические имена политик. | Предотвратить опечатки/дрейф на уровне роутера. | Добавить тесты на дубликаты/неизвестные + все ожидаемые имена. |
 | `backend/app/core/rate_limit/dependencies.py` | Добавить вариант optional/public dependency; рассмотреть опцию scope по маршруту/методу; логировать выборочно blocked/backend_error. | Необходимо для будущих публичных endpoints и улучшения наблюдаемости безопасности. | Добавить тесты public IP keying, тесты timeout. |
 | `backend/app/core/rate_limit/identifiers.py` | Заменить простой SHA-256 на HMAC-SHA256 с секретным pepper; не хранить сырые PII. | Лучшая приватность Redis ключей. | Добавить детерминированный HMAC тест с настроенным test secret. |
-| `backend/app/invites/api/invites.py` | Переместить rate-limit dependency на уровень маршрута `dependencies=[Depends(...)]` или поставить до DB session и протестировать фактический порядок. | Избежать DB/session работы до раннего 429. | Фактический invite endpoint 429 без DB/service вызова. |
+| `backend/app/invites/api/invites.py` | [Fixed] Фактический порядок протестирован для create/accept/resend без изменения бизнес-логики маршрутов. | Избежать DB/session работы до раннего 429. | Добавлены фактические invite endpoint tests: 429 без DB/session и без service instantiation. |
 | `backend/app/organisations/api/organisations.py` | Применить `tenant_write` к create/update/delete/membership мутациям; применить default read политику при необходимости. | Поверхность злоупотребления org/membership в настоящее время открыта. | Тесты матрицы защиты endpoints. |
 | `backend/app/platform/api/users.py` | Применить `platform_read` и `platform_write`. | Admin endpoints имеют высокое воздействие. | Тесты матрицы защиты endpoints. |
 | `backend/app/platform/api/organisations.py` | Применить `platform_read` и `platform_write`. | Операции admin org имеют высокое воздействие. | Тесты матрицы защиты endpoints. |
@@ -49,7 +49,7 @@
 | Тестовый сценарий | Покрыт? | Существующие тесты | Недостающий тест | Приоритет |
 |---|---|---|---|---|
 | Ниже лимита — возвращает успех | Да | `test_rate_limiting.py`, integration | Фактический invite endpoint ниже лимита с Redis | P2 |
-| Выше лимита — возвращает 429 | Да | Unit + Redis integration | Фактический invite endpoint выше лимита | P1 |
+| Выше лимита — возвращает 429 | Да | Unit + Redis integration + фактические invite endpoint tests | — для invite create/accept/resend dependency-order сценария | OK |
 | Retry-After присутствует | Да | Unit/integration | Fallback path при сбое window stats | P2 |
 | Целые секунды | Да | Unit/integration | — | OK |
 | CORS раскрывает Retry-After | Да для 429 | Unit | Глобальная CORS конфигурация при добавлении | P2 |
@@ -59,7 +59,7 @@
 | Режим fail-closed | Да синтетически | Unit | Реальный путь сбоя Redis | P1 |
 | Отключённый rate limiting | Да | Unit/lifespan | — | OK |
 | Отсутствующий Redis URL | Да | lifespan test | Вариант для prod окружения | P2 |
-| Порядок зависимостей | Частично | синтетический без DB I/O | Реальный invite endpoint без DB до 429 | P1 |
+| Порядок зависимостей | Да | `test_over_limit_invite_create_returns_429_before_db_or_service`, `test_over_limit_invite_accept_returns_429_before_db_or_service`, `test_over_limit_invite_resend_returns_429_before_db_or_service` | — | Fixed / OK |
 | Keying по пользователю | Да | Unit | — | OK |
 | Keying по IP | Нет практического пути dependency | функция identifiers существует | Тесты public dependency | P1 |
 | Лимиты per-policy | Да | тесты policy | Тесты policy управляемые settings | P1 |
@@ -75,8 +75,8 @@
 | Endpoint / dependency | Текущий порядок | Риск | Рекомендация | Приоритет |
 |---|---|---|---|---|
 | `rate_limit_dependency()` | Зависит от `require_authenticated_principal`, поэтому auth идёт до limiter. | Хорошо для защищённых endpoints. | Сохранить. | OK |
-| Реальные invite endpoints | identity, request, db_session, затем `_ = Depends(rate_limit_dependency(...))` в сигнатуре функции. | Фактическое отсутствие DB-до-429 не доказано текущим синтетическим тестом. | Добавить фактические endpoint тесты или переместить limiter в route-level `dependencies=[Depends(...)]`. | P1 |
-| Синтетические тесты | Route-level dependency используется в тестах. | Может не совпадать с production dependency graph endpoint. | Добавить тест для реального `POST /organisations/{id}/invites`. | P1 |
+| Реальные invite endpoints | Архитектурное правило для защищённых invite маршрутов: auth → rate-limit → DB/session/body. Фактические tests для create/accept/resend добавлены на production routes. | Регрессия порядка зависимостей теперь должна падать, если `get_db_session` или service создаются до 429. | Сохранить порядок auth → rate-limit → DB/session/body и поддерживать новые regression tests. | Fixed / OK |
+| Синтетические тесты | Route-level dependency остаётся полезной для изолированной проверки limiter contract. | Риск расхождения с production dependency graph закрыт фактическими invite endpoint tests для create/accept/resend. | Сохранять синтетические тесты как unit-level guard и реальные invite tests как production-route guard. | OK |
 | DB session dependency | Lazy session, нет DB I/O по дизайну. | Создание engine/session factory всё равно может произойти до limiter при изменении порядка. | Сохранить правило no-I/O; протестировать на реальных маршрутах. | P2 |
 
 ---

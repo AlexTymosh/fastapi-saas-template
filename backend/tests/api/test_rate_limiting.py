@@ -121,6 +121,24 @@ def _build_app(
     return TestClient(app)
 
 
+def _install_invite_endpoint_over_limit_guards(client: TestClient, monkeypatch):
+    db_session_opened = False
+
+    async def _db_session_should_not_open():
+        nonlocal db_session_opened
+        db_session_opened = True
+        raise AssertionError("invite endpoint opened DB session before rate limiting")
+        yield  # pragma: no cover
+
+    invite_service_cls = MagicMock()
+    user_service_cls = MagicMock()
+    client.app.dependency_overrides[get_db_session] = _db_session_should_not_open
+    monkeypatch.setattr("app.invites.api.invites.InviteService", invite_service_cls)
+    monkeypatch.setattr("app.invites.api.invites.UserService", user_service_cls)
+
+    return invite_service_cls, user_service_cls, lambda: db_session_opened
+
+
 def test_default_test_configuration_does_not_start_rate_limiter(monkeypatch) -> None:
     with _build_app(monkeypatch, enabled=False) as client:
         runtime = client.app.state.rate_limiter_runtime
@@ -628,6 +646,93 @@ def test_over_limit_organisation_create_returns_429_before_db_or_onboarding(
     assert response.json()["error_code"] == "rate_limited"
     assert fake.hit_calls[0][0].startswith("test-rl:organisation_create:")
     onboarding_cls.assert_not_called()
+
+
+def test_over_limit_invite_create_returns_429_before_db_or_service(monkeypatch) -> None:
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    invite_service_cls, user_service_cls, db_session_opened = (
+        _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+    )
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001/invites",
+            json={"email": "invitee@example.com", "role": "member"},
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert len(fake.hit_calls) == 1
+    assert fake.hit_calls[0][0].startswith("test-rl:invite_create:")
+    assert db_session_opened() is False
+    user_service_cls.assert_not_called()
+    invite_service_cls.assert_not_called()
+
+
+def test_over_limit_invite_accept_returns_429_before_db_or_service(monkeypatch) -> None:
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    invite_service_cls, user_service_cls, db_session_opened = (
+        _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+    )
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/invites/accept",
+            json={"token": "valid-invite-token"},
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert len(fake.hit_calls) == 1
+    assert fake.hit_calls[0][0].startswith("test-rl:invite_accept:")
+    assert db_session_opened() is False
+    invite_service_cls.assert_not_called()
+    user_service_cls.assert_not_called()
+
+
+def test_over_limit_invite_resend_returns_429_before_db_or_service(monkeypatch) -> None:
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    invite_service_cls, user_service_cls, db_session_opened = (
+        _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+    )
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001"
+            "/invites/00000000-0000-4000-8000-000000000002/resend",
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert len(fake.hit_calls) == 1
+    assert fake.hit_calls[0][0].startswith("test-rl:invite_mutation:")
+    assert db_session_opened() is False
+    user_service_cls.assert_not_called()
+    invite_service_cls.assert_not_called()
 
 
 def test_unauthenticated_protected_endpoint_returns_401_before_rate_limit(
