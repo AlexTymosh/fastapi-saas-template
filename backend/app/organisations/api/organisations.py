@@ -10,7 +10,17 @@ from starlette.requests import Request
 from app.audit.context import build_audit_context_from_request
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
-from app.core.errors.openapi import COMMON_ERROR_RESPONSES, WRITE_ERROR_RESPONSES
+from app.core.errors.openapi import (
+    COMMON_ERROR_RESPONSES,
+    RATE_LIMIT_ERROR_RESPONSES,
+    WRITE_ERROR_RESPONSES,
+)
+from app.core.rate_limit import (
+    ORGANISATION_CREATE_POLICY,
+    TENANT_READ_POLICY,
+    TENANT_WRITE_POLICY,
+    rate_limit_dependency,
+)
 from app.memberships.schemas.memberships import (
     MembershipCollectionMeta,
     MembershipCollectionResponse,
@@ -46,11 +56,14 @@ PrincipalDep = Annotated[
     "",
     response_model=OrganisationResponse,
     status_code=status.HTTP_201_CREATED,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="create_organisation",
 )
 async def create_organisation(
-    payload: CreateOrganisationRequest, identity: PrincipalDep, db_session: DbSessionDep
+    payload: CreateOrganisationRequest,
+    identity: PrincipalDep,
+    _: Annotated[None, Depends(rate_limit_dependency(ORGANISATION_CREATE_POLICY))],
+    db_session: DbSessionDep,
 ) -> OrganisationResponse:
     onboarding_service = OnboardingService(db_session)
     _, organisation, _ = await onboarding_service.create_organisation_for_current_user(
@@ -64,11 +77,14 @@ async def create_organisation(
 @router.get(
     "/{organisation_id}",
     response_model=OrganisationResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="get_organisation",
 )
 async def get_organisation(
-    organisation_id: UUID, identity: PrincipalDep, db_session: DbSessionDep
+    organisation_id: UUID,
+    identity: PrincipalDep,
+    _: Annotated[None, Depends(rate_limit_dependency(TENANT_READ_POLICY))],
+    db_session: DbSessionDep,
 ) -> OrganisationResponse:
     access_service = OrganisationAccessService(db_session)
     organisation = await access_service.get_organisation_for_member(
@@ -80,7 +96,7 @@ async def get_organisation(
 @router.patch(
     "/{organisation_id}",
     response_model=OrganisationResponse,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="update_organisation",
 )
 async def update_organisation(
@@ -88,6 +104,7 @@ async def update_organisation(
     payload: UpdateOrganisationRequest,
     identity: PrincipalDep,
     request: Request,
+    _: Annotated[None, Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
     db_session: DbSessionDep,
 ) -> OrganisationResponse:
     user = await UserService(db_session).provision_current_user(identity)
@@ -107,11 +124,14 @@ async def update_organisation(
 @router.get(
     "/{organisation_id}/directory",
     response_model=OrganisationDirectoryResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="get_organisation_directory",
 )
 async def get_organisation_directory(
-    organisation_id: UUID, identity: PrincipalDep, db_session: DbSessionDep
+    organisation_id: UUID,
+    identity: PrincipalDep,
+    _: Annotated[None, Depends(rate_limit_dependency(TENANT_READ_POLICY))],
+    db_session: DbSessionDep,
 ) -> OrganisationDirectoryResponse:
     user = await UserService(db_session).provision_current_user(identity)
     directory_members = await MembershipService(
@@ -135,7 +155,7 @@ async def get_organisation_directory(
 @router.patch(
     "/{organisation_id}/memberships/{membership_id}/role",
     response_model=MembershipResponse,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="change_membership_role",
 )
 async def change_membership_role(
@@ -144,6 +164,7 @@ async def change_membership_role(
     payload: UpdateMembershipRoleRequest,
     identity: PrincipalDep,
     request: Request,
+    _: Annotated[None, Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
     db_session: DbSessionDep,
 ) -> MembershipResponse:
     user = await UserService(db_session).provision_current_user(identity)
@@ -162,7 +183,7 @@ async def change_membership_role(
 @router.delete(
     "/{organisation_id}/memberships/{membership_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="remove_membership",
 )
 async def remove_membership(
@@ -170,6 +191,7 @@ async def remove_membership(
     membership_id: UUID,
     identity: PrincipalDep,
     request: Request,
+    _: Annotated[None, Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
     db_session: DbSessionDep,
     payload: Annotated[RemoveMembershipRequest | None, Body()] = None,
 ) -> None:
@@ -189,13 +211,14 @@ async def remove_membership(
 @router.delete(
     "/{organisation_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="delete_organisation",
 )
 async def delete_organisation(
     organisation_id: UUID,
     identity: PrincipalDep,
     request: Request,
+    _: Annotated[None, Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
     db_session: DbSessionDep,
     payload: Annotated[DeleteOrganisationRequest | None, Body()] = None,
 ) -> None:
@@ -214,11 +237,14 @@ async def delete_organisation(
 @router.get(
     "/{organisation_id}/memberships",
     response_model=MembershipCollectionResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="list_organisation_memberships",
 )
 async def list_organisation_memberships(
-    organisation_id: UUID, identity: PrincipalDep, db_session: DbSessionDep
+    organisation_id: UUID,
+    identity: PrincipalDep,
+    _: Annotated[None, Depends(rate_limit_dependency(TENANT_READ_POLICY))],
+    db_session: DbSessionDep,
 ) -> MembershipCollectionResponse:
     user = await UserService(db_session).provision_current_user(identity)
     memberships = await MembershipService(db_session).list_memberships_for_management(

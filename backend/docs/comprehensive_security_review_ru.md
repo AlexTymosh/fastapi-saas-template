@@ -112,7 +112,7 @@
 | `DELETE /api/v1/organisations/{organisation_id}/invites/{invite_id}` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: regression test подтверждает 404 для cross-org invite revoke и сохранение pending invite | Fixed |
 | `POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend` | invite_id | Invite загружается по invite_id + organisation_id | Низкий | Fixed: regression test подтверждает 404 для cross-org invite resend и неизменность token/expires/status | Fixed |
 | `POST /api/v1/invites/accept` | token | Hash токена + совпадение аутентифицированного email + verified email | Средний | Fixed: неиспользуемые/неизвестные/истёкшие/повторно использованные/отозванные token states возвращают единый Problem Details 400 `Invalid or expired invite`; invite accept audit остаётся отдельным P1 debt | Fixed/P1 audit |
-| `/api/v1/platform/*` | user/org/staff/audit IDs | Platform permission guard + write rate limits + limited audit view | Средний по дизайну | Сохранять rate-limit и limited-view regression coverage | Fixed/P2 ongoing hardening |
+| `/api/v1/platform/*` | user/org/staff/audit IDs | Platform permission guard + read/audit/write rate limits + limited audit view | Средний по дизайну | Сохранять rate-limit и limited-view regression coverage | Fixed/P2 ongoing hardening |
 
 ---
 
@@ -122,7 +122,7 @@
 |---|---|---|---|---|---|
 | Принятие invite не аудируется | `InviteService.accept_invite()` | Создание membership происходит без audit trail | Пользователь принимает invite; система создаёт membership, но нет события invite_accepted / membership-created-by-invite | Добавить `AuditAction.INVITE_ACCEPTED` или `MEMBERSHIP_CREATED`. Включить organisation_id, invite_id, membership_id, role. Добавить тест | P1 |
 | Fixed: состояние invite token больше не различимо внешним API | `accept_invite()` нормализует unknown / expired pending / accepted / revoked / expired token states | Снижено | Внешний ответ больше не раскрывает, существовал ли токен, истёк ли он или был использован/отозван | Сохранять единый Problem Details 400 `Invalid or expired invite`; подробности не отдавать клиенту и не писать raw token/token hash в audit/logs | Fixed |
-| Отзыв invite не имеет rate limit | `invites/api/invites.py` | Перебор invite ID / злоупотребление скомпрометированным admin | Admin токен используется для brute-force invite ID внутри org | Добавить политику для invite revoke/resend/admin write действий | P3 |
+| Fixed: invite revoke/resend имеют rate limit | `invites/api/invites.py` | Снижено | Admin invite mutation операции используют `invite_mutation` fail-closed policy; over-limit возвращает 429 Problem Details + `Retry-After` | Сохранять endpoint protection и fake-limiter regression coverage | Fixed |
 | Сырой токен не хранится в таблице invites | `InviteService`, Invite model | Низкий | Утечка БД раскрывает только хэши токенов, не сырые токены | Хорошо. Сохранить SHA-256 hash + high entropy token. Рассмотреть HMAC с server secret для усиления token_hash | P3 |
 | Accept атомарен по статусу invite | `accept_pending_invite_by_token_hash()` | Низкий | Два пользователя пытаются использовать один токен | Атомарный `UPDATE ... WHERE status=pending` блокирует replay. Добавить concurrency regression test | — |
 | Привязка email invite существует | `accept_invite()` | Низкий | Токен украден другим залогиненным пользователем | Несовпадение email блокирует принятие. Сохранить. Добавить тест для несовпадающего email | — |
@@ -150,11 +150,11 @@
 |---|---|---|---|---|
 | `POST /organisations/{id}/invites` | `INVITE_CREATE_POLICY`: 20/hour, fail-closed | Низкий | Хороший baseline. Добавить per-org измерение при злоупотреблениях | P3 |
 | `POST /invites/accept` | `INVITE_ACCEPT_POLICY`: 5 per 5 min, fail-closed | Низкий/Средний | Хорошо. Рассмотреть комбинированный ключ IP+user для token attacks | P3 |
-| Revoke invite | Политика отсутствует | Средний | Добавить revoke политику | P3 |
-| Platform write endpoints | Fixed: `platform_write` 30/min и `platform_staff_write` 10/min, fail-closed | Низкий/контролируемый | Сохранить dependency-based защиту для всех новых platform write endpoints; покрытие включает fake regression tests и Redis/Testcontainers integration tests | P4 |
-| `/users/me` | Политика отсутствует | Низкий/Средний | Добавить общую authenticated read политику позже | P3 |
+| Revoke/resend invite | Fixed: `invite_mutation` 30/hour, fail-closed | Низкий/контролируемый | Сохранять endpoint-level dependency и тесты покрытия | P4 |
+| Platform read/audit/write endpoints | Fixed: `platform_read` 60/min, `audit_read` 30/min, `platform_write` 30/min и `platform_staff_write` 10/min; sensitive policies fail-closed | Низкий/контролируемый | Сохранить dependency-based защиту для всех новых platform endpoints; покрытие включает fake, endpoint-protection и Redis/Testcontainers regression tests | P4 |
+| `/users/me` | Fixed: `authenticated_default` 120/min, fail-open | Низкий/контролируемый | Сохранить 401-before-limiter contract | P4 |
 | Публичные endpoints | Текущая dependency требует auth | Риск в будущем | Разделить зависимости public/authenticated limiter | P2 |
-| Redis недоступен | Чувствительные invite политики fail-closed; runtime missing возвращает unavailable | Риск доступности, не обход | Хорошо для чувствительных flows. Добавить тесты для Redis timeout/unavailable | P3 |
+| Redis недоступен | Low-risk read policies fail-open; tenant write/create, invite, platform read/audit/write policies fail-closed; runtime missing возвращает unavailable | Риск доступности, не обход | Хорошо для чувствительных flows. Сохранять timeout/unavailable tests | P3 |
 | Retry-After | Возвращается и раскрывается через `Access-Control-Expose-Headers` | Низкий | Хорошо | P4 |
 | IP spoofing | Proxy headers отключены по умолчанию | Низкий | Сохранить false, если только не за доверенным proxy со строгими сетевыми границами | P3 |
 
@@ -237,31 +237,31 @@
 |---|---|---|---|---|---|---|---|
 | GET | `/api/v1/health/live` | Нет* | Public health | N/A | Нет | Нет | Низкий |
 | GET | `/api/v1/health/ready` | Нет* | Public health | N/A | Нет | Нет | Низкий |
-| GET | `/api/v1/users/me` | Да | User | N/A | Нет | Нет | Средний: пробел для приостановленного пользователя |
-| POST | `/api/v1/organisations` | Да | User without org | one-user-one-org | Нет | Неизвестно, onboarding не получен | Средний/неизвестный |
-| GET | `/api/v1/organisations/{organisation_id}` | Да | Member | Да | Нет | Нет | Низкий |
-| PATCH | `/api/v1/organisations/{organisation_id}` | Да | Owner/Admin | Да | Нет | Да | Низкий |
-| DELETE | `/api/v1/organisations/{organisation_id}` | Да | Owner | Да | Нет | Да | Низкий |
-| GET | `/api/v1/organisations/{organisation_id}/directory` | Да | Member | Да | Нет | Нет | Низкий |
-| GET | `/api/v1/organisations/{organisation_id}/memberships` | Да | Owner/Admin | Да | Нет | Нет | Низкий |
-| PATCH | `/api/v1/organisations/{organisation_id}/memberships/{membership_id}/role` | Да | Owner | Да | Нет | Да | Низкий |
-| DELETE | `/api/v1/organisations/{organisation_id}/memberships/{membership_id}` | Да | Owner/Admin limited | Да | Нет | Да | Низкий |
-| POST | `/api/v1/organisations/{organisation_id}/invites` | Да | Owner/Admin | Да | Да | Да | Низкий |
-| POST | `/api/v1/invites/accept` | Да | Email-verified invited user | Via invite | Да | Нет | Средний |
-| DELETE | `/api/v1/organisations/{organisation_id}/invites/{invite_id}` | Да | Owner/Admin limited | Да | Нет | Да | Низкий/Средний |
-| POST | `/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend` | Да | Owner/Admin limited | Да | Да | Да | Низкий |
-| GET | `/api/v1/platform/users` | Да | USERS_READ | Global platform | Нет | Нет | Средний |
-| GET | `/api/v1/platform/users/{user_id}` | Да | USERS_READ | Global platform | Нет | Нет | Средний |
+| GET | `/api/v1/users/me` | Да | User | N/A | `authenticated_default` | Нет | Средний: пробел для приостановленного пользователя |
+| POST | `/api/v1/organisations` | Да | User without org | one-user-one-org | `organisation_create` | Неизвестно, onboarding не получен | Средний/неизвестный |
+| GET | `/api/v1/organisations/{organisation_id}` | Да | Member | Да | `tenant_read` | Нет | Низкий |
+| PATCH | `/api/v1/organisations/{organisation_id}` | Да | Owner/Admin | Да | `tenant_write` | Да | Низкий |
+| DELETE | `/api/v1/organisations/{organisation_id}` | Да | Owner | Да | `tenant_write` | Да | Низкий |
+| GET | `/api/v1/organisations/{organisation_id}/directory` | Да | Member | Да | `tenant_read` | Нет | Низкий |
+| GET | `/api/v1/organisations/{organisation_id}/memberships` | Да | Owner/Admin | Да | `tenant_read` | Нет | Низкий |
+| PATCH | `/api/v1/organisations/{organisation_id}/memberships/{membership_id}/role` | Да | Owner | Да | `tenant_write` | Да | Низкий |
+| DELETE | `/api/v1/organisations/{organisation_id}/memberships/{membership_id}` | Да | Owner/Admin limited | Да | `tenant_write` | Да | Низкий |
+| POST | `/api/v1/organisations/{organisation_id}/invites` | Да | Owner/Admin | Да | `invite_create` | Да | Низкий |
+| POST | `/api/v1/invites/accept` | Да | Email-verified invited user | Via invite | `invite_accept` | Нет | Средний |
+| DELETE | `/api/v1/organisations/{organisation_id}/invites/{invite_id}` | Да | Owner/Admin limited | Да | `invite_mutation` | Да | Низкий/Средний |
+| POST | `/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend` | Да | Owner/Admin limited | Да | `invite_mutation` | Да | Низкий |
+| GET | `/api/v1/platform/users` | Да | USERS_READ | Global platform | `platform_read` | Нет | Средний |
+| GET | `/api/v1/platform/users/{user_id}` | Да | USERS_READ | Global platform | `platform_read` | Нет | Средний |
 | POST | `/api/v1/platform/users/{user_id}/suspend` | Да | USERS_SUSPEND | Global platform | `platform_write` | Да | Низкий/контролируемый |
 | POST | `/api/v1/platform/users/{user_id}/restore` | Да | USERS_RESTORE | Global platform | `platform_write` | Да | Низкий/контролируемый |
-| GET | `/api/v1/platform/organisations` | Да | ORGANISATIONS_READ | Global platform | Нет | Нет | Средний |
-| GET | `/api/v1/platform/organisations/{organisation_id}` | Да | ORGANISATIONS_READ | Global platform | Нет | Нет | Средний |
+| GET | `/api/v1/platform/organisations` | Да | ORGANISATIONS_READ | Global platform | `platform_read` | Нет | Средний |
+| GET | `/api/v1/platform/organisations/{organisation_id}` | Да | ORGANISATIONS_READ | Global platform | `platform_read` | Нет | Средний |
 | POST | `/api/v1/platform/organisations/{organisation_id}/suspend` | Да | ORGANISATIONS_SUSPEND | Global platform | `platform_write` | Да | Низкий/контролируемый |
 | POST | `/api/v1/platform/organisations/{organisation_id}/restore` | Да | ORGANISATIONS_RESTORE | Global platform | `platform_write` | Да | Низкий/контролируемый |
 | PATCH | `/api/v1/platform/organisations/{organisation_id}` | Да | ORGANISATIONS_CORRECT_PROFILE | Global platform | `platform_write` | Да | Низкий/контролируемый |
-| GET | `/api/v1/platform/audit-events` | Да | AUDIT_READ | Global platform | Нет | Нет | Средний; full audit view включает sensitive поля |
-| GET | `/api/v1/platform/audit-events/limited` | Да | AUDIT_READ_LIMITED | Global platform | Нет | Нет | Средний; limited view скрывает raw metadata/IP/user-agent/reason/actor id |
-| GET | `/api/v1/platform/staff` | Да | PLATFORM_STAFF_MANAGE | Global platform | Нет | Нет | Средний |
+| GET | `/api/v1/platform/audit-events` | Да | AUDIT_READ | Global platform | `audit_read` | Нет | Средний; full audit view включает sensitive поля |
+| GET | `/api/v1/platform/audit-events/limited` | Да | AUDIT_READ_LIMITED | Global platform | `audit_read` | Нет | Средний; limited view скрывает raw metadata/IP/user-agent/reason/actor id |
+| GET | `/api/v1/platform/staff` | Да | PLATFORM_STAFF_MANAGE | Global platform | `platform_read` | Нет | Средний |
 | POST | `/api/v1/platform/staff` | Да | PLATFORM_STAFF_MANAGE | Global platform | `platform_staff_write` | Да | Низкий/контролируемый |
 | PATCH | `/api/v1/platform/staff/{staff_id}/role` | Да | PLATFORM_STAFF_MANAGE | Global platform | `platform_staff_write` | Да | Низкий/Средний: last-admin invariant защищён row-level lock |
 | POST | `/api/v1/platform/staff/{staff_id}/suspend` | Да | PLATFORM_STAFF_MANAGE | Global platform | `platform_staff_write` | Да | Низкий/Средний: last-admin invariant защищён row-level lock |
@@ -313,12 +313,12 @@ ruff format --check .
 | P1 | Suspended users | `/users/me` разрешён для приостановленного пользователя | `users/api/users.py`, `users/services/users.py` | Приостановленный пользователь всё ещё использует защищённый endpoint | Добавить active-user guard |
 | P1 | Audit / invite | Invite accept не аудируется | `invites/services/invites.py` | Создание membership не имеет audit trail | Добавить `INVITE_ACCEPTED` audit event |
 | Fixed | CORS | Явная CORS конфигурация добавлена | `main.py`, `settings.py` | Браузерный frontend использует безопасный allowlist | Сохранять environment-based origins без wildcard в prod |
-| P2 | Rate limit | Fixed: platform writes имеют `platform_write`/`platform_staff_write` rate limit | `platform/api/*`, `core/platform/write_context.py`, `core/rate_limit/policies.py`, `tests/platform/test_platform_write_rate_limiting*.py` | Злоупотребление с валидным platform токеном ограничено fail-closed политиками; Redis/Testcontainers tests подтверждают реальные окна/429, transaction-boundary test подтверждает блокировку до platform write transaction/service body | Сохранить fake и Redis regression tests |
+| Fixed | Rate limit | Authenticated, tenant, invite, platform read/audit, and platform write endpoint groups have explicit endpoint-level policies | `users/api/users.py`, `organisations/api/organisations.py`, `invites/api/invites.py`, `platform/api/*`, `core/rate_limit/policies.py`, `tests/rate_limit/test_endpoint_protection.py`, `tests/api/test_rate_limiting.py` | Злоупотребление с валидным authenticated/tenant/platform токеном ограничено отдельными low-cardinality policies; unauthenticated запросы возвращают 401 до limiter; over-limit возвращает 429 + `Retry-After`; fail-closed backend outage возвращает 503 | Сохранить fake, registry, endpoint-protection и Redis regression tests |
 | Fixed | Logging | Structured logging redaction усилен | `logging/processors.py`, `tests/logging/test_processors.py` | Вариантные секретные ключи и auth-token-like значения редактируются рекурсивно | Сохранять regression coverage для новых вариантов ключей |
 | Fixed | Platform audit | Limited audit permission применяется | `permissions.py`, `audit_events.py`, `platform_audit_events.py` | Limited actors получают только safe summary audit view | Сохранять redaction regression tests |
 | P2/P3 | Soft delete | Platform org list включает удалённые orgs | `platform_organisations.py` | Раскрытие удалённых данных, если не предусмотрено | Добавить флаг/разрешение `include_deleted` |
 | Fixed | Invite errors | Invite token state oracle закрыт | `invites/services/invites.py`, `tests/services/test_invite_service.py`, `tests/api/test_invites.py` | Unknown/expired/accepted/revoked states получают одинаковый внешний Problem Details contract | Сохранять regression coverage |
-| P3 | Rate limit | Invite revoke не имеет rate limit | `invites/api/invites.py` | Злоупотребление/перебор с admin токеном | Добавить revoke политику |
+| Fixed | Rate limit | Invite revoke/resend имеют `invite_mutation` rate limit | `invites/api/invites.py`, `core/rate_limit/policies.py`, `tests/rate_limit/test_endpoint_protection.py` | Злоупотребление/перебор с admin токеном ограничены fail-closed политикой; 429/503 задокументированы в OpenAPI | Сохранять coverage |
 | P3 | Audit | Platform services не имеют actor-match guard | `platform/services/*` | Риск внутреннего злоупотребления | Добавить `_ensure_audit_actor_matches()` |
 | P4 | Auth claims | Неиспользуемый `resource_client_id` | `auth_claims.py` | Путаница разработчика | Удалить или применить |
 
@@ -353,7 +353,7 @@ ruff format --check .
 | `backend/app/platform/services/platform_staff.py` | Fixed: demote/suspend active platform admin проверяют наличие другого active admin после блокировки active admin rows | Предотвратить нарушение инварианта при конкурентном доступе | `test_cannot_demote_last_active_platform_admin`, `test_cannot_suspend_last_active_platform_admin`, allowed-with-other-admin tests |
 | `backend/app/core/config/settings.py` | Fixed: добавлен `CorsSettings` с enabled, allow_origins, credentials, methods, headers, exposed_headers, max_age и validation | Конфигурация браузерной части явная; wildcard + credentials и prod wildcard запрещены | Settings validation tests |
 | `backend/app/main.py` | Fixed: добавлен `CORSMiddleware` в app factory, включается только при enabled + origins | Избежать будущего небезопасного wildcard patch | CORS response tests |
-| `backend/app/core/rate_limit/policies.py` | Fixed: добавлены `platform_write` и `platform_staff_write`; invite revoke policy остаётся отдельным P3 | Platform write политики зарегистрированы и fail-closed | `tests/rate_limit/test_policy_registry.py`, `tests/platform/test_platform_write_rate_limiting.py` |
+| `backend/app/core/rate_limit/policies.py` | Fixed: добавлены authenticated/tenant/organisation/invite/platform/audit policies, включая `invite_mutation`, `platform_read`, `audit_read`, `platform_write`, `platform_staff_write` | Политики зарегистрированы, имеют явные fail-open/fail-closed режимы и endpoint-level dependencies | `tests/rate_limit/test_policy_registry.py`, `tests/rate_limit/test_endpoint_protection.py`, `tests/api/test_rate_limiting.py`, `tests/platform/test_platform_write_rate_limiting.py` |
 | `backend/app/core/rate_limit/dependencies.py` | Разделить authenticated и public limiter dependencies | Текущий limiter всегда требует auth | Public endpoint limiter unit test |
 | `backend/app/core/logging/processors.py` | Fixed: используется нормализованный ключ, sensitive markers и value-based redaction для Bearer/Basic/JWT-like строк | Снизить риск утечки секретов в application/security logs | Redaction tests для exact/hyphenated/snake_case/camelCase/PascalCase keys, nested/list/tuple structures, auth values и email masking |
 | `backend/app/platform/api/audit_events.py` | Fixed: добавлен `GET /platform/audit-events/limited` с `AUDIT_READ_LIMITED`, общий list/query путь вынесен через audit service/repository | Limited permission больше не вводит в заблуждение и не раскрывает full audit trail | Full/limited/no-permission/filtering/OpenAPI regression tests |

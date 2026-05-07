@@ -18,6 +18,7 @@ from app.core.errors.openapi import (
 from app.core.rate_limit import (
     INVITE_ACCEPT_POLICY,
     INVITE_CREATE_POLICY,
+    INVITE_MUTATION_POLICY,
     rate_limit_dependency,
 )
 from app.invites.schemas.invites import (
@@ -50,8 +51,8 @@ async def create_invite(
     payload: CreateInviteRequest,
     identity: PrincipalDep,
     request: Request,
-    db_session: DbSessionDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
+    db_session: DbSessionDep,
 ) -> InviteResponse:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session)
@@ -76,8 +77,8 @@ async def create_invite(
 async def accept_invite(
     payload: AcceptInviteRequest,
     identity: PrincipalDep,
-    db_session: DbSessionDep,
     _: Annotated[None, Depends(rate_limit_dependency(INVITE_ACCEPT_POLICY))],
+    db_session: DbSessionDep,
 ) -> AcceptInviteResponse:
     invite_service = InviteService(db_session)
     membership = await invite_service.accept_invite(
@@ -94,7 +95,7 @@ async def accept_invite(
 @router.delete(
     "/organisations/{organisation_id}/invites/{invite_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=WRITE_ERROR_RESPONSES,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="revoke_organisation_invite",
 )
 async def revoke_invite(
@@ -102,6 +103,7 @@ async def revoke_invite(
     invite_id: UUID,
     identity: PrincipalDep,
     request: Request,
+    _: Annotated[None, Depends(rate_limit_dependency(INVITE_MUTATION_POLICY))],
     db_session: DbSessionDep,
     payload: Annotated[RevokeInviteRequest | None, Body()] = None,
 ) -> None:
@@ -129,8 +131,8 @@ async def resend_invite(
     invite_id: UUID,
     identity: PrincipalDep,
     request: Request,
+    _: Annotated[None, Depends(rate_limit_dependency(INVITE_MUTATION_POLICY))],
     db_session: DbSessionDep,
-    _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
 ) -> InviteResponse:
     user = await UserService(db_session).provision_current_user(identity)
     invite_service = InviteService(db_session)

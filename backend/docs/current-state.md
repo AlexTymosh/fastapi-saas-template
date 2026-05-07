@@ -23,7 +23,7 @@ The following foundations are present in code and/or current documentation and s
 - Platform staff and permissions foundation.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
-- Redis/rate limiting foundation, including protected invite flows and fail-closed platform write policies.
+- Redis/rate limiting foundation, including explicit endpoint-level policies for authenticated reads, tenant read/write/create flows, invite flows, platform read/audit reads, and fail-closed platform write policies.
 - Observability/OpenTelemetry foundation.
 - pytest/Testcontainers foundation.
 

@@ -21,6 +21,7 @@ from app.core.platform import (
     require_platform_permission,
     require_rate_limited_platform_write_context,
 )
+from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
 from app.platform.schemas.platform_users import (
     PlatformUserResponse,
     PlatformUsersCollectionResponse,
@@ -33,9 +34,12 @@ router = APIRouter(prefix="/platform/users", tags=["platform"])
 
 
 @router.get(
-    "", response_model=PlatformUsersCollectionResponse, responses=COMMON_ERROR_RESPONSES
+    "",
+    response_model=PlatformUsersCollectionResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def list_platform_users(
+    _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         PlatformActor,
         Depends(require_platform_permission(PlatformPermission.USERS_READ)),
@@ -55,10 +59,13 @@ async def list_platform_users(
 
 
 @router.get(
-    "/{user_id}", response_model=PlatformUserResponse, responses=COMMON_ERROR_RESPONSES
+    "/{user_id}",
+    response_model=PlatformUserResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def get_platform_user(
     user_id: UUID,
+    _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         PlatformActor,
         Depends(require_platform_permission(PlatformPermission.USERS_READ)),

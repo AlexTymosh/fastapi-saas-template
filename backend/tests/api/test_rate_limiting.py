@@ -526,3 +526,127 @@ def test_runtime_code_uses_limits_aio_namespace() -> None:
     lifecycle_source = inspect.getsource(lifecycle)
 
     assert "limits.aio" in dependency_source or "limits.aio" in lifecycle_source
+
+
+def test_over_limit_tenant_write_returns_429_before_db_or_service(monkeypatch) -> None:
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    async def _db_session_should_not_open():
+        raise AssertionError("tenant write opened a DB session before rate limiting")
+        yield  # pragma: no cover
+
+    service_cls = MagicMock()
+    client.app.dependency_overrides[get_db_session] = _db_session_should_not_open
+    monkeypatch.setattr(
+        "app.organisations.api.organisations.OrganisationService", service_cls
+    )
+
+    with client as api_client:
+        response = api_client.patch(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001",
+            json={"name": "Blocked Ltd"},
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert fake.hit_calls[0][0].startswith("test-rl:tenant_write:")
+    service_cls.assert_not_called()
+
+
+def test_over_limit_platform_audit_read_returns_429_before_db_or_service(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    async def _db_session_should_not_open():
+        raise AssertionError("audit read opened a DB session before rate limiting")
+        yield  # pragma: no cover
+
+    list_events = AsyncMock()
+    client.app.dependency_overrides[get_db_session] = _db_session_should_not_open
+    monkeypatch.setattr(
+        "app.audit.services.audit_events.AuditEventService.list_events", list_events
+    )
+
+    with client as api_client:
+        response = api_client.get("/api/v1/platform/audit-events")
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert fake.hit_calls[0][0].startswith("test-rl:audit_read:")
+    list_events.assert_not_called()
+
+
+def test_over_limit_organisation_create_returns_429_before_db_or_onboarding(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    async def _db_session_should_not_open():
+        raise AssertionError(
+            "organisation create opened a DB session before rate limiting"
+        )
+        yield  # pragma: no cover
+
+    onboarding_cls = MagicMock()
+    client.app.dependency_overrides[get_db_session] = _db_session_should_not_open
+    monkeypatch.setattr(
+        "app.organisations.api.organisations.OnboardingService", onboarding_cls
+    )
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations",
+            json={"name": "Blocked Ltd", "slug": "blocked-ltd"},
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert fake.hit_calls[0][0].startswith("test-rl:organisation_create:")
+    onboarding_cls.assert_not_called()
+
+
+def test_unauthenticated_protected_endpoint_returns_401_before_rate_limit(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=False)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+
+    with client as api_client:
+        response = api_client.patch(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001",
+            json={"name": "Blocked Ltd"},
+        )
+
+    assert response.status_code == 401
+    assert fake.hit_calls == []

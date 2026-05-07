@@ -21,6 +21,7 @@ from app.core.platform import (
     require_platform_permission,
     require_rate_limited_platform_write_context,
 )
+from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
 from app.platform.schemas.platform_organisations import (
     PlatformOrganisationPatchRequest,
     PlatformOrganisationResponse,
@@ -36,9 +37,10 @@ router = APIRouter(prefix="/platform/organisations", tags=["platform"])
 @router.get(
     "",
     response_model=PlatformOrganisationsCollectionResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def list_platform_orgs(
+    _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         PlatformActor,
         Depends(require_platform_permission(PlatformPermission.ORGANISATIONS_READ)),
@@ -62,10 +64,11 @@ async def list_platform_orgs(
 @router.get(
     "/{organisation_id}",
     response_model=PlatformOrganisationResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def get_platform_org(
     organisation_id: UUID,
+    _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         PlatformActor,
         Depends(require_platform_permission(PlatformPermission.ORGANISATIONS_READ)),

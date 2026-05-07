@@ -428,3 +428,62 @@ cd backend && pytest -q -m "not external_db"  # blocked: missing httpx in defaul
 cd backend && ruff check .
 cd backend && ruff format --check .
 ```
+
+---
+
+## Update: Authenticated/Tenant/Platform Rate Limit Coverage
+
+## Current Focus
+
+Close rate-limiting technical debt for sensitive authenticated, tenant, invite, platform read/list/detail, and platform audit endpoints while preserving explicit endpoint-level contracts.
+
+## Last Completed
+
+Added explicit policies for authenticated default reads, tenant reads, tenant writes, organisation creation, platform reads, audit reads, and invite admin mutations. Applied endpoint-level FastAPI dependencies to `/users/me`, organisation create/read/write/membership/directory routes, invite revoke/resend, platform user/organisation/staff read routes, and full/limited platform audit listing. Newly protected routes now declare `RATE_LIMIT_ERROR_RESPONSES` for documented 429/503 Problem Details responses. Health endpoints remain intentionally unprotected by the app-level limiter, and unauthenticated requests continue to return 401 before limiter checks.
+
+## Files Touched
+
+- `backend/app/core/rate_limit/policies.py`
+- `backend/app/core/rate_limit/registry.py`
+- `backend/app/core/rate_limit/__init__.py`
+- `backend/app/users/api/users.py`
+- `backend/app/organisations/api/organisations.py`
+- `backend/app/invites/api/invites.py`
+- `backend/app/platform/api/users.py`
+- `backend/app/platform/api/organisations.py`
+- `backend/app/platform/api/staff.py`
+- `backend/app/platform/api/audit_events.py`
+- `backend/tests/rate_limit/test_policy_registry.py`
+- `backend/tests/rate_limit/test_endpoint_protection.py`
+- `backend/tests/api/test_rate_limiting.py`
+- `README.md`
+- `backend/docs/current-state.md`
+- `backend/docs/rate-limiting.md`
+- `backend/docs/comprehensive_security_review_ru.md`
+- `SESSION_NOTES.md`
+
+## Checks Run
+
+```bash
+git fetch origin main --prune  # blocked: proxy CONNECT tunnel returned 403; no remote main was available locally
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && pytest -q tests/rate_limit/test_policy_registry.py tests/rate_limit/test_endpoint_protection.py tests/api/test_rate_limiting.py  # blocked: Python 3.14 env has FastAPI/Starlette but missing httpx
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+cd backend && PYENV_VERSION=3.12.13 pytest -q tests/rate_limit/test_policy_registry.py  # blocked: Python 3.12 env missing FastAPI
+cd backend && pytest -q tests/rate_limit/test_policy_registry.py  # blocked: Python 3.14 env has FastAPI/Starlette but missing httpx
+cd backend && pytest -q tests/rate_limit/test_endpoint_protection.py  # blocked: Python 3.14 env has FastAPI/Starlette but missing httpx
+cd backend && pytest -q tests/api/test_rate_limiting.py  # blocked: Python 3.14 env has FastAPI/Starlette but missing httpx
+cd backend && pytest -q tests/platform/test_platform_write_rate_limiting.py  # blocked: Python 3.14 env has FastAPI/Starlette but missing httpx
+cd backend && pytest -q -m "security and not external_db"  # blocked: Python 3.14 env has FastAPI/Starlette but missing httpx
+cd backend && pytest -q -m "not external_db"  # blocked: Python 3.14 env has FastAPI/Starlette but missing httpx
+cd backend && python <endpoint policy smoke script>
+cd backend && PYENV_VERSION=3.12.13 python -m compileall -q app tests
+cd backend && git diff --check
+```
+
+## Remaining Risks
+
+- The container could not fetch `origin/main`, so the working branch was created from the available local HEAD after the remote fetch failed. Verify/rebase against actual `main` in an environment with GitHub access before merging.
+- Pytest could not run in this container because dependencies are incomplete and dependency installation is blocked by the configured proxy. Compile, lint, format, and diff whitespace checks passed.
+- Redis/Testcontainers integration tests were not run because the Python test environment could not collect tests.

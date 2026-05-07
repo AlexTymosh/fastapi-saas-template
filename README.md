@@ -76,7 +76,7 @@ Keycloak is the identity provider and JWT issuer.
 - Local user projection uses `external_auth_id == sub`.
 - Tenant roles are resolved from database memberships.
 - Platform roles and permissions are resolved from `platform_staff`.
-- Sensitive platform write endpoints are protected by fail-closed Redis-backed rate limiting (`platform_write` / `platform_staff_write`).
+- Sensitive authenticated endpoint groups use explicit endpoint-level Redis-backed rate limiting: authenticated reads, tenant read/write/create flows, invite create/accept/mutation flows, platform read/audit reads, and fail-closed platform writes (`platform_write` / `platform_staff_write`).
 - Limited platform audit access uses a backend redacted endpoint that omits raw metadata, IP address, user-agent, free-text reason, and direct actor identifiers.
 - The detailed identity contract is in `backend/docs/keycloak-identity-contract.md`.
 
