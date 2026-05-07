@@ -35,23 +35,78 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
     )
 
 
-def test_invite_create_endpoint_has_invite_create_policy() -> None:
+@pytest.mark.parametrize(
+    ("method", "path", "policy_name"),
+    [
+        ("GET", "/api/v1/users/me", "authenticated_default"),
+        ("POST", "/api/v1/organisations", "organisation_create"),
+        ("GET", "/api/v1/organisations/{organisation_id}", "tenant_read"),
+        ("GET", "/api/v1/organisations/{organisation_id}/directory", "tenant_read"),
+        ("GET", "/api/v1/organisations/{organisation_id}/memberships", "tenant_read"),
+        ("PATCH", "/api/v1/organisations/{organisation_id}", "tenant_write"),
+        ("DELETE", "/api/v1/organisations/{organisation_id}", "tenant_write"),
+        (
+            "PATCH",
+            "/api/v1/organisations/{organisation_id}/memberships/{membership_id}/role",
+            "tenant_write",
+        ),
+        (
+            "DELETE",
+            "/api/v1/organisations/{organisation_id}/memberships/{membership_id}",
+            "tenant_write",
+        ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites",
+            "invite_create",
+        ),
+        ("POST", "/api/v1/invites/accept", "invite_accept"),
+        (
+            "DELETE",
+            "/api/v1/organisations/{organisation_id}/invites/{invite_id}",
+            "invite_mutation",
+        ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend",
+            "invite_mutation",
+        ),
+        ("GET", "/api/v1/platform/users", "platform_read"),
+        ("GET", "/api/v1/platform/users/{user_id}", "platform_read"),
+        ("GET", "/api/v1/platform/organisations", "platform_read"),
+        (
+            "GET",
+            "/api/v1/platform/organisations/{organisation_id}",
+            "platform_read",
+        ),
+        ("GET", "/api/v1/platform/staff", "platform_read"),
+        ("GET", "/api/v1/platform/audit-events/limited", "audit_read"),
+        ("GET", "/api/v1/platform/audit-events", "audit_read"),
+    ],
+)
+def test_sensitive_authenticated_endpoints_have_expected_rate_limit_policy(
+    method: str, path: str, policy_name: str
+) -> None:
     app = create_app()
-    route = find_route(
-        app,
-        path="/api/v1/organisations/{organisation_id}/invites",
-        method="POST",
+    route = find_route(app, path=path, method=method)
+
+    assert route_has_rate_limit_policy(route, policy_name)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/health/live"),
+        ("GET", "/api/v1/health/ready"),
+    ],
+)
+def test_operational_health_endpoints_remain_unprotected(
+    method: str, path: str
+) -> None:
+    app = create_app()
+    route = find_route(app, path=path, method=method)
+
+    assert not any(
+        getattr(call, "__rate_limit_policy_name__", None)
+        for call in iter_dependant_calls(route.dependant)
     )
-
-    assert route.path == "/api/v1/organisations/{organisation_id}/invites"
-    assert "POST" in route.methods
-    assert route_has_rate_limit_policy(route, "invite_create")
-
-
-def test_invite_accept_endpoint_has_invite_accept_policy() -> None:
-    app = create_app()
-    route = find_route(app, path="/api/v1/invites/accept", method="POST")
-
-    assert route.path == "/api/v1/invites/accept"
-    assert "POST" in route.methods
-    assert route_has_rate_limit_policy(route, "invite_accept")

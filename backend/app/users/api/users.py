@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
 from app.core.db import get_db_session
-from app.core.errors.openapi import COMMON_ERROR_RESPONSES
+from app.core.errors.openapi import COMMON_ERROR_RESPONSES, RATE_LIMIT_ERROR_RESPONSES
+from app.core.rate_limit import AUTHENTICATED_DEFAULT_POLICY, rate_limit_dependency
 from app.memberships.services.memberships import MembershipService
 from app.users.schemas.users import MembershipSummary, UserMeResponse
 from app.users.services.users import UserService
@@ -20,7 +21,7 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 @router.get(
     "/me",
     response_model=UserMeResponse,
-    responses=COMMON_ERROR_RESPONSES,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
     name="get_me",
 )
 async def get_me(
@@ -28,6 +29,7 @@ async def get_me(
         AuthenticatedPrincipal,
         Depends(require_authenticated_principal),
     ],
+    _: Annotated[None, Depends(rate_limit_dependency(AUTHENTICATED_DEFAULT_POLICY))],
     db_session: DbSessionDep,
 ) -> UserMeResponse:
     user_service = UserService(db_session)
