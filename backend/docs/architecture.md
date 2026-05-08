@@ -103,8 +103,10 @@ Some domains may not use every layer yet. For example, health endpoints do not n
 ## Authentication
 
 - Keycloak is the identity provider and JWT issuer.
-- FastAPI validates JWTs when authentication is enabled.
-- JWT validation checks issuer, audience, signature, and expiry.
+- FastAPI acts as an OAuth2 Resource Server and validates Keycloak access tokens when authentication is enabled.
+- JWT validation checks RS256 signature, issuer, audience, expiry, issued-at, subject, `kid`, authorised party (`azp`) when configured, and maximum token lifetime.
+- Startup OIDC metadata validation verifies issuer/discovery/JWKS shape when enabled and must fail closed in staging/prod.
+- JWKS key-rotation refresh is cached and protected by a forced-refresh cooldown/singleflight guard.
 - The local user projection links Keycloak users with application users using `external_auth_id == sub`.
 - The backend does not implement local password login.
 - The backend does not duplicate Keycloak email verification.

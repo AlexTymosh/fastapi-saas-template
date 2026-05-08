@@ -4,6 +4,14 @@ from app.core.config.settings import get_settings
 from tests.helpers.settings import reset_settings_cache
 
 
+def _set_complete_prod_auth(monkeypatch) -> None:
+    monkeypatch.setenv("AUTH__ENABLED", "true")
+    monkeypatch.setenv("AUTH__ISSUER_URL", "https://auth.example/realms/main/")
+    monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-api")
+    monkeypatch.setenv("AUTH__ALLOWED_AUTHORIZED_PARTIES", "fastapi-web,fastapi-admin")
+    monkeypatch.setenv("AUTH__METADATA_VALIDATION", "fail")
+
+
 def test_settings_parses_nested_env(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "test")
     monkeypatch.setenv("LOGGING__AS_JSON", "true")
@@ -29,6 +37,7 @@ def test_settings_parse_auth_algorithms_from_csv(monkeypatch) -> None:
     monkeypatch.setenv("AUTH__ALGORITHMS", "RS256")
     monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-api")
     monkeypatch.setenv("AUTH__CLIENT_ID", "fastapi-web")
+    monkeypatch.setenv("AUTH__ALLOWED_AUTHORIZED_PARTIES", "fastapi-web, fastapi-admin")
 
     reset_settings_cache()
     settings = get_settings()
@@ -36,6 +45,7 @@ def test_settings_parse_auth_algorithms_from_csv(monkeypatch) -> None:
     assert settings.auth.algorithms == "RS256"
     assert settings.auth.audience == "fastapi-api"
     assert settings.auth.client_id == "fastapi-web"
+    assert settings.auth.allowed_authorized_parties == ["fastapi-web", "fastapi-admin"]
 
     reset_settings_cache()
 
@@ -146,7 +156,7 @@ def test_settings_rejects_invalid_rate_limit_override_values(
 @pytest.mark.rate_limit
 def test_prod_rejects_relaxed_rate_limit_mode(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
-    monkeypatch.setenv("AUTH__ENABLED", "true")
+    _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
     monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
@@ -167,7 +177,7 @@ def test_prod_rejects_relaxed_rate_limit_mode(monkeypatch) -> None:
 @pytest.mark.rate_limit
 def test_prod_accepts_panic_rate_limit_mode(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
-    monkeypatch.setenv("AUTH__ENABLED", "true")
+    _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
     monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
@@ -207,10 +217,73 @@ def test_staging_requires_auth_enabled(monkeypatch) -> None:
 
 @pytest.mark.security
 @pytest.mark.auth
+@pytest.mark.parametrize(
+    ("env_name", "missing_env", "match"),
+    [
+        ("staging", "AUTH__ISSUER_URL", "AUTH__ISSUER_URL"),
+        ("prod", "AUTH__ISSUER_URL", "AUTH__ISSUER_URL"),
+        ("staging", "AUTH__AUDIENCE", "AUTH__AUDIENCE"),
+        ("prod", "AUTH__AUDIENCE", "AUTH__AUDIENCE"),
+        (
+            "staging",
+            "AUTH__ALLOWED_AUTHORIZED_PARTIES",
+            "AUTH__ALLOWED_AUTHORIZED_PARTIES",
+        ),
+        (
+            "prod",
+            "AUTH__ALLOWED_AUTHORIZED_PARTIES",
+            "AUTH__ALLOWED_AUTHORIZED_PARTIES",
+        ),
+        ("staging", "AUTH__METADATA_VALIDATION", "AUTH__METADATA_VALIDATION=fail"),
+        ("prod", "AUTH__METADATA_VALIDATION", "AUTH__METADATA_VALIDATION=fail"),
+    ],
+)
+def test_staging_prod_require_complete_auth_config(
+    monkeypatch, env_name: str, missing_env: str, match: str
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", env_name)
+    _set_complete_prod_auth(monkeypatch)
+    if missing_env == "AUTH__METADATA_VALIDATION":
+        monkeypatch.setenv(missing_env, "warn")
+    else:
+        monkeypatch.delenv(missing_env, raising=False)
+    if env_name == "prod":
+        monkeypatch.setenv("API__DOCS_ENABLED", "false")
+        monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
+        monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match=match):
+        get_settings()
+
+
+@pytest.mark.security
+@pytest.mark.auth
+def test_prod_rejects_non_https_auth_urls(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "prod")
+    _set_complete_prod_auth(monkeypatch)
+    monkeypatch.setenv("API__DOCS_ENABLED", "false")
+    monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("AUTH__ISSUER_URL", "http://auth.example/realms/main")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="AUTH__ISSUER_URL must use HTTPS"):
+        get_settings()
+
+    monkeypatch.setenv("AUTH__ISSUER_URL", "https://auth.example/realms/main")
+    monkeypatch.setenv("AUTH__JWKS_URL", "http://auth.example/jwks")
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="AUTH__JWKS_URL must use HTTPS"):
+        get_settings()
+
+
+@pytest.mark.security
+@pytest.mark.auth
 @pytest.mark.secrets
 def test_prod_rejects_docs_and_request_id_trust(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
-    monkeypatch.setenv("AUTH__ENABLED", "true")
+    _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "true")
     reset_settings_cache()
     with pytest.raises(ValueError, match="API__DOCS_ENABLED"):
@@ -227,7 +300,7 @@ def test_prod_rejects_docs_and_request_id_trust(monkeypatch) -> None:
 @pytest.mark.secrets
 def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
-    monkeypatch.setenv("AUTH__ENABLED", "true")
+    _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
@@ -328,7 +401,7 @@ def test_cors_rejects_wildcard_with_credentials(monkeypatch) -> None:
 @pytest.mark.cors
 def test_prod_rejects_cors_wildcard_origin(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
-    monkeypatch.setenv("AUTH__ENABLED", "true")
+    _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
     monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
