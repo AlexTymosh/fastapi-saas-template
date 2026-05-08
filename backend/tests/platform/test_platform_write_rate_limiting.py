@@ -63,6 +63,12 @@ def _install_fake_rate_limiter(monkeypatch, limiter: FakeLimiter) -> None:
 
 
 def _attach_fake_rate_limiter(client, limiter: FakeLimiter) -> None:
+    from app.core.config.settings import get_settings
+    from app.core.rate_limit.registry import build_effective_policy_registry
+
+    client.app.state.rate_limit_policy_registry = build_effective_policy_registry(
+        get_settings()
+    )
     client.app.state.rate_limiter_runtime = RateLimiterRuntime(
         enabled=True,
         storage=object(),
