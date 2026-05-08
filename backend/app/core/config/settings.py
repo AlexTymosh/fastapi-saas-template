@@ -122,17 +122,32 @@ class AuthSettings(BaseModel):
         return "RS256"
 
 
+class RateLimitPolicyOverride(BaseModel):
+    limit: int | None = Field(default=None, gt=0)
+    window_seconds: int | None = Field(default=None, gt=0)
+    fail_open: bool | None = None
+
+
 class RateLimitingSettings(BaseModel):
     enabled: bool = False
     enforced_by_edge: bool = False
     backend: Literal["redis"] = "redis"
     redis_prefix: str = "rate-limit"
     trust_proxy_headers: bool = False
-    default_limit: int = 60
-    default_window_seconds: int = 60
-    default_fail_open: bool = True
-    sensitive_fail_open: bool = False
-    storage_timeout_seconds: float = 1.0
+    mode: Literal["normal", "strict", "relaxed", "panic"] = "normal"
+    policies: dict[str, RateLimitPolicyOverride] = Field(default_factory=dict)
+    storage_timeout_seconds: float = Field(default=1.0, gt=0)
+
+    @model_validator(mode="after")
+    def validate_policy_overrides(self) -> RateLimitingSettings:
+        from app.core.rate_limit.registry import iter_rate_limit_policy_names
+
+        known_policy_names = iter_rate_limit_policy_names()
+        unknown_policy_names = sorted(set(self.policies) - known_policy_names)
+        if unknown_policy_names:
+            unknown = ", ".join(unknown_policy_names)
+            raise ValueError(f"Unknown rate limit policy override name(s): {unknown}")
+        return self
 
 
 class OutboxSettings(BaseModel):
@@ -250,6 +265,8 @@ class Settings(BaseSettings):
         env = self.app.environment
         if env in {"staging", "prod"} and not self.auth.enabled:
             raise ValueError("AUTH__ENABLED must be true in staging/prod")
+        if env == "prod" and self.rate_limiting.mode == "relaxed":
+            raise ValueError("RATE_LIMITING__MODE=relaxed is not allowed in prod")
         if env == "prod":
             if self.api.docs_enabled:
                 raise ValueError("API__DOCS_ENABLED must be false in prod")

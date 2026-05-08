@@ -2,11 +2,12 @@
 
 ## Current status
 
-Rate limiting is implemented for sensitive authenticated endpoint groups using `limits` with an async Redis backend.
+Rate limiting is implemented for sensitive authenticated endpoint groups using route-level FastAPI dependencies and `limits` with an async Redis backend. It is intentionally not implemented as global FastAPI/Starlette middleware because protected routes rely on authenticated principal resolution, per-endpoint policy selection, route-level policy matrix tests, and auth → rate-limit → DB dependency ordering.
 
 - Status: implemented for authenticated user reads, tenant read/write flows, organisation creation, invite flows, platform read/list/detail flows, platform audit listing, and platform write operations.
 - Default mode: disabled (`RATE_LIMITING__ENABLED=false`).
-- When disabled, limiter dependencies are no-op.
+- Policy defaults are declared once as policy specs; effective runtime policies are resolved from settings during lifespan startup.
+- When disabled, limiter dependencies are no-op, but effective policy resolution still happens for startup validation and logging.
 - Health and docs/static endpoints are intentionally not protected by this app-level limiter; keep edge/WAF controls for public unauthenticated traffic.
 
 ## Configuration
@@ -17,15 +18,40 @@ Primary settings:
 - `RATE_LIMITING__BACKEND`
 - `RATE_LIMITING__REDIS_PREFIX`
 - `RATE_LIMITING__TRUST_PROXY_HEADERS`
+- `RATE_LIMITING__MODE` (`normal`, `strict`, `relaxed`, `panic`)
+- `RATE_LIMITING__POLICIES__<POLICY_NAME>__LIMIT`
+- `RATE_LIMITING__POLICIES__<POLICY_NAME>__WINDOW_SECONDS`
+- `RATE_LIMITING__POLICIES__<POLICY_NAME>__FAIL_OPEN`
 - `RATE_LIMITING__STORAGE_TIMEOUT_SECONDS`
-- `RATE_LIMITING__DEFAULT_FAIL_OPEN`
-- `RATE_LIMITING__SENSITIVE_FAIL_OPEN`
 - `REDIS__URL`
 
 Rules:
 
 - `REDIS__URL` is required only when `RATE_LIMITING__ENABLED=true`.
-- If enabled without `REDIS__URL`, startup fails fast.
+- If enabled without `REDIS__URL`, startup fails fast after effective policy resolution.
+- Unknown policy override names fail fast, for example `RATE_LIMITING__POLICIES__UNKNOWN_POLICY__LIMIT=10`.
+- Invalid override limits/windows fail fast because values must be greater than zero.
+- The old global default/fail-open settings are intentionally not present; operators override explicit named policies instead.
+
+Example override:
+
+```env
+RATE_LIMITING__MODE=strict
+RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT=20
+RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS=60
+RATE_LIMITING__POLICIES__TENANT_WRITE__FAIL_OPEN=false
+```
+
+Mode precedence is: policy spec defaults → mode transformation → explicit per-policy override. Panic mode applies one final safety guard so sensitive and critical policies cannot become fail-open even if an override sets `FAIL_OPEN=true`.
+
+Mode behaviour:
+
+| Mode | Behaviour | Production rule |
+|---|---|---|
+| `normal` | Use policy defaults plus explicit overrides. | Allowed |
+| `strict` | Halve default limits globally, keep windows, and never make fail-open more permissive. Explicit policy overrides still win. | Allowed |
+| `relaxed` | Double default limits, keep windows. | Rejected in `prod` |
+| `panic` | Halve sensitive limits, quarter critical limits, and force sensitive/critical policies fail-closed. | Allowed; config-level only, no runtime admin/UI switch in this PR |
 
 ## Policy matrix
 
@@ -39,11 +65,11 @@ Rules:
 | `invite_create` | 20 | 1 hour | fail-closed | Protect invite creation from abuse |
 | `invite_mutation` | 30 | 1 hour | fail-closed | Protect invite revoke/resend/admin invite operations |
 | `platform_read` | 60 | 1 minute | fail-closed | Reduce platform user/organisation/staff enumeration and listing abuse |
-| `audit_read` | 30 | 1 minute | fail-closed | Protect sensitive full and limited audit listing/filtering |
+| `audit_read` | 30 | 1 minute | fail-closed | Critical protection for full and limited audit listing/filtering |
 | `platform_write` | 30 | 1 minute | fail-closed | Protect sensitive platform user/organisation writes from abuse with a valid platform token |
 | `platform_staff_write` | 10 | 1 minute | fail-closed | Protect high-impact platform staff management writes |
 
-Fail-open is reserved for low-risk authenticated reads where availability is preferred and backend errors are still recorded. Tenant writes, organisation creation, invite administration, platform reads, audit reads, and platform writes are fail-closed because abuse impact or enumeration risk is higher.
+Fail-open is reserved for low-risk authenticated reads where availability is preferred and backend errors are still recorded. Tenant writes, organisation creation, invite administration, platform reads, audit reads, and platform writes are fail-closed because abuse impact or enumeration risk is higher. Effective fail-open/fail-closed behaviour is resolved from the default spec, selected mode, explicit override, and the panic-mode safety guard.
 
 ## Protected endpoint matrix
 
@@ -162,7 +188,7 @@ Prometheus/Grafana dashboards are out of scope for this phase, and `/metrics` is
 
 ## Testing coverage
 
-Policy registry tests assert every named policy is registered and retrievable. Endpoint-protection tests introspect FastAPI route dependencies and verify sensitive route groups carry the expected endpoint-level policy metadata while health endpoints remain unprotected. Fake-limiter API tests cover `429` Problem Details, `Retry-After`, unauthenticated `401` before limiter checks, and blocking before service/DB execution for tenant write, audit read, and organisation create paths.
+Settings and policy registry tests assert every named policy is registered, effective defaults preserve existing runtime behaviour, per-policy overrides are parsed and applied, invalid/unknown overrides fail fast, `relaxed` is rejected in production, and `panic` is accepted in production while forcing sensitive/critical policies fail-closed. Endpoint-protection tests introspect FastAPI route dependencies and verify sensitive route groups carry the expected endpoint-level policy metadata while health endpoints remain unprotected. Fake-limiter API tests cover settings-aware effective thresholds, `429` Problem Details, `Retry-After`, unauthenticated `401` before limiter checks, and blocking before service/DB execution for tenant write, audit read, and organisation create paths.
 
 Platform write policies remain covered by both fast fake-limiter API regression tests and Redis/Testcontainers integration tests. The fake tests keep fail-closed and transaction-boundary behaviour cheap to validate, while the integration tests exercise `limits`, async Redis storage, real Redis windows, and real over-limit responses for `platform_write` and `platform_staff_write`.
 
@@ -171,6 +197,7 @@ Platform write policies remain covered by both fast fake-limiter API regression 
 Run from `backend/`:
 
 ```bash
+pytest -q tests/config/test_settings.py
 pytest -q tests/rate_limit/test_policy_registry.py
 pytest -q tests/rate_limit/test_endpoint_protection.py
 pytest -q tests/api/test_rate_limiting.py
@@ -184,6 +211,9 @@ pytest tests/observability/test_otlp_export_integration.py -q -m "integration an
 
 - [x] Default local/test startup does not require Redis.
 - [x] Enabling rate limiting without Redis fails fast.
+- [x] Policy defaults are declared once and effective runtime policies are settings-aware.
+- [x] Per-policy overrides are validated and applied through nested env settings.
+- [x] Config-level `panic` mode exists; runtime/admin panic switching is intentionally out of scope.
 - [x] Invite create endpoint is rate limited.
 - [x] Invite accept endpoint is rate limited.
 - [x] Invite revoke/resend admin operations are rate limited.

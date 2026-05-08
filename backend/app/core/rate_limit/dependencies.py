@@ -20,7 +20,8 @@ from app.core.observability import (
     record_rate_limit_decision,
 )
 from app.core.rate_limit.identifiers import build_identifier
-from app.core.rate_limit.policies import RateLimitPolicy
+from app.core.rate_limit.policies import RateLimitPolicy, RateLimitPolicySpec
+from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
 log = get_logger(__name__)
 
@@ -184,7 +185,19 @@ async def check_rate_limit(
     )
 
 
-def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[None]]:
+def _resolve_effective_policy(
+    *,
+    request: Request,
+    configured_policy: RateLimitPolicy | RateLimitPolicySpec,
+) -> RateLimitPolicy:
+    if isinstance(configured_policy, RateLimitPolicy):
+        return configured_policy
+    return get_effective_rate_limit_policy(request.app, configured_policy.name)
+
+
+def rate_limit_dependency(
+    policy: RateLimitPolicy | RateLimitPolicySpec,
+) -> Callable[..., Awaitable[None]]:
     async def _dependency(
         request: Request,
         principal: Annotated[
@@ -192,7 +205,17 @@ def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[No
             Depends(require_authenticated_principal),
         ],
     ) -> None:
-        await check_rate_limit(request=request, principal=principal, policy=policy)
+        if not get_settings().rate_limiting.enabled:
+            return
+        effective_policy = _resolve_effective_policy(
+            request=request,
+            configured_policy=policy,
+        )
+        await check_rate_limit(
+            request=request,
+            principal=principal,
+            policy=effective_policy,
+        )
 
     _dependency.__rate_limit_policy_name__ = policy.name  # type: ignore[attr-defined]
     _dependency.__rate_limit_policy__ = policy  # type: ignore[attr-defined]

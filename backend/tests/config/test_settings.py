@@ -279,3 +279,100 @@ def test_cors_list_normalisation_removes_empty_values(monkeypatch) -> None:
     assert settings.cors.expose_headers == ["X-Request-ID", "Retry-After"]
 
     reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
+def test_settings_parses_rate_limit_policy_override(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT", "7")
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS", "120")
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__FAIL_OPEN", "true")
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    override = settings.rate_limiting.policies["tenant_write"]
+    assert override.limit == 7
+    assert override.window_seconds == 120
+    assert override.fail_open is True
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
+def test_settings_rejects_unknown_rate_limit_policy_override(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__UNKNOWN_POLICY__LIMIT", "10")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="Unknown rate limit policy override name"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
+@pytest.mark.parametrize(
+    ("env_name", "env_value"),
+    [
+        ("RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT", "0"),
+        ("RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS", "0"),
+    ],
+)
+def test_settings_rejects_invalid_rate_limit_policy_override_values(
+    monkeypatch,
+    env_name: str,
+    env_value: str,
+) -> None:
+    monkeypatch.setenv(env_name, env_value)
+
+    reset_settings_cache()
+    with pytest.raises(ValueError):
+        get_settings()
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
+def test_settings_rejects_relaxed_rate_limit_mode_in_prod(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "prod")
+    monkeypatch.setenv("AUTH__ENABLED", "true")
+    monkeypatch.setenv("API__DOCS_ENABLED", "false")
+    monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("RATE_LIMITING__MODE", "relaxed")
+    monkeypatch.setenv(
+        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    )
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="RATE_LIMITING__MODE=relaxed"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
+def test_settings_accepts_panic_rate_limit_mode_in_prod(monkeypatch) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "prod")
+    monkeypatch.setenv("AUTH__ENABLED", "true")
+    monkeypatch.setenv("API__DOCS_ENABLED", "false")
+    monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("RATE_LIMITING__MODE", "panic")
+    monkeypatch.setenv(
+        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    )
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.app.environment == "prod"
+    assert settings.rate_limiting.mode == "panic"
+
+    reset_settings_cache()

@@ -13,14 +13,18 @@ from app.core.rate_limit.policies import (
     TENANT_READ_POLICY,
     TENANT_WRITE_POLICY,
     RateLimitPolicy,
+    RateLimitPolicySpec,
 )
 from app.core.rate_limit.registry import (
+    build_effective_policy_registry,
+    get_effective_rate_limit_policy,
     get_rate_limit_policy,
     iter_rate_limit_policies,
 )
 
 __all__ = [
     "RateLimitPolicy",
+    "RateLimitPolicySpec",
     "AUTHENTICATED_DEFAULT_POLICY",
     "TENANT_READ_POLICY",
     "TENANT_WRITE_POLICY",
@@ -36,6 +40,8 @@ __all__ = [
     "rate_limit_dependency",
     "init_rate_limiter",
     "shutdown_rate_limiter",
+    "build_effective_policy_registry",
+    "get_effective_rate_limit_policy",
     "get_rate_limit_policy",
     "iter_rate_limit_policies",
 ]

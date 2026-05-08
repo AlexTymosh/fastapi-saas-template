@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | 1 | [Fixed] Добавить фактические тесты порядка зависимостей endpoint для invite create/accept/resend | `backend/tests/api/test_rate_limiting.py` | 429 до тела endpoint и до DB I/O на реальных маршрутах | Fixed |
 | 2 | Добавить таксономию политик | `policies.py`, `registry.py` | authenticated_default, tenant_write, platform_read, platform_write, audit_read, invite_create, invite_accept | P1 |
-| 3 | Привязать settings к политикам или удалить неиспользуемые settings | `settings.py`, `policies.py` | Нет вводящей в заблуждение конфигурации; fail-open/closed контролируется согласованно | P1 |
+| 3 | [Fixed] Привязать settings к политикам и удалить неиспользуемые глобальные settings | `settings.py`, `policies.py`, `registry.py` | Нет вводящей в заблуждение конфигурации; effective policies строятся из декларативных specs, mode и per-policy overrides | Fixed |
 | 4 | Добавить вариант dependency для публичного/опционального principal | `dependencies.py`, `identifiers.py` | Будущие публичные endpoints могут иметь IP-ограничение | P1 |
 | 5 | Применить rate limit к высокорисковым endpoints | `organisations.py`, `platform/api/*.py`, `users.py` | Матрица endpoints в основном защищена | P1 |
 | 6 | Добавить тест матрицы маршрут-политика | `tests/rate_limit/test_endpoint_protection.py` | CI падает, когда чувствительный endpoint не имеет политики | P1 |
@@ -40,7 +40,7 @@
 | `backend/tests/rate_limit/test_endpoint_protection.py` | Расширить до полной матрицы endpoint-политика. | Предотвратить появление в будущем чувствительного endpoint без политики. | Включить все строки из матрицы endpoints. |
 | `backend/tests/api/test_rate_limiting_integration.py` | Добавить тесты Redis unavailable/timeout/invalid URL. | Синтетического fake limiter недостаточно. | Использовать невозможный Redis URL + зависающий fake limiter. |
 | `backend/docs/rate-limiting.md` | Оставить как канонический doc; слить/удалить `rate_limiting.md`. | Избежать конфликтующей документации. | n/a |
-| `.env.example` | Уточнить, какие настройки `RATE_LIMITING__DEFAULT_*` фактически используются после рефакторинга. | Предотвратить путаницу оператора. | Тесты конфигурации. |
+| `.env.example` | Удалены `RATE_LIMITING__DEFAULT_*` / `RATE_LIMITING__SENSITIVE_FAIL_OPEN`; добавлены `RATE_LIMITING__MODE` и примеры `RATE_LIMITING__POLICIES__<POLICY>__*`. | Предотвратить путаницу оператора. | Тесты конфигурации. |
 
 ---
 
@@ -91,7 +91,7 @@
 | Runtime missing | 503 + metrics. | Хорошо. | Сохранить. | OK |
 | Исключение limiter | Перехватывается для выбранных исключений. | Не все общие неожиданные исключения перехватываются. | Рассмотреть перехват более широкого `Exception` вокруг storage backend, но логировать безопасно. | P2 |
 | Сбой window stats после блокировки | Откат к policy expiry. | Хорошо. | Добавить тест. | P2 |
-| Режим сбоя политики | Хардкодирован per-policy. | Settings `default_fail_open`/`sensitive_fail_open` не используются. | Привязать settings к созданию политик. | P1 |
+| Режим сбоя политики | Effective per-policy после mode/overrides; panic принудительно оставляет sensitive/critical fail-closed. | Runtime/admin panic switch не реализован намеренно. | Сохранить route-level dependency и покрытие registry/settings. | OK |
 
 ---
 

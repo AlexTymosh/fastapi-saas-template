@@ -23,8 +23,10 @@ from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
     INVITE_ACCEPT_POLICY,
     INVITE_CREATE_POLICY,
+    TENANT_WRITE_POLICY,
     RateLimitPolicy,
 )
+from app.core.rate_limit.registry import build_effective_policy_registry
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
 
@@ -77,6 +79,7 @@ def _build_app(
     runtime: RateLimiterRuntime | None = None,
 ) -> TestClient:
     async def _fake_init_rate_limiter(app, settings) -> None:
+        app.state.rate_limit_policy_registry = build_effective_policy_registry(settings)
         app.state.rate_limiter_runtime = runtime or RateLimiterRuntime(
             enabled=False,
             storage=None,
@@ -174,6 +177,49 @@ def test_over_limit_returns_429_problem_with_retry_after(monkeypatch) -> None:
     assert response.json()["error_code"] == "rate_limited"
     assert response.headers["retry-after"].isdigit()
     assert response.headers["access-control-expose-headers"] == "Retry-After"
+
+
+def test_env_override_changes_effective_policy_threshold(monkeypatch) -> None:
+    fake = FakeLimiter(allow=True)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+
+    async def _fake_init_rate_limiter(app, settings) -> None:
+        app.state.rate_limit_policy_registry = build_effective_policy_registry(settings)
+        app.state.rate_limiter_runtime = runtime
+
+    monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT", "7")
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS", "120")
+    reset_settings_cache()
+
+    app = create_app()
+    router = APIRouter()
+
+    @router.get(
+        "/api/v1/test/rate-limit/settings-aware",
+        dependencies=[Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
+    )
+    async def _settings_aware_probe() -> dict[str, str]:
+        return {"ok": "true"}
+
+    app.include_router(router)
+    app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    with TestClient(app) as api_client:
+        response = api_client.get("/api/v1/test/rate-limit/settings-aware")
+
+    assert response.status_code == 200
+    assert fake.hit_calls[0][2] == 7
+    assert fake.hit_calls[0][3] == 120
+
+    reset_settings_cache()
 
 
 def test_rate_limiter_failure_fail_closed_returns_503(monkeypatch) -> None:
@@ -526,15 +572,16 @@ def test_rate_limiting_enablement_does_not_leak_between_apps(monkeypatch) -> Non
 
 def test_invite_policies_are_distinct_and_declarative() -> None:
     assert INVITE_ACCEPT_POLICY.name == "invite_accept"
-    assert INVITE_ACCEPT_POLICY.item.amount == 5
-    assert INVITE_ACCEPT_POLICY.item.multiples == 5
-    assert INVITE_ACCEPT_POLICY.item.get_expiry() == 300
-    assert INVITE_ACCEPT_POLICY.fail_open is False
+    assert INVITE_ACCEPT_POLICY.default_limit == 5
+    assert INVITE_ACCEPT_POLICY.default_window_seconds == 300
+    assert INVITE_ACCEPT_POLICY.default_fail_open is False
+    assert INVITE_ACCEPT_POLICY.sensitivity == "critical"
 
     assert INVITE_CREATE_POLICY.name == "invite_create"
-    assert INVITE_CREATE_POLICY.item.amount == 20
-    assert INVITE_CREATE_POLICY.item.get_expiry() == 3600
-    assert INVITE_CREATE_POLICY.fail_open is False
+    assert INVITE_CREATE_POLICY.default_limit == 20
+    assert INVITE_CREATE_POLICY.default_window_seconds == 3600
+    assert INVITE_CREATE_POLICY.default_fail_open is False
+    assert INVITE_CREATE_POLICY.sensitivity == "sensitive"
 
 
 def test_runtime_code_uses_limits_aio_namespace() -> None:
