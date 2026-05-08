@@ -93,3 +93,4 @@ External DB tests are opt-in and must not run by default.
 4. `backend/docs/current-state.md` controls current status.
 5. `SESSION_NOTES.md` controls live handoff state.
 6. Feature-specific docs control details only for their feature area.
+- **Authentication/authorization foundation:** Keycloak-issued API access tokens are validated when auth is enabled. The backend acts as an OAuth2 Resource Server with strict issuer, audience, `kid`, issued-at, authorised-party, token-lifetime, JWKS cache, and startup metadata validation controls for staging/prod. Authenticated principals remain an identity boundary, tenant authorization is resolved from memberships, and platform authorization is resolved from `platform_staff`.

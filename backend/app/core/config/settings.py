@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Any, Literal
 
 from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _normalise_string_list(
@@ -14,10 +15,19 @@ def _normalise_string_list(
     if value is None:
         return []
     if isinstance(value, str):
-        raw_items = value.split(",")
+        stripped = value.strip()
+        if stripped.startswith("["):
+            try:
+                decoded = json.loads(stripped)
+            except json.JSONDecodeError:
+                raw_items = value.split(",")
+            else:
+                raw_items = decoded if isinstance(decoded, list) else [value]
+        else:
+            raw_items = value.split(",")
     else:
         raw_items = value
-    return [item.strip() for item in raw_items if item.strip()]
+    return [str(item).strip() for item in raw_items if str(item).strip()]
 
 
 class AppSettings(BaseModel):
@@ -106,17 +116,47 @@ class AuthSettings(BaseModel):
     enabled: bool = False
     issuer_url: str | None = None
     audience: str | None = None
+    allowed_authorized_parties: Annotated[list[str], NoDecode] = Field(
+        default_factory=list
+    )
     client_id: str | None = None
     jwks_url: str | None = None
-    algorithms: str = "RS256"
-    leeway_seconds: int = 30
-    discovery_cache_ttl_seconds: int = 300
-    jwks_cache_ttl_seconds: int = 300
+    algorithms: Literal["RS256"] = "RS256"
+    leeway_seconds: int = Field(default=30, ge=0, le=120)
+    discovery_cache_ttl_seconds: int = Field(default=300, gt=0)
+    jwks_cache_ttl_seconds: int = Field(default=300, gt=0)
+    require_kid: bool = True
+    require_iat: bool = True
+    max_token_lifetime_seconds: int = Field(default=3600, gt=0)
+    metadata_validation: Literal["disabled", "warn", "fail"] = "warn"
+    jwks_refresh_cooldown_seconds: float = Field(default=30.0, gt=0)
+    jwks_refresh_lock_timeout_seconds: float = Field(default=2.0, gt=0)
 
-    @field_validator("algorithms")
+    @field_validator("issuer_url", "jwks_url", mode="before")
+    @classmethod
+    def normalize_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().rstrip("/")
+        return normalized or None
+
+    @field_validator("audience", "client_id", mode="before")
+    @classmethod
+    def normalize_optional_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("allowed_authorized_parties", mode="before")
+    @classmethod
+    def normalize_allowed_authorized_parties(cls, value: Any) -> list[str]:
+        return _normalise_string_list(value)
+
+    @field_validator("algorithms", mode="before")
     @classmethod
     def validate_algorithms(cls, value: str) -> str:
-        normalized = value.strip().upper()
+        normalized = str(value).strip().upper()
         if normalized != "RS256":
             raise ValueError("AUTH__ALGORITHMS supports only RS256")
         return "RS256"
@@ -277,9 +317,26 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_environment_security(self) -> Settings:
         env = self.app.environment
-        if env in {"staging", "prod"} and not self.auth.enabled:
-            raise ValueError("AUTH__ENABLED must be true in staging/prod")
+        if env in {"staging", "prod"}:
+            if not self.auth.enabled:
+                raise ValueError("AUTH__ENABLED must be true in staging/prod")
+            if not self.auth.issuer_url:
+                raise ValueError("AUTH__ISSUER_URL is required in staging/prod")
+            if not self.auth.audience:
+                raise ValueError("AUTH__AUDIENCE is required in staging/prod")
+            if not self.auth.allowed_authorized_parties:
+                raise ValueError(
+                    "AUTH__ALLOWED_AUTHORIZED_PARTIES is required in staging/prod"
+                )
+            if self.auth.metadata_validation != "fail":
+                raise ValueError(
+                    "AUTH__METADATA_VALIDATION=fail is required in staging/prod"
+                )
         if env == "prod":
+            if self.auth.issuer_url and not self.auth.issuer_url.startswith("https://"):
+                raise ValueError("AUTH__ISSUER_URL must use HTTPS in prod")
+            if self.auth.jwks_url and not self.auth.jwks_url.startswith("https://"):
+                raise ValueError("AUTH__JWKS_URL must use HTTPS in prod")
             if self.api.docs_enabled:
                 raise ValueError("API__DOCS_ENABLED must be false in prod")
             if self.request_context.trust_incoming_request_id:

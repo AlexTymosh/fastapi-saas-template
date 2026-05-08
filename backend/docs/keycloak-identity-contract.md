@@ -33,7 +33,10 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
    - A `403` authorization result does not imply projection failure; the authenticated principal may still be newly provisioned locally.
 
 5. **Token audience expectations**
-   - This contract currently targets human user access tokens that represent an end user identity (`sub`).
+   - This contract targets Keycloak access tokens for this API that represent an end user identity (`sub`).
+   - API callers must send access tokens, not ID tokens.
+   - Access tokens must contain the backend API/resource-server audience configured in `AUTH__AUDIENCE`.
+   - When `AUTH__ALLOWED_AUTHORIZED_PARTIES` is configured, the access-token `azp` claim must identify an allowed frontend/admin OAuth client.
    - Service-account/machine-token identity semantics are out of scope unless explicitly documented by a separate contract.
 
 6. **Database invariants**
@@ -52,9 +55,11 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 
 - Keycloak is used only as identity provider (JWT issuer + claims source).
 - This backend validates bearer tokens and projects users locally by `external_auth_id == sub`.
-- Runtime JWT settings source of truth is `AUTH__*` (`AUTH__ENABLED`, `AUTH__ISSUER_URL`, `AUTH__AUDIENCE`, `AUTH__CLIENT_ID`).
-- Role extraction for `resource_access` uses `AUTH__CLIENT_ID` (auth-scoped config); local default is `fastapi-web`.
+- Runtime JWT settings source of truth is `AUTH__*` (`AUTH__ENABLED`, `AUTH__ISSUER_URL`, `AUTH__AUDIENCE`, `AUTH__ALLOWED_AUTHORIZED_PARTIES`).
+- `AUTH__CLIENT_ID` is retained only as backwards-compatible context for optional `resource_access` projection; it is not the production validation control.
 - Audience validation uses `AUTH__AUDIENCE`; local default is `fastapi-api`.
+- Authorised-party validation uses `AUTH__ALLOWED_AUTHORIZED_PARTIES` against the access-token `azp` claim when configured.
+- Staging/prod require fail-fast OIDC metadata validation with `AUTH__METADATA_VALIDATION=fail`.
 - Local realm bootstrap intentionally separates browser login client (`fastapi-web`) from API/resource audience client (`fastapi-api`).
 - JWT signature verification is intentionally limited to `RS256`.
 - Organisations, memberships, onboarding, and invites stay in the local business database.

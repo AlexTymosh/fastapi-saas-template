@@ -36,27 +36,30 @@ def generate_rsa_jwk(
 def issue_access_token(
     *,
     private_key: rsa.RSAPrivateKey,
-    kid: str,
+    kid: str | None,
     issuer: str,
-    audience: str,
+    audience: str | None,
     subject: str,
     claims: dict[str, object] | None = None,
     expires_in_seconds: int = 300,
+    issued_at_offset_seconds: int = 0,
 ) -> str:
-    now = datetime.now(UTC)
+    now = datetime.now(UTC) + timedelta(seconds=issued_at_offset_seconds)
     payload: dict[str, object] = {
         "iss": issuer,
-        "aud": audience,
         "sub": subject,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=expires_in_seconds)).timestamp()),
     }
+    if audience is not None:
+        payload["aud"] = audience
     if claims:
         payload.update(claims)
 
+    headers = {"kid": kid} if kid is not None else None
     return jwt.encode(
         payload,
         key=private_key,
         algorithm="RS256",
-        headers={"kid": kid},
+        headers=headers,
     )

@@ -85,7 +85,7 @@ def test_invalid_issuer_is_rejected() -> None:
     )
     validator = _build_validator(_make_fetcher({"keys": [jwk]}))
 
-    with pytest.raises(UnauthorizedError, match="Invalid token issuer"):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
 
@@ -100,7 +100,7 @@ def test_invalid_audience_is_rejected() -> None:
     )
     validator = _build_validator(_make_fetcher({"keys": [jwk]}))
 
-    with pytest.raises(UnauthorizedError, match="Invalid token audience"):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
 
@@ -116,7 +116,7 @@ def test_expired_token_is_rejected() -> None:
     )
     validator = _build_validator(_make_fetcher({"keys": [jwk]}))
 
-    with pytest.raises(UnauthorizedError, match="Token has expired"):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
 
@@ -136,7 +136,7 @@ def test_token_with_disallowed_signing_algorithm_is_rejected() -> None:
 
     with pytest.raises(
         UnauthorizedError,
-        match="Token signing algorithm is not allowed",
+        match="Invalid bearer token",
     ):
         run_async(validator.validate_token(token))
 
@@ -313,7 +313,7 @@ def test_jwt_validation_fails_if_refreshed_jwks_still_misses_kid() -> None:
 
     validator = _build_validator(_fetch)
 
-    with pytest.raises(UnauthorizedError, match="Unable to match token signing key"):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
     assert fetch_count == 2
