@@ -16,7 +16,12 @@ from app.core.platform.permissions import (
     PlatformPermission,
     PlatformRole,
 )
-from app.core.rate_limit import PLATFORM_WRITE_POLICY, RateLimitPolicy, check_rate_limit
+from app.core.rate_limit import (
+    PLATFORM_WRITE_POLICY,
+    RateLimitPolicy,
+    RateLimitPolicySpec,
+    check_rate_limit,
+)
 from app.platform.models.platform_staff import PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.users.models.user import UserStatus
@@ -76,7 +81,7 @@ def require_platform_write_context(
 def require_rate_limited_platform_write_context(
     permission: PlatformPermission,
     *,
-    policy: RateLimitPolicy = PLATFORM_WRITE_POLICY,
+    policy: RateLimitPolicy | RateLimitPolicySpec = PLATFORM_WRITE_POLICY,
 ) -> Callable[..., AsyncIterator[PlatformWriteContext]]:
     async def dependency(
         request: Request,

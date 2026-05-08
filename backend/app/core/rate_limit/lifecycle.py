@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.core.config.settings import Settings
 from app.core.logging import get_logger
+from app.core.rate_limit.registry import build_effective_policy_registry
 
 
 @dataclass
@@ -44,8 +45,20 @@ def _select_rate_limiter_strategy(storage: Any) -> tuple[Any, str]:
         return FixedWindowRateLimiter(storage), "fixed-window"
 
 
+def _serialise_effective_policy(policy: Any) -> dict[str, Any]:
+    return {
+        "limit": policy.item.amount,
+        "window_seconds": policy.item.get_expiry(),
+        "fail_open": policy.fail_open,
+        "sensitivity": policy.sensitivity,
+        "override_applied": policy.override_applied,
+    }
+
+
 async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
     log = get_logger(__name__)
+    policy_registry = build_effective_policy_registry(settings)
+    app.state.rate_limit_policy_registry = policy_registry
 
     if not settings.rate_limiting.enabled:
         app.state.rate_limiter_runtime = RateLimiterRuntime(
@@ -53,6 +66,16 @@ async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
             storage=None,
             limiter=None,
             strategy_name=None,
+        )
+        log.info(
+            "rate_limit_policy_registry_resolved",
+            mode=settings.rate_limiting.mode,
+            enabled=False,
+            policies={
+                name: _serialise_effective_policy(policy)
+                for name, policy in policy_registry.items()
+            },
+            category="security",
         )
         if settings.app.environment in {"staging", "prod"}:
             log.warning(
@@ -82,6 +105,11 @@ async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
         "rate_limiter_initialized",
         strategy=strategy_name,
         backend=settings.rate_limiting.backend,
+        mode=settings.rate_limiting.mode,
+        policies={
+            name: _serialise_effective_policy(policy)
+            for name, policy in policy_registry.items()
+        },
         category="security",
     )
 

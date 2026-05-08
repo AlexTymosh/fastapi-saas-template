@@ -5,9 +5,11 @@
 Rate limiting is implemented for sensitive authenticated endpoint groups using `limits` with an async Redis backend.
 
 - Status: implemented for authenticated user reads, tenant read/write flows, organisation creation, invite flows, platform read/list/detail flows, platform audit listing, and platform write operations.
-- Default mode: disabled (`RATE_LIMITING__ENABLED=false`).
-- When disabled, limiter dependencies are no-op.
+- Default enablement: disabled (`RATE_LIMITING__ENABLED=false`).
+- Policy mode default: `normal`.
+- When disabled, limiter dependencies are no-op, but policy resolution still uses the same settings-aware registry so startup can report the effective configuration.
 - Health and docs/static endpoints are intentionally not protected by this app-level limiter; keep edge/WAF controls for public unauthenticated traffic.
+- The limiter is intentionally route-level and dependency-based, not FastAPI/Starlette middleware-based. This preserves authenticated principal resolution, per-endpoint policy selection, policy matrix tests, and the auth -> rate-limit -> database dependency ordering.
 
 ## Configuration
 
@@ -17,31 +19,62 @@ Primary settings:
 - `RATE_LIMITING__BACKEND`
 - `RATE_LIMITING__REDIS_PREFIX`
 - `RATE_LIMITING__TRUST_PROXY_HEADERS`
+- `RATE_LIMITING__MODE` (`normal`, `strict`, `relaxed`, `panic`)
+- `RATE_LIMITING__POLICIES__<POLICY_NAME>__LIMIT`
+- `RATE_LIMITING__POLICIES__<POLICY_NAME>__WINDOW_SECONDS`
+- `RATE_LIMITING__POLICIES__<POLICY_NAME>__FAIL_OPEN`
 - `RATE_LIMITING__STORAGE_TIMEOUT_SECONDS`
-- `RATE_LIMITING__DEFAULT_FAIL_OPEN`
-- `RATE_LIMITING__SENSITIVE_FAIL_OPEN`
 - `REDIS__URL`
 
 Rules:
 
 - `REDIS__URL` is required only when `RATE_LIMITING__ENABLED=true`.
 - If enabled without `REDIS__URL`, startup fails fast.
+- Unknown policy override names fail fast, for example `RATE_LIMITING__POLICIES__UNKNOWN_POLICY__LIMIT=10`.
+- Invalid override limits/windows fail fast. Supported runtime windows are 60 seconds, 300 seconds, and 3600 seconds.
+- `relaxed` mode is rejected in production.
+- `panic` mode is accepted in production and is config-level only in this change; there is no runtime/admin-UI panic switch.
+
+Policy defaults are declared once in `backend/app/core/rate_limit/policies.py` as declarative specs. Startup resolves effective runtime policies from those specs, the selected mode, and explicit per-policy overrides. Precedence is:
+
+1. policy spec defaults;
+2. mode transformation;
+3. explicit per-policy override.
+
+Exception: in `panic` mode, sensitive and critical policies always remain fail-closed even if an override attempts `FAIL_OPEN=true`.
+
+Example override:
+
+```bash
+RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT=20
+RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS=60
+RATE_LIMITING__POLICIES__TENANT_WRITE__FAIL_OPEN=false
+```
+
+Mode behaviour:
+
+| Mode | Behaviour | Production |
+|---|---|---|
+| `normal` | Use safe defaults plus explicit overrides. | Allowed |
+| `strict` | Halve default limits before overrides; windows are unchanged; fail-open does not become more permissive. | Allowed |
+| `relaxed` | Double default limits before overrides; windows are unchanged. | Rejected |
+| `panic` | Halve sensitive default limits, quarter critical default limits, and force sensitive/critical fail-closed after overrides. | Allowed |
 
 ## Policy matrix
 
-| Policy | Limit | Window | Fail mode | Purpose |
-|---|---:|---|---|---|
-| `authenticated_default` | 120 | 1 minute | fail-open | Low-risk authenticated reads such as `/users/me` |
-| `tenant_read` | 120 | 1 minute | fail-open | Tenant read, directory, and membership listing endpoints |
-| `tenant_write` | 30 | 1 minute | fail-closed | Tenant mutations and membership management |
-| `organisation_create` | 5 | 1 hour | fail-closed | Protect organisation creation/onboarding from abuse |
-| `invite_accept` | 5 | 5 minutes | fail-closed | Protect invite acceptance from brute force/token guessing |
-| `invite_create` | 20 | 1 hour | fail-closed | Protect invite creation from abuse |
-| `invite_mutation` | 30 | 1 hour | fail-closed | Protect invite revoke/resend/admin invite operations |
-| `platform_read` | 60 | 1 minute | fail-closed | Reduce platform user/organisation/staff enumeration and listing abuse |
-| `audit_read` | 30 | 1 minute | fail-closed | Protect sensitive full and limited audit listing/filtering |
-| `platform_write` | 30 | 1 minute | fail-closed | Protect sensitive platform user/organisation writes from abuse with a valid platform token |
-| `platform_staff_write` | 10 | 1 minute | fail-closed | Protect high-impact platform staff management writes |
+| Policy | Default limit | Default window | Default fail mode | Sensitivity | Purpose |
+|---|---:|---|---|---|---|
+| `authenticated_default` | 120 | 1 minute | fail-open | normal | Low-risk authenticated reads such as `/users/me` |
+| `tenant_read` | 120 | 1 minute | fail-open | normal | Tenant read, directory, and membership listing endpoints |
+| `tenant_write` | 30 | 1 minute | fail-closed | sensitive | Tenant mutations and membership management |
+| `organisation_create` | 5 | 1 hour | fail-closed | critical | Protect organisation creation/onboarding from abuse |
+| `invite_accept` | 5 | 5 minutes | fail-closed | critical | Protect invite acceptance from brute force/token guessing |
+| `invite_create` | 20 | 1 hour | fail-closed | sensitive | Protect invite creation from abuse |
+| `invite_mutation` | 30 | 1 hour | fail-closed | sensitive | Protect invite revoke/resend/admin invite operations |
+| `platform_read` | 60 | 1 minute | fail-closed | sensitive | Reduce platform user/organisation/staff enumeration and listing abuse |
+| `audit_read` | 30 | 1 minute | fail-closed | critical | Protect sensitive full and limited audit listing/filtering |
+| `platform_write` | 30 | 1 minute | fail-closed | critical | Protect sensitive platform user/organisation writes from abuse with a valid platform token |
+| `platform_staff_write` | 10 | 1 minute | fail-closed | critical | Protect high-impact platform staff management writes |
 
 Fail-open is reserved for low-risk authenticated reads where availability is preferred and backend errors are still recorded. Tenant writes, organisation creation, invite administration, platform reads, audit reads, and platform writes are fail-closed because abuse impact or enumeration risk is higher.
 

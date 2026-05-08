@@ -122,17 +122,46 @@ class AuthSettings(BaseModel):
         return "RS256"
 
 
+class RateLimitPolicyOverride(BaseModel):
+    limit: int | None = Field(default=None, gt=0)
+    window_seconds: int | None = Field(default=None, gt=0)
+    fail_open: bool | None = None
+
+    @field_validator("window_seconds")
+    @classmethod
+    def validate_supported_window(cls, value: int | None) -> int | None:
+        if value is not None and value not in {60, 300, 3600}:
+            raise ValueError(
+                "RATE_LIMITING policy window_seconds must be one of 60, 300, 3600"
+            )
+        return value
+
+
 class RateLimitingSettings(BaseModel):
     enabled: bool = False
     enforced_by_edge: bool = False
     backend: Literal["redis"] = "redis"
     redis_prefix: str = "rate-limit"
     trust_proxy_headers: bool = False
-    default_limit: int = 60
-    default_window_seconds: int = 60
-    default_fail_open: bool = True
-    sensitive_fail_open: bool = False
-    storage_timeout_seconds: float = 1.0
+    mode: Literal["normal", "strict", "relaxed", "panic"] = "normal"
+    policies: dict[str, RateLimitPolicyOverride] = Field(default_factory=dict)
+    storage_timeout_seconds: float = Field(default=1.0, gt=0)
+
+    @field_validator("policies")
+    @classmethod
+    def validate_policy_override_names(
+        cls, value: dict[str, RateLimitPolicyOverride]
+    ) -> dict[str, RateLimitPolicyOverride]:
+        from app.core.rate_limit.registry import get_known_rate_limit_policy_names
+
+        known_names = get_known_rate_limit_policy_names()
+        unknown_names = sorted(set(value) - known_names)
+        if unknown_names:
+            raise ValueError(
+                "Unknown rate limit policy override name(s): "
+                + ", ".join(unknown_names)
+            )
+        return value
 
 
 class OutboxSettings(BaseModel):
@@ -257,6 +286,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID must be false in prod"
                 )
+            if self.rate_limiting.mode == "relaxed":
+                raise ValueError("RATE_LIMITING__MODE=relaxed is not allowed in prod")
             if (
                 not self.rate_limiting.enabled
                 and not self.rate_limiting.enforced_by_edge

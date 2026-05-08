@@ -149,12 +149,10 @@ The database schema is managed through Alembic migrations. Model details must be
 ## Rate Limiting
 
 - Canonical document: `backend/docs/rate-limiting.md`.
-- Rate limiting is Redis-backed.
+- Rate limiting is Redis-backed and route-level dependency-based rather than middleware-based.
 - It is disabled by default and enabled through settings.
-- Current protected policies are:
-  - `invite_accept`
-  - `invite_create`
-- The Retry-After contract, identity keys, fail-open/fail-closed behaviour, and operational details are defined in the canonical rate-limiting document.
+- Effective policies are resolved from declarative specs, selected mode, and per-policy overrides during startup.
+- The protected endpoint matrix, policy defaults, fail-open/fail-closed behaviour, panic mode, and Retry-After contract are defined in the canonical rate-limiting document.
 
 ## Outbox and Background Jobs
 
