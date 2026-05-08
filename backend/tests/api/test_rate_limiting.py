@@ -23,6 +23,7 @@ from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
     INVITE_ACCEPT_POLICY,
     INVITE_CREATE_POLICY,
+    TENANT_WRITE_POLICY,
     RateLimitPolicy,
 )
 from app.main import create_app
@@ -41,12 +42,14 @@ class FakeLimiter:
         self.allow = allow
         self.raise_error = raise_error
         self.hit_calls: list[tuple[str, str, int, int]] = []
+        self.hit_expiries: list[int] = []
         self.window_calls: list[tuple[str, str, int, int]] = []
 
     async def hit(self, item, namespace: str, key: str) -> bool:
         if self.raise_error is not None:
             raise self.raise_error
         self.hit_calls.append((namespace, key, item.amount, item.multiples))
+        self.hit_expiries.append(item.get_expiry())
         return self.allow
 
     async def get_window_stats(self, item, namespace: str, key: str) -> _WindowStats:
@@ -548,6 +551,43 @@ def test_runtime_code_uses_limits_aio_namespace() -> None:
     lifecycle_source = inspect.getsource(lifecycle)
 
     assert "limits.aio" in dependency_source or "limits.aio" in lifecycle_source
+
+
+def test_env_override_changes_effective_policy_threshold(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT", "7")
+    monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS", "300")
+
+    fake = FakeLimiter(allow=True)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    router = APIRouter()
+
+    @router.get(
+        "/api/v1/test/rate-limit/tenant-write-effective",
+        dependencies=[Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
+    )
+    async def _tenant_write_probe() -> dict[str, str]:
+        return {"ok": "true"}
+
+    client.app.include_router(router)
+
+    with client as api_client:
+        response = api_client.get("/api/v1/test/rate-limit/tenant-write-effective")
+
+    assert response.status_code == 200
+    assert len(fake.hit_calls) == 1
+    assert fake.hit_calls[0][0].startswith("test-rl:tenant_write:")
+    assert fake.hit_calls[0][2] == 7
+    assert fake.hit_expiries[0] == 300
+    assert TENANT_WRITE_POLICY.default_limit == 30
+    assert TENANT_WRITE_POLICY.default_window_seconds == 60
 
 
 def test_over_limit_tenant_write_returns_429_before_db_or_service(monkeypatch) -> None:
