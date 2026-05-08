@@ -77,6 +77,9 @@ def _build_app(
     runtime: RateLimiterRuntime | None = None,
 ) -> TestClient:
     async def _fake_init_rate_limiter(app, settings) -> None:
+        from app.core.rate_limit.registry import build_effective_policy_registry
+
+        app.state.rate_limit_policy_registry = build_effective_policy_registry(settings)
         app.state.rate_limiter_runtime = runtime or RateLimiterRuntime(
             enabled=False,
             storage=None,
@@ -526,15 +529,16 @@ def test_rate_limiting_enablement_does_not_leak_between_apps(monkeypatch) -> Non
 
 def test_invite_policies_are_distinct_and_declarative() -> None:
     assert INVITE_ACCEPT_POLICY.name == "invite_accept"
-    assert INVITE_ACCEPT_POLICY.item.amount == 5
-    assert INVITE_ACCEPT_POLICY.item.multiples == 5
-    assert INVITE_ACCEPT_POLICY.item.get_expiry() == 300
-    assert INVITE_ACCEPT_POLICY.fail_open is False
+    assert INVITE_ACCEPT_POLICY.default_limit == 5
+    assert INVITE_ACCEPT_POLICY.default_window_seconds == 300
+    assert INVITE_ACCEPT_POLICY.default_fail_open is False
+    assert INVITE_ACCEPT_POLICY.sensitivity == "critical"
 
     assert INVITE_CREATE_POLICY.name == "invite_create"
-    assert INVITE_CREATE_POLICY.item.amount == 20
-    assert INVITE_CREATE_POLICY.item.get_expiry() == 3600
-    assert INVITE_CREATE_POLICY.fail_open is False
+    assert INVITE_CREATE_POLICY.default_limit == 20
+    assert INVITE_CREATE_POLICY.default_window_seconds == 3600
+    assert INVITE_CREATE_POLICY.default_fail_open is False
+    assert INVITE_CREATE_POLICY.sensitivity == "sensitive"
 
 
 def test_runtime_code_uses_limits_aio_namespace() -> None:

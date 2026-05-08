@@ -40,7 +40,7 @@
 | `backend/tests/rate_limit/test_endpoint_protection.py` | Расширить до полной матрицы endpoint-политика. | Предотвратить появление в будущем чувствительного endpoint без политики. | Включить все строки из матрицы endpoints. |
 | `backend/tests/api/test_rate_limiting_integration.py` | Добавить тесты Redis unavailable/timeout/invalid URL. | Синтетического fake limiter недостаточно. | Использовать невозможный Redis URL + зависающий fake limiter. |
 | `backend/docs/rate-limiting.md` | Оставить как канонический doc; слить/удалить `rate_limiting.md`. | Избежать конфликтующей документации. | n/a |
-| `.env.example` | Уточнить, какие настройки `RATE_LIMITING__DEFAULT_*` фактически используются после рефакторинга. | Предотвратить путаницу оператора. | Тесты конфигурации. |
+| `.env.example` | [Fixed] Удалены устаревшие `RATE_LIMITING__DEFAULT_*` / `SENSITIVE_FAIL_OPEN`; добавлены `RATE_LIMITING__MODE` и примеры per-policy overrides. | Предотвратить путаницу оператора. | Добавлены/обновлены тесты конфигурации. |
 
 ---
 
@@ -55,14 +55,14 @@
 | CORS раскрывает Retry-After | Да для 429 | Unit | Глобальная CORS конфигурация при добавлении | P2 |
 | Redis недоступен | Частично | fake RuntimeError | Реальный недоступный Redis URL / connection refused | P1 |
 | Redis таймаут | Частично | `wait_for` существует | Тест зависающего limiter timeout | P1 |
-| Режим fail-open | Да синтетически | Unit | Построение политики fail-open управляемое settings | P1 |
+| Режим fail-open | Да | Unit + registry/settings tests | — | Fixed / OK |
 | Режим fail-closed | Да синтетически | Unit | Реальный путь сбоя Redis | P1 |
 | Отключённый rate limiting | Да | Unit/lifespan | — | OK |
 | Отсутствующий Redis URL | Да | lifespan test | Вариант для prod окружения | P2 |
 | Порядок зависимостей | Да | `test_over_limit_invite_create_returns_429_before_db_or_service`, `test_over_limit_invite_accept_returns_429_before_db_or_service`, `test_over_limit_invite_resend_returns_429_before_db_or_service` | — | Fixed / OK |
 | Keying по пользователю | Да | Unit | — | OK |
 | Keying по IP | Нет практического пути dependency | функция identifiers существует | Тесты public dependency | P1 |
-| Лимиты per-policy | Да | тесты policy | Тесты policy управляемые settings | P1 |
+| Лимиты per-policy | Да | policy registry + settings tests | — | Fixed / OK |
 | Invite-специфичные лимиты | Да | policy + endpoint protection | Фактическая integration на invite маршрутах | P1 |
 | Readiness включает Redis | Да | health tests | Readiness, условный по функциям | P2 |
 | Сброс кэша settings | Да | fixtures/reset helper | — | OK |
@@ -91,7 +91,7 @@
 | Runtime missing | 503 + metrics. | Хорошо. | Сохранить. | OK |
 | Исключение limiter | Перехватывается для выбранных исключений. | Не все общие неожиданные исключения перехватываются. | Рассмотреть перехват более широкого `Exception` вокруг storage backend, но логировать безопасно. | P2 |
 | Сбой window stats после блокировки | Откат к policy expiry. | Хорошо. | Добавить тест. | P2 |
-| Режим сбоя политики | Хардкодирован per-policy. | Settings `default_fail_open`/`sensitive_fail_open` не используются. | Привязать settings к созданию политик. | P1 |
+| Режим сбоя политики | [Fixed] Runtime policies строятся из декларативных specs, mode и per-policy overrides; `panic` принудительно держит sensitive/critical policies fail-closed. | Устранён dead config для fail-open/fail-closed. | Сохранять route-level dependencies и registry tests. | Fixed / OK |
 
 ---
 

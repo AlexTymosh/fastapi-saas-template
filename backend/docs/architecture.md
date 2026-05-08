@@ -149,8 +149,8 @@ The database schema is managed through Alembic migrations. Model details must be
 ## Rate Limiting
 
 - Canonical document: `backend/docs/rate-limiting.md`.
-- Rate limiting is Redis-backed.
-- It is disabled by default and enabled through settings.
+- Rate limiting is Redis-backed and route-level dependency-based rather than middleware-based.
+- It is disabled by default and enabled through settings. Effective policies are resolved from declarative specs, mode, and per-policy overrides during startup.
 - Current protected policies are:
   - `invite_accept`
   - `invite_create`

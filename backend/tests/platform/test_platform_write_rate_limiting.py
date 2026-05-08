@@ -46,6 +46,9 @@ class FakeLimiter:
 
 def _install_fake_rate_limiter(monkeypatch, limiter: FakeLimiter) -> None:
     async def _fake_init_rate_limiter(app, settings) -> None:
+        from app.core.rate_limit.registry import build_effective_policy_registry
+
+        app.state.rate_limit_policy_registry = build_effective_policy_registry(settings)
         app.state.rate_limiter_runtime = RateLimiterRuntime(
             enabled=True,
             storage=object(),
@@ -157,7 +160,7 @@ def test_platform_user_suspend_over_limit_returns_429_and_does_not_suspend_user(
     assert response.headers["retry-after"].isdigit()
     assert response.headers["access-control-expose-headers"] == "Retry-After"
     assert limiter.hit_calls[0][0].startswith("platform-rl-test:platform_write:")
-    assert limiter.hit_calls[0][2] == PLATFORM_WRITE_POLICY.item.amount
+    assert limiter.hit_calls[0][2] == PLATFORM_WRITE_POLICY.default_limit
 
     async def _verify() -> None:
         async with migrated_session_factory() as session:
@@ -246,7 +249,7 @@ def test_platform_staff_write_uses_stricter_policy(
     assert response.status_code == 429
     assert response.json()["error_code"] == "rate_limited"
     assert limiter.hit_calls[0][0].startswith("platform-rl-test:platform_staff_write:")
-    assert limiter.hit_calls[0][2] == PLATFORM_STAFF_WRITE_POLICY.item.amount
+    assert limiter.hit_calls[0][2] == PLATFORM_STAFF_WRITE_POLICY.default_limit
 
     async def _verify() -> None:
         async with migrated_session_factory() as session:

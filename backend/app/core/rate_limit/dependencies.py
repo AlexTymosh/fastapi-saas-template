@@ -20,7 +20,8 @@ from app.core.observability import (
     record_rate_limit_decision,
 )
 from app.core.rate_limit.identifiers import build_identifier
-from app.core.rate_limit.policies import RateLimitPolicy
+from app.core.rate_limit.policies import RateLimitPolicy, RateLimitPolicySpec
+from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
 log = get_logger(__name__)
 
@@ -63,12 +64,15 @@ async def check_rate_limit(
     *,
     request: Request,
     principal: AuthenticatedPrincipal,
-    policy: RateLimitPolicy,
+    policy: RateLimitPolicy | RateLimitPolicySpec,
 ) -> None:
     settings = get_settings()
 
     if not settings.rate_limiting.enabled:
         return
+
+    if isinstance(policy, RateLimitPolicySpec):
+        policy = get_effective_rate_limit_policy(request.app, policy.name)
 
     started_at = time.perf_counter()
     runtime = _runtime_from_request(request)
@@ -184,7 +188,9 @@ async def check_rate_limit(
     )
 
 
-def rate_limit_dependency(policy: RateLimitPolicy) -> Callable[..., Awaitable[None]]:
+def rate_limit_dependency(
+    policy: RateLimitPolicy | RateLimitPolicySpec,
+) -> Callable[..., Awaitable[None]]:
     async def _dependency(
         request: Request,
         principal: Annotated[
