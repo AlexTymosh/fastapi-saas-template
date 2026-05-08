@@ -17,7 +17,7 @@ The following foundations are present in code and/or current documentation and s
 - Health endpoints.
 - SQLAlchemy async foundation.
 - Alembic migrations foundation.
-- Keycloak JWT validation foundation.
+- Keycloak JWT validation hardened for OAuth2 Resource Server access tokens, including strict issuer/audience/`azp`/`iat`/`kid`/lifetime checks, startup OIDC metadata validation, and JWKS forced refresh cooldown/singleflight protection.
 - Local user projection with `external_auth_id`.
 - Organisations, memberships, and invites foundation.
 - Platform staff and permissions foundation.

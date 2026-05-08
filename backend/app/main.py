@@ -6,6 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 
 from app.api.master_router import build_master_router
+from app.core.auth_metadata import init_auth_validation
 from app.core.config.settings import Settings, get_settings
 from app.core.db import dispose_engine
 from app.core.errors import register_exception_handlers
@@ -21,7 +22,8 @@ from app.core.redis import close_redis
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log = get_logger(__name__)
-    settings = get_settings()
+    settings = getattr(app.state, "settings", None) or get_settings()
+    await init_auth_validation(settings)
     await init_observability(settings)
     await init_rate_limiter(app, settings)
     log.info("app_started")
@@ -66,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
         lifespan=lifespan,
     )
+    app.state.settings = resolved_settings
 
     app.add_middleware(
         RequestContextMiddleware,

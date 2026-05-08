@@ -72,7 +72,8 @@ When started via Compose, the core local stack includes:
 
 Keycloak is the identity provider and JWT issuer.
 
-- FastAPI validates JWTs.
+- FastAPI acts as an OAuth2 Resource Server and validates Keycloak access tokens for this API.
+- Production validation requires issuer, API audience, allowed authorised parties (`azp`), strict claim validation, and startup OIDC metadata validation.
 - Local user projection uses `external_auth_id == sub`.
 - Tenant roles are resolved from database memberships.
 - Platform roles and permissions are resolved from `platform_staff`.
@@ -127,6 +128,7 @@ Start here:
 - Current project state: `backend/docs/current-state.md`.
 - Rate limiting: `backend/docs/rate-limiting.md`.
 - Keycloak identity contract: `backend/docs/keycloak-identity-contract.md`.
+- Keycloak production setup: `backend/docs/auth/keycloak-production-setup.md`.
 - Observability: `backend/docs/observability.md`.
 - E2E and integration testing: `backend/docs/testing-e2e.md`.
 

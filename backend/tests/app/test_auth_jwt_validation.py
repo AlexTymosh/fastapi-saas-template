@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 import jwt
@@ -85,7 +86,7 @@ def test_invalid_issuer_is_rejected() -> None:
     )
     validator = _build_validator(_make_fetcher({"keys": [jwk]}))
 
-    with pytest.raises(UnauthorizedError, match="Invalid token issuer"):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
 
@@ -100,7 +101,7 @@ def test_invalid_audience_is_rejected() -> None:
     )
     validator = _build_validator(_make_fetcher({"keys": [jwk]}))
 
-    with pytest.raises(UnauthorizedError, match="Invalid token audience"):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
 
@@ -116,7 +117,7 @@ def test_expired_token_is_rejected() -> None:
     )
     validator = _build_validator(_make_fetcher({"keys": [jwk]}))
 
-    with pytest.raises(UnauthorizedError, match="Token has expired"):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
 
@@ -134,10 +135,7 @@ def test_token_with_disallowed_signing_algorithm_is_rejected() -> None:
     )
     validator = _build_validator(_make_fetcher({"keys": []}))
 
-    with pytest.raises(
-        UnauthorizedError,
-        match="Token signing algorithm is not allowed",
-    ):
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
         run_async(validator.validate_token(token))
 
 
@@ -316,4 +314,312 @@ def test_jwt_validation_fails_if_refreshed_jwks_still_misses_kid() -> None:
     with pytest.raises(UnauthorizedError, match="Unable to match token signing key"):
         run_async(validator.validate_token(token))
 
+    assert fetch_count == 2
+
+
+def _build_strict_validator(
+    fetcher: Callable[[str], dict[str, object]],
+    *,
+    allowed_authorized_parties: list[str] | None = None,
+    max_token_lifetime_seconds: int = 3600,
+    jwks_refresh_cooldown_seconds: float = 30.0,
+) -> JwtValidator:
+    return JwtValidator(
+        auth_settings=AuthSettings(
+            enabled=True,
+            issuer_url=ISSUER,
+            audience="fastapi-api",
+            allowed_authorized_parties=allowed_authorized_parties or [],
+            algorithms="RS256",
+            leeway_seconds=0,
+            max_token_lifetime_seconds=max_token_lifetime_seconds,
+            jwks_refresh_cooldown_seconds=jwks_refresh_cooldown_seconds,
+            jwks_refresh_lock_timeout_seconds=0.1,
+        ),
+        fetch_json=fetcher,
+    )
+
+
+def test_missing_audience_is_rejected_when_audience_configured() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-no-aud",
+        claims={"aud": None},
+    )
+    validator = _build_strict_validator(_make_fetcher({"keys": [jwk]}))
+
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
+        run_async(validator.validate_token(token))
+
+
+def test_correct_audience_is_accepted() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-correct-aud",
+    )
+    validator = _build_strict_validator(_make_fetcher({"keys": [jwk]}))
+
+    claims = run_async(validator.validate_token(token))
+
+    assert claims["sub"] == "kc-sub-correct-aud"
+
+
+def test_missing_iat_is_rejected_when_required() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-no-iat",
+        claims={"iat": None},
+    )
+    validator = _build_strict_validator(_make_fetcher({"keys": [jwk]}))
+
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
+        run_async(validator.validate_token(token))
+
+
+def test_malformed_iat_is_rejected() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-bad-iat",
+        claims={"iat": "not-a-timestamp"},
+    )
+    validator = _build_strict_validator(_make_fetcher({"keys": [jwk]}))
+
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
+        run_async(validator.validate_token(token))
+
+
+def test_excessive_token_lifetime_is_rejected() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-long-lived",
+        expires_in_seconds=7200,
+    )
+    validator = _build_strict_validator(
+        _make_fetcher({"keys": [jwk]}),
+        max_token_lifetime_seconds=300,
+    )
+
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
+        run_async(validator.validate_token(token))
+
+
+def test_missing_kid_is_rejected_when_required() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = jwt.encode(
+        {
+            "iss": ISSUER,
+            "aud": "fastapi-api",
+            "sub": "kc-sub-no-kid",
+            "iat": 4_000_000_000,
+            "exp": 4_000_000_300,
+        },
+        key=private_key,
+        algorithm="RS256",
+        headers={},
+    )
+    validator = _build_strict_validator(_make_fetcher({"keys": [jwk]}))
+
+    with pytest.raises(UnauthorizedError, match="Invalid bearer token"):
+        run_async(validator.validate_token(token))
+
+
+def test_wrong_azp_is_rejected_with_generic_detail() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-wrong-azp",
+        claims={"azp": "untrusted-client"},
+    )
+    validator = _build_strict_validator(
+        _make_fetcher({"keys": [jwk]}),
+        allowed_authorized_parties=["fastapi-web"],
+    )
+
+    with pytest.raises(UnauthorizedError) as exc_info:
+        run_async(validator.validate_token(token))
+
+    assert exc_info.value.detail == "Invalid bearer token"
+
+
+def test_allowed_azp_is_accepted() -> None:
+    jwk, private_key = generate_rsa_jwk()
+    token = issue_access_token(
+        private_key=private_key,
+        kid=jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-good-azp",
+        claims={"azp": "fastapi-web"},
+    )
+    validator = _build_strict_validator(
+        _make_fetcher({"keys": [jwk]}),
+        allowed_authorized_parties=["fastapi-web"],
+    )
+
+    claims = run_async(validator.validate_token(token))
+
+    assert claims["azp"] == "fastapi-web"
+
+
+def test_unknown_kid_forced_refresh_uses_cooldown() -> None:
+    stale_jwk, _ = generate_rsa_jwk(kid="stale-kid")
+    token_jwk, token_private_key = generate_rsa_jwk(kid="token-kid")
+    token = issue_access_token(
+        private_key=token_private_key,
+        kid=token_jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-cooldown",
+    )
+    fetch_count = 0
+
+    def _fetch(url: str) -> dict[str, object]:
+        nonlocal fetch_count
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            fetch_count += 1
+            return {"keys": [stale_jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    validator = _build_strict_validator(_fetch)
+
+    for _ in range(3):
+        with pytest.raises(UnauthorizedError):
+            run_async(validator.validate_token(token))
+
+    assert fetch_count == 2
+
+
+def test_unknown_kid_concurrent_requests_share_single_forced_refresh() -> None:
+    stale_jwk, _ = generate_rsa_jwk(kid="stale-kid")
+    token_jwk, token_private_key = generate_rsa_jwk(kid="token-kid")
+    token = issue_access_token(
+        private_key=token_private_key,
+        kid=token_jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-concurrent",
+    )
+    fetch_count = 0
+
+    def _fetch(url: str) -> dict[str, object]:
+        nonlocal fetch_count
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            fetch_count += 1
+            return {"keys": [stale_jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    async def _run() -> None:
+        validator = _build_strict_validator(_fetch)
+        await validator._get_jwks()
+        results = await asyncio.gather(
+            *(validator.validate_token(token) for _ in range(5)),
+            return_exceptions=True,
+        )
+        assert all(isinstance(result, UnauthorizedError) for result in results)
+
+    run_async(_run())
+
+    assert fetch_count == 2
+
+
+def test_after_cooldown_new_key_can_be_loaded_by_forced_refresh() -> None:
+    stale_jwk, _ = generate_rsa_jwk(kid="stale-kid")
+    fresh_jwk, fresh_private_key = generate_rsa_jwk(kid="fresh-kid")
+    token = issue_access_token(
+        private_key=fresh_private_key,
+        kid=fresh_jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-after-cooldown",
+    )
+    fetch_count = 0
+
+    def _fetch(url: str) -> dict[str, object]:
+        nonlocal fetch_count
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            fetch_count += 1
+            if fetch_count < 3:
+                return {"keys": [stale_jwk]}
+            return {"keys": [fresh_jwk]}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    validator = _build_strict_validator(
+        _fetch,
+        jwks_refresh_cooldown_seconds=0.01,
+    )
+    with pytest.raises(UnauthorizedError):
+        run_async(validator.validate_token(token))
+
+    run_async(asyncio.sleep(0.02))
+    claims = run_async(validator.validate_token(token))
+
+    assert claims["sub"] == "kc-sub-after-cooldown"
+    assert fetch_count == 3
+
+
+def test_failed_forced_refresh_preserves_existing_jwks_cache() -> None:
+    known_jwk, known_private_key = generate_rsa_jwk(kid="known-kid")
+    unknown_jwk, unknown_private_key = generate_rsa_jwk(kid="unknown-kid")
+    known_token = issue_access_token(
+        private_key=known_private_key,
+        kid=known_jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-known",
+    )
+    unknown_token = issue_access_token(
+        private_key=unknown_private_key,
+        kid=unknown_jwk["kid"],
+        issuer=ISSUER,
+        audience="fastapi-api",
+        subject="kc-sub-unknown",
+    )
+    fetch_count = 0
+
+    def _fetch(url: str) -> dict[str, object]:
+        nonlocal fetch_count
+        if url == DISCOVERY_URL:
+            return {"jwks_uri": JWKS_URL}
+        if url == JWKS_URL:
+            fetch_count += 1
+            if fetch_count == 1:
+                return {"keys": [known_jwk]}
+            raise UnauthorizedError(detail="Unable to fetch identity metadata")
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    validator = _build_strict_validator(_fetch)
+
+    assert run_async(validator.validate_token(known_token))["sub"] == "kc-sub-known"
+    with pytest.raises(UnauthorizedError):
+        run_async(validator.validate_token(unknown_token))
+    assert run_async(validator.validate_token(known_token))["sub"] == "kc-sub-known"
     assert fetch_count == 2
