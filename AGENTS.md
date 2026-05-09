@@ -79,6 +79,28 @@ Expected flow:
 - Use FastAPI dependency injection with `Depends`; avoid hidden globals.
 - Use async only for database/external I/O; pure CPU logic should be sync.
 
+
+## Persistence ownership
+
+- Domain repositories own persistence for their aggregate tables.
+- Platform services may orchestrate privileged workflows by calling domain repositories and platform-owned repositories, but must not duplicate basic persistence access for domain-owned tables.
+- Platform repositories are allowed only for platform-owned tables, such as `platform_staff`, or dedicated platform read models/reporting queries that intentionally span multiple aggregates.
+- Ownership mapping:
+  - `users` table -> `UserRepository`
+  - `organisations` table -> `OrganisationRepository`
+  - `memberships` table -> `MembershipRepository`
+  - `platform_staff` table -> `PlatformStaffRepository`
+- Platform services own orchestration, permissions, audit event creation, conflict/not-found mapping, and state-transition decisions; they must not build SQLAlchemy queries for domain-owned aggregate tables.
+
+## Transaction ownership
+
+- Repositories may use `flush()` and `refresh()`, but must not call `commit()` or `rollback()`.
+- Application services should not commit by default. Services orchestrate business rules, repository calls, and audit writes inside a transaction provided by the caller.
+- Write API dependencies own transaction boundaries using `async with session.begin()` after authentication and rate limiting have completed.
+- Read endpoints should use the lazy request-scoped session and should not open explicit transactions unless consistency requirements justify it.
+- CLI commands and background workers must create their own explicit transaction boundary.
+- Do not add global transaction middleware. It can start database work too early, weaken early auth/rate-limit short-circuiting, and make transaction scope less visible.
+
 ## API response contract
 
 - Single resource: clean REST response.

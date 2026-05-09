@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import AuditContext
@@ -11,26 +11,24 @@ from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTarget
 from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import ConflictError, NotFoundError
 from app.core.platform.actors import PlatformActor
-from app.users.models.user import User, UserStatus
+from app.users.models.user import UserStatus
+from app.users.repositories.users import UserRepository
+
+if TYPE_CHECKING:
+    from app.users.models.user import User
 
 
 class PlatformUsersService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.user_repository = UserRepository(session)
+        self.audit_service = AuditEventService(session)
 
     async def list_users(self, *, limit: int, offset: int) -> tuple[list[User], int]:
-        rows = (
-            (await self.session.execute(select(User).offset(offset).limit(limit)))
-            .scalars()
-            .all()
-        )
-        total = (
-            await self.session.execute(select(func.count()).select_from(User))
-        ).scalar_one()
-        return list(rows), int(total)
+        return await self.user_repository.list_paginated(limit=limit, offset=offset)
 
     async def get_user(self, user_id: UUID) -> User:
-        user = await self.session.get(User, user_id)
+        user = await self.user_repository.get_by_id(user_id)
         if user is None:
             raise NotFoundError(detail="User not found")
         return user
@@ -63,10 +61,13 @@ class PlatformUsersService:
         user = await self.get_user(user_id)
         if user.status == UserStatus.SUSPENDED:
             raise ConflictError(detail="User already suspended")
-        user.status = UserStatus.SUSPENDED
-        user.suspended_at = datetime.now(UTC)
-        user.suspended_reason = reason
-        await AuditEventService(self.session).record_event(
+        user = await self.user_repository.set_status(
+            user,
+            status=UserStatus.SUSPENDED,
+            suspended_at=datetime.now(UTC),
+            suspended_reason=reason,
+        )
+        await self.audit_service.record_event(
             audit_context=audit_context,
             category=AuditCategory.PLATFORM,
             action=AuditAction.USER_SUSPENDED,
@@ -74,7 +75,6 @@ class PlatformUsersService:
             target_id=user.id,
             reason=reason,
         )
-        await self.session.flush()
         return user
 
     async def restore_user(
@@ -104,10 +104,13 @@ class PlatformUsersService:
         user = await self.get_user(user_id)
         if user.status == UserStatus.ACTIVE:
             raise ConflictError(detail="User already active")
-        user.status = UserStatus.ACTIVE
-        user.suspended_at = None
-        user.suspended_reason = None
-        await AuditEventService(self.session).record_event(
+        user = await self.user_repository.set_status(
+            user,
+            status=UserStatus.ACTIVE,
+            suspended_at=None,
+            suspended_reason=None,
+        )
+        await self.audit_service.record_event(
             audit_context=audit_context,
             category=AuditCategory.PLATFORM,
             action=AuditAction.USER_RESTORED,
@@ -115,5 +118,4 @@ class PlatformUsersService:
             target_id=user.id,
             reason=reason,
         )
-        await self.session.flush()
         return user
