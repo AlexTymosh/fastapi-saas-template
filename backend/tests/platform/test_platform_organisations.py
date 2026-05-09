@@ -1,3 +1,6 @@
+from datetime import UTC, datetime
+from uuid import UUID
+
 import pytest
 
 from app.audit.context import AuditContext
@@ -214,6 +217,14 @@ def test_platform_org_correction_updates_and_audits(
             ).first()
             assert event is not None
             assert event._mapping["reason"] == "correct typo"
+            assert event._mapping["metadata_json"] == {
+                "changed_fields": ["name", "slug"],
+                "correction_type": "platform_profile_correction",
+                "old_name": "Delta",
+                "new_name": "New Name",
+                "old_slug": "delta",
+                "new_slug": "new-slug",
+            }
 
     run_async(_verify())
 
@@ -348,3 +359,63 @@ def test_suspend_organisation_keeps_external_transaction_open(
                 assert session.in_transaction()
 
     run_async(_run())
+
+
+def test_platform_list_organisations_uses_deterministic_repository_order(
+    migrated_session_factory,
+) -> None:
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def _run() -> tuple[list[str], int]:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                session.add_all(
+                    [
+                        Organisation(
+                            id=UUID(f"00000000-0000-0000-0000-00000000002{index}"),
+                            name=f"Platform Org {index}",
+                            slug=f"platform-org-{index}",
+                            created_at=created_at,
+                        )
+                        for index in range(1, 4)
+                    ]
+                )
+
+        async with migrated_session_factory() as session:
+            organisations, total = await PlatformOrganisationsService(
+                session
+            ).list_organisations(limit=2, offset=0)
+            return [org.slug for org in organisations], total
+
+    slugs, total = run_async(_run())
+
+    assert total == 3
+    assert slugs == ["platform-org-3", "platform-org-2"]
+
+
+def test_platform_get_and_list_organisations_include_soft_deleted_records(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> tuple[Organisation, list[str], int]:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                deleted = Organisation(
+                    name="Platform Deleted",
+                    slug="platform-deleted",
+                    deleted_at=datetime(2026, 1, 2, tzinfo=UTC),
+                )
+                active = Organisation(name="Platform Active", slug="platform-active")
+                session.add_all([deleted, active])
+
+        async with migrated_session_factory() as session:
+            service = PlatformOrganisationsService(session)
+            fetched = await service.get_organisation(deleted.id)
+            organisations, total = await service.list_organisations(limit=10, offset=0)
+            return fetched, [org.slug for org in organisations], total
+
+    fetched, slugs, total = run_async(_run())
+
+    assert fetched.slug == "platform-deleted"
+    assert "platform-deleted" in slugs
+    assert "platform-active" in slugs
+    assert total == 2

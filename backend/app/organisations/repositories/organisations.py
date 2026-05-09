@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.organisations.models.organisation import Organisation
+from app.organisations.models.organisation import Organisation, OrganisationStatus
 
 
 class OrganisationRepository:
@@ -28,13 +28,46 @@ class OrganisationRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_by_id(self, organisation_id: UUID) -> Organisation | None:
-        stmt = select(Organisation).where(
-            Organisation.id == organisation_id,
-            Organisation.deleted_at.is_(None),
-        )
+    async def get_by_id(
+        self,
+        organisation_id: UUID,
+        *,
+        include_deleted: bool = False,
+    ) -> Organisation | None:
+        stmt = select(Organisation).where(Organisation.id == organisation_id)
+        if not include_deleted:
+            stmt = stmt.where(Organisation.deleted_at.is_(None))
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def list_paginated(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        include_deleted: bool = False,
+    ) -> tuple[list[Organisation], int]:
+        stmt = select(Organisation)
+        total_stmt = select(func.count()).select_from(Organisation)
+        if not include_deleted:
+            stmt = stmt.where(Organisation.deleted_at.is_(None))
+            total_stmt = total_stmt.where(Organisation.deleted_at.is_(None))
+
+        rows = (
+            (
+                await self.session.execute(
+                    stmt.order_by(
+                        Organisation.created_at.desc(), Organisation.id.desc()
+                    )
+                    .offset(offset)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        total = (await self.session.execute(total_stmt)).scalar_one()
+        return list(rows), int(total)
 
     async def update_details(
         self,
@@ -47,6 +80,21 @@ class OrganisationRepository:
             organisation.name = name
         if slug is not None:
             organisation.slug = slug
+        await self.session.flush()
+        await self.session.refresh(organisation)
+        return organisation
+
+    async def set_status(
+        self,
+        organisation: Organisation,
+        *,
+        status: OrganisationStatus,
+        suspended_at: datetime | None,
+        suspended_reason: str | None,
+    ) -> Organisation:
+        organisation.status = status
+        organisation.suspended_at = suspended_at
+        organisation.suspended_reason = suspended_reason
         await self.session.flush()
         await self.session.refresh(organisation)
         return organisation

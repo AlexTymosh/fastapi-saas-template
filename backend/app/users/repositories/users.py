@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import EmailStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.users.models.user import User
+from app.users.models.user import User, UserStatus
 
 
 class UserRepository:
@@ -27,6 +28,44 @@ class UserRepository:
         stmt = select(User).where(User.email == email)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def list_paginated(
+        self,
+        *,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[User], int]:
+        rows = (
+            (
+                await self.session.execute(
+                    select(User)
+                    .order_by(User.created_at.desc(), User.id.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        total = (
+            await self.session.execute(select(func.count()).select_from(User))
+        ).scalar_one()
+        return list(rows), int(total)
+
+    async def set_status(
+        self,
+        user: User,
+        *,
+        status: UserStatus,
+        suspended_at: datetime | None,
+        suspended_reason: str | None,
+    ) -> User:
+        user.status = status
+        user.suspended_at = suspended_at
+        user.suspended_reason = suspended_reason
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user
 
     async def create(
         self,

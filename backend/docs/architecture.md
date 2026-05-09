@@ -31,6 +31,27 @@ Layer responsibilities:
 - Models: SQLAlchemy ORM models.
 - Core: cross-cutting infrastructure such as configuration, database, authentication, errors, logging, middleware, observability, Redis, rate limiting, secrets, and task setup.
 
+### Persistence Ownership
+
+Domain repositories own persistence for their aggregate tables. Application and platform services may orchestrate workflows across repositories, but they must not duplicate basic persistence access for domain-owned tables or leak SQLAlchemy query construction into orchestration code.
+
+Ownership rules:
+
+- `users` table -> `UserRepository`
+- `organisations` table -> `OrganisationRepository`
+- `memberships` table -> `MembershipRepository`
+- `platform_staff` table -> `PlatformStaffRepository`
+
+Platform services may call domain repositories and platform-owned repositories for privileged workflows. Platform repositories are limited to platform-owned tables, such as `platform_staff`, or explicit platform read/reporting models that intentionally span multiple aggregates. Platform services remain responsible for permission-aware workflows, state-transition decisions, audit event creation, and conflict/not-found mapping.
+
+### Transaction Ownership
+
+Repositories may use `flush()` and `refresh()` to make changes visible within the current unit of work, but they must not call `commit()` or `rollback()`. Application services should not commit by default; they should orchestrate business rules, repository calls, and audit writes inside a transaction provided by the caller.
+
+Write API dependencies own transaction boundaries with `async with session.begin()` after authentication and rate limiting have completed. Read endpoints use the lazy request-scoped session and should not open explicit transactions unless a specific consistency requirement justifies it. CLI commands and background workers must create their own explicit transaction boundaries.
+
+Global transaction middleware is intentionally avoided because it can start database work too early, weaken early authentication/rate-limit short-circuiting, and hide transaction scope.
+
 ## Application Skeleton
 
 Current application skeleton:

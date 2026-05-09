@@ -1,3 +1,6 @@
+from datetime import UTC, datetime
+from uuid import UUID
+
 import pytest
 
 from app.audit.context import AuditContext
@@ -162,3 +165,37 @@ def test_suspend_user_keeps_external_transaction_open(
                 assert session.in_transaction()
 
     run_async(_run())
+
+
+def test_platform_list_users_uses_deterministic_repository_order(
+    migrated_session_factory,
+) -> None:
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def _run() -> tuple[list[str], int]:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                session.add_all(
+                    [
+                        User(
+                            id=UUID(f"00000000-0000-0000-0000-00000000001{index}"),
+                            external_auth_id=f"kc-platform-list-{index}",
+                            email=f"platform-list-{index}@example.com",
+                            email_verified=True,
+                            created_at=created_at,
+                        )
+                        for index in range(1, 4)
+                    ]
+                )
+
+        async with migrated_session_factory() as session:
+            users, total = await PlatformUsersService(session).list_users(
+                limit=2,
+                offset=0,
+            )
+            return [user.external_auth_id for user in users], total
+
+    external_auth_ids, total = run_async(_run())
+
+    assert total == 3
+    assert external_auth_ids == ["kc-platform-list-3", "kc-platform-list-2"]

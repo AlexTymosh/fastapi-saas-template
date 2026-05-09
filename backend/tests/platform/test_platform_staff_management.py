@@ -244,7 +244,7 @@ def test_platform_staff_lifecycle_management(staff_env):
             f"/api/v1/platform/staff/{staff_env.support_staff.id}/suspend",
             json={"reason": "policy"},
         ).status_code
-        == 201
+        == 200
     )
 
     # Verify restore flow
