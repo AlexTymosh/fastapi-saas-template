@@ -25,7 +25,7 @@
    Внутренние сотрудники действуют только через platform-only endpoints.
 ```
 
-Platform roles не должны обходить обычные tenant endpoints.
+Platform roles не должны обходить обычные tenant endpoints. Авторизация является DB-driven: tenant authorization берётся из локальных memberships, а platform authorization — из backend-таблицы `platform_staff`. Внешние IdP roles из прямых `roles`, `realm_access`, `resource_access` или похожих JWT claims не должны напрямую выдавать tenant или platform permissions во время обработки запроса. В будущем они могут использоваться только как вход для controlled, idempotent, audited JIT provisioning, который сначала создаёт локальные DB records.
 
 ```text
 Tenant endpoints:   /api/v1/organisations/*

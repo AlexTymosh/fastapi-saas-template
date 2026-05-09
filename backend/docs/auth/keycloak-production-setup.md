@@ -16,7 +16,7 @@ API clients must call the backend with a Keycloak **access token**, not an ID to
 - `azp` is listed in `AUTH__ALLOWED_AUTHORIZED_PARTIES` when that list is configured.
 - `exp - iat` does not exceed `AUTH__MAX_TOKEN_LIFETIME_SECONDS`.
 
-The backend does not use Keycloak realm/client roles as tenant or platform authorization truth. Tenant access still comes from local memberships, and platform access still comes from `platform_staff`.
+Authorization is DB-driven. The backend does not use Keycloak realm/client roles, direct `roles`, `realm_access`, `resource_access`, or similar IdP role claims as request-time tenant or platform permissions. Tenant access comes from local memberships, and platform access comes from `platform_staff`. External IdP roles may only be considered in the future as input for controlled, idempotent, audited JIT provisioning that writes local `memberships` or `platform_staff` records before any permission is granted.
 
 ## Required staging/prod settings
 
