@@ -9,7 +9,6 @@ This branch is a **foundation step** for organisation membership and invitation 
 - Invite acceptance with atomic membership transfer and explicit transaction handling.
 - Invite expiration support via `expires_at` and lazy expiration enforcement during accept.
 - Soft-delete organisation baseline (`deleted_at`).
-- Superadmin bootstrap support for platform-level operational access.
 
 ## Not fully implemented yet
 

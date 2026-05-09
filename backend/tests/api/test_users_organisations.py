@@ -1057,13 +1057,13 @@ def test_platform_role_does_not_bypass_single_organisation_creation_rule(
 
 @pytest.mark.authz
 @pytest.mark.bola
-def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -> None:
+def test_external_jwt_roles_are_ignored_for_membership_list_access(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
     with TestClient(app) as client:
         create_response = client.post(
             "/api/v1/organisations",
-            json={"name": "Private Org", "slug": "private-org-super-role-list"},
+            json={"name": "Private Org", "slug": "private-org-external-role-list"},
         )
         assert create_response.status_code == 201
         organisation_id = create_response.json()["id"]
@@ -1072,7 +1072,7 @@ def test_superadmin_role_claim_does_not_grant_membership_list_access(tmp_path) -
             _identity_for(
                 external_auth_id="kc-platform-actor-list",
                 email="platform-list@example.com",
-                roles=["superadmin"],
+                roles=["platform_admin", "tenant_admin"],
             )
         )
         response = client.get(f"/api/v1/organisations/{organisation_id}/memberships")

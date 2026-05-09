@@ -10,7 +10,7 @@ The documentation covers:
 - tenant-level roles and permissions;
 - platform-level staff roles and permissions;
 - invite and membership rules;
-- planned code changes needed to remove `superadmin`;
+- completed removal of legacy global-administrator bypass logic;
 - audit expectations for sensitive actions.
 
 ## Core principle
@@ -49,8 +49,8 @@ Authorization source of truth:
 
 - JWT is identity-only (`sub`, email, profile claims).
 - Tenant authorization uses local user projection + user status + organisation membership + explicit permission dependencies.
-- Future platform authorization uses backend `platform_staff` table.
-- `superadmin`, `platform_admin`, or any external JWT role must not grant tenant or platform permissions in backend logic.
+- Platform authorization uses the backend `platform_staff` table.
+- External JWT roles such as `platform_admin` must not grant tenant or platform permissions in backend logic.
 
 ## Documents
 

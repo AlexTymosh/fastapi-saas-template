@@ -36,9 +36,9 @@ Backend отвечает за:
 
 ## 3. Backend как source of truth
 
-Для полного контроля в backend platform authorization должна храниться в backend.
+Platform authorization хранится в backend-таблице `platform_staff`.
 
-Рекомендуемая таблица:
+Текущая таблица:
 
 ```text
 platform_staff
@@ -51,7 +51,7 @@ platform_staff
 - updated_at
 ```
 
-Рекомендуемые роли:
+Текущие роли:
 
 ```text
 platform_admin
@@ -59,7 +59,7 @@ support_agent
 compliance_officer
 ```
 
-Рекомендуемые статусы:
+Текущие статусы:
 
 ```text
 active
@@ -68,7 +68,7 @@ suspended
 
 ## 4. Permission mapping
 
-Рекомендуемые permissions:
+Текущие permissions:
 
 ```text
 users:read
@@ -92,7 +92,7 @@ gdpr:export
 gdpr:erase
 ```
 
-Рекомендуемый role mapping:
+Текущий role mapping:
 
 ```text
 platform_admin:

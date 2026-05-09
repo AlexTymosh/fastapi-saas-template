@@ -36,13 +36,13 @@ The backend handles:
 - permissions;
 - audit trail.
 
-`superadmin`, `platform_admin`, `realm_access.roles`, `resource_access.*.roles`, and similar JWT role claims must not grant backend tenant/platform permissions by themselves.
+`platform_admin`, `realm_access.roles`, `resource_access.*.roles`, and similar JWT role claims must not grant backend tenant/platform permissions by themselves.
 
 ## 3. Backend source of truth
 
-For full backend control, platform authorization should be stored in the backend.
+Platform authorization is stored in the backend `platform_staff` table.
 
-Recommended table:
+Current table:
 
 ```text
 platform_staff
@@ -55,7 +55,7 @@ platform_staff
 - updated_at
 ```
 
-Recommended roles:
+Current roles:
 
 ```text
 platform_admin
@@ -63,7 +63,7 @@ support_agent
 compliance_officer
 ```
 
-Recommended statuses:
+Current statuses:
 
 ```text
 active
@@ -96,7 +96,7 @@ gdpr:export
 gdpr:erase
 ```
 
-Recommended role mapping:
+Current role mapping:
 
 ```text
 platform_admin:

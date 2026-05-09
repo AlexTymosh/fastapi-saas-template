@@ -131,7 +131,7 @@ Some domains may not use every layer yet. For example, health endpoints do not n
 - Platform authorization is based on `platform_staff`.
 - Platform roles and permissions are resolved from the database.
 - Platform access is separated from tenant access.
-- Tenant endpoints must not include a superadmin bypass.
+- Tenant endpoints must not include a global-administrator bypass.
 - Platform endpoints live under `/api/v1/platform/*`.
 
 ## Data Model Overview
