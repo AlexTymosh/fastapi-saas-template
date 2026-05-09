@@ -91,6 +91,7 @@ Expected flow:
   - `memberships` table -> `MembershipRepository`
   - `platform_staff` table -> `PlatformStaffRepository`
 - Platform services own orchestration, permissions, audit event creation, conflict/not-found mapping, and state-transition decisions; they must not build SQLAlchemy queries for domain-owned aggregate tables.
+- Platform organisation visibility is explicit: platform admin endpoints may include soft-deleted organisations for operational, audit, support, compliance, or recovery workflows; tenant-facing organisation endpoints must exclude soft-deleted organisations by default. `OrganisationRepository.get_by_id(..., include_deleted=False)` is the safe default, and platform services must pass `include_deleted=True` when they intentionally need deleted-organisation visibility.
 
 ## Transaction ownership
 

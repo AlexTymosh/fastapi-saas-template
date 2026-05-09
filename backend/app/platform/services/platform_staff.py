@@ -11,13 +11,15 @@ from app.core.errors.exceptions import ConflictError, NotFoundError
 from app.core.platform import PlatformActor
 from app.platform.models.platform_staff import PlatformStaffRole, PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
-from app.users.models.user import User, UserStatus
+from app.users.models.user import UserStatus
+from app.users.repositories.users import UserRepository
 
 
 class PlatformStaffService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repository = PlatformStaffRepository(session)
+        self.user_repository = UserRepository(session)
 
     async def list_staff(self, *, limit: int, offset: int):
         return await self.repository.list_staff(limit=limit, offset=offset)
@@ -37,7 +39,7 @@ class PlatformStaffService:
         reason: str,
         audit_context: AuditContext,
     ):
-        user = await self.session.get(User, user_id)
+        user = await self.user_repository.get_by_id(user_id)
         if user is None:
             raise NotFoundError(detail="User not found")
         if user.status != UserStatus.ACTIVE:

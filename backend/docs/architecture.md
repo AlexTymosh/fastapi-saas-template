@@ -80,6 +80,8 @@ Persistence ownership mapping:
 
 Platform services remain responsible for orchestration: permission-aware workflows, state-transition decisions, audit event creation, and conflict/not-found mapping. Platform services must not build SQLAlchemy queries for domain-owned aggregate tables such as `users` or `organisations`.
 
+Platform organisation visibility is intentionally explicit. Platform admin endpoints may see soft-deleted organisations when needed for operational, audit, support, compliance, or recovery workflows because soft-deleted organisations remain operational and audit records. Tenant-facing organisation endpoints must exclude soft-deleted organisations by default. `OrganisationRepository.get_by_id(..., include_deleted=False)` remains the safe default, and platform services must pass `include_deleted=True` when they intentionally need platform visibility over deleted organisations.
+
 ## Transaction Ownership
 
 Repositories may use `flush()` and `refresh()` to synchronise ORM state, but they must not call `commit()` or `rollback()`. Application services should not commit by default; they orchestrate business rules, repository calls, and audit writes inside a transaction provided by the caller.
