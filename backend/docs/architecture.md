@@ -64,6 +64,30 @@ Current and expected domain module examples include:
 
 Some domains may not use every layer yet. For example, health endpoints do not need database models.
 
+
+## Persistence Ownership
+
+Domain repositories own persistence for their aggregate tables. Platform services may orchestrate privileged workflows by calling domain repositories and platform-owned repositories, but they must not duplicate basic persistence access for domain-owned tables.
+
+Platform repositories are reserved for platform-owned tables, such as `platform_staff`, and for explicit platform read models or reporting queries that intentionally span multiple aggregates. They must not be introduced merely to access a domain-owned aggregate table from platform workflows.
+
+Persistence ownership mapping:
+
+- `users` table -> `UserRepository`
+- `organisations` table -> `OrganisationRepository`
+- `memberships` table -> `MembershipRepository`
+- `platform_staff` table -> `PlatformStaffRepository`
+
+Platform services remain responsible for orchestration: permission-aware workflows, state-transition decisions, audit event creation, and conflict/not-found mapping. Platform services must not build SQLAlchemy queries for domain-owned aggregate tables such as `users` or `organisations`.
+
+## Transaction Ownership
+
+Repositories may use `flush()` and `refresh()` to synchronise ORM state, but they must not call `commit()` or `rollback()`. Application services should not commit by default; they orchestrate business rules, repository calls, and audit writes inside a transaction provided by the caller.
+
+Write API dependencies own transaction boundaries by opening `async with session.begin()` after authentication and rate limiting have completed. Read endpoints use the lazy request-scoped session and should not open explicit transactions unless consistency requirements justify it. CLI commands and background workers must create their own explicit transaction boundary.
+
+Global transaction middleware is intentionally avoided because it can start database work too early, weaken early authentication or rate-limit short-circuiting, and make transaction scope less visible.
+
 ## API Routing Contract
 
 - Domain routers live in `backend/app/<domain>/api/*.py`.

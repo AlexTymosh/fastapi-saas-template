@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -132,7 +132,6 @@ async def update_platform_staff_role(
 @router.post(
     "/{staff_id}/suspend",
     response_model=PlatformStaffResponse,
-    status_code=status.HTTP_201_CREATED,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def suspend_platform_staff(

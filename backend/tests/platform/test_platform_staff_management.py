@@ -244,7 +244,7 @@ def test_platform_staff_lifecycle_management(staff_env):
             f"/api/v1/platform/staff/{staff_env.support_staff.id}/suspend",
             json={"reason": "policy"},
         ).status_code
-        == 201
+        == 200
     )
 
     # Verify restore flow
@@ -367,7 +367,7 @@ def test_can_suspend_platform_admin_when_another_active_admin_exists(
         json={"reason": "rotate admin duties"},
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 200
     assert response.json()["status"] == PlatformStaffStatus.SUSPENDED.value
 
 

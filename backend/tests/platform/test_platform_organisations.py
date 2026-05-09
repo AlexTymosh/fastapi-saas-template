@@ -1,3 +1,6 @@
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
 import pytest
 
 from app.audit.context import AuditContext
@@ -214,6 +217,14 @@ def test_platform_org_correction_updates_and_audits(
             ).first()
             assert event is not None
             assert event._mapping["reason"] == "correct typo"
+            assert event._mapping["metadata_json"] == {
+                "correction_type": "platform_profile_correction",
+                "changed_fields": ["name", "slug"],
+                "old_name": "Delta",
+                "new_name": "New Name",
+                "old_slug": "delta",
+                "new_slug": "new-slug",
+            }
 
     run_async(_verify())
 
@@ -346,5 +357,83 @@ def test_suspend_organisation_keeps_external_transaction_open(
                     audit_context=AuditContext(actor_user_id=admin.id),
                 )
                 assert session.in_transaction()
+
+    run_async(_run())
+
+
+def test_platform_list_organisations_uses_deterministic_order_and_includes_deleted(
+    migrated_session_factory,
+) -> None:
+    base_time = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                session.add_all(
+                    [
+                        Organisation(
+                            id=UUID("00000000-0000-0000-0000-000000000031"),
+                            name="Platform Old Org",
+                            slug="platform-old-org",
+                            created_at=base_time,
+                        ),
+                        Organisation(
+                            id=UUID("00000000-0000-0000-0000-000000000032"),
+                            name="Platform New Low Org",
+                            slug="platform-new-low-org",
+                            created_at=base_time + timedelta(minutes=1),
+                        ),
+                        Organisation(
+                            id=UUID("00000000-0000-0000-0000-000000000033"),
+                            name="Platform New High Org",
+                            slug="platform-new-high-org",
+                            created_at=base_time + timedelta(minutes=1),
+                        ),
+                        Organisation(
+                            id=UUID("00000000-0000-0000-0000-000000000034"),
+                            name="Platform Deleted Org",
+                            slug="platform-deleted-org",
+                            created_at=base_time + timedelta(minutes=2),
+                            deleted_at=base_time + timedelta(minutes=3),
+                        ),
+                    ]
+                )
+
+        async with migrated_session_factory() as session:
+            service = PlatformOrganisationsService(session)
+            rows, total = await service.list_organisations(limit=10, offset=0)
+
+        assert total == 4
+        assert [org.slug for org in rows] == [
+            "platform-deleted-org",
+            "platform-new-high-org",
+            "platform-new-low-org",
+            "platform-old-org",
+        ]
+
+    run_async(_run())
+
+
+def test_platform_get_organisation_includes_soft_deleted_organisations(
+    migrated_session_factory,
+) -> None:
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                organisation = Organisation(
+                    name="Platform Deleted Inspect",
+                    slug="platform-deleted-inspect",
+                    deleted_at=datetime.now(UTC),
+                )
+                session.add(organisation)
+            organisation_id = organisation.id
+
+        async with migrated_session_factory() as session:
+            found = await PlatformOrganisationsService(session).get_organisation(
+                organisation_id
+            )
+
+        assert found.id == organisation_id
+        assert found.deleted_at is not None
 
     run_async(_run())

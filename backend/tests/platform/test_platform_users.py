@@ -1,3 +1,6 @@
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
 import pytest
 
 from app.audit.context import AuditContext
@@ -160,5 +163,49 @@ def test_suspend_user_keeps_external_transaction_open(
                     audit_context=AuditContext(actor_user_id=admin.id),
                 )
                 assert session.in_transaction()
+
+    run_async(_run())
+
+
+def test_platform_list_users_uses_deterministic_order(migrated_session_factory) -> None:
+    base_time = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                session.add_all(
+                    [
+                        User(
+                            id=UUID("00000000-0000-0000-0000-000000000021"),
+                            external_auth_id="platform-list-old",
+                            email="platform-list-old@example.com",
+                            created_at=base_time,
+                        ),
+                        User(
+                            id=UUID("00000000-0000-0000-0000-000000000022"),
+                            external_auth_id="platform-list-new-low",
+                            email="platform-list-new-low@example.com",
+                            created_at=base_time + timedelta(minutes=1),
+                        ),
+                        User(
+                            id=UUID("00000000-0000-0000-0000-000000000023"),
+                            external_auth_id="platform-list-new-high",
+                            email="platform-list-new-high@example.com",
+                            created_at=base_time + timedelta(minutes=1),
+                        ),
+                    ]
+                )
+
+        async with migrated_session_factory() as session:
+            rows, total = await PlatformUsersService(session).list_users(
+                limit=2,
+                offset=0,
+            )
+
+        assert total == 3
+        assert [user.external_auth_id for user in rows] == [
+            "platform-list-new-high",
+            "platform-list-new-low",
+        ]
 
     run_async(_run())

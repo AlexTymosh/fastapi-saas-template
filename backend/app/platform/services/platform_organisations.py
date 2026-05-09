@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,33 +13,35 @@ from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import ConflictError, NotFoundError
 from app.core.platform.actors import PlatformActor
 from app.memberships.services.memberships import MembershipService
-from app.organisations.models.organisation import Organisation, OrganisationStatus
+from app.organisations.models.organisation import OrganisationStatus
+from app.organisations.repositories.organisations import OrganisationRepository
 from app.organisations.services.organisations import OrganisationService
+
+if TYPE_CHECKING:
+    from app.organisations.models.organisation import Organisation
 
 
 class PlatformOrganisationsService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.organisation_repository = OrganisationRepository(session)
+        self.membership_service = MembershipService(session)
+        self.audit_service = AuditEventService(session)
 
     async def list_organisations(
         self, *, limit: int, offset: int
     ) -> tuple[list[Organisation], int]:
-        rows = (
-            (
-                await self.session.execute(
-                    select(Organisation).offset(offset).limit(limit)
-                )
-            )
-            .scalars()
-            .all()
+        return await self.organisation_repository.list_paginated(
+            limit=limit,
+            offset=offset,
+            include_deleted=True,
         )
-        total = (
-            await self.session.execute(select(func.count()).select_from(Organisation))
-        ).scalar_one()
-        return list(rows), int(total)
 
     async def get_organisation(self, organisation_id: UUID) -> Organisation:
-        org = await self.session.get(Organisation, organisation_id)
+        org = await self.organisation_repository.get_by_id(
+            organisation_id,
+            include_deleted=True,
+        )
         if org is None:
             raise NotFoundError(detail="Organisation not found")
         return org
@@ -71,10 +73,13 @@ class PlatformOrganisationsService:
         org = await self.get_organisation(organisation_id)
         if org.status == OrganisationStatus.SUSPENDED:
             raise ConflictError(detail="Organisation already suspended")
-        org.status = OrganisationStatus.SUSPENDED
-        org.suspended_at = datetime.now(UTC)
-        org.suspended_reason = reason
-        await AuditEventService(self.session).record_event(
+        org = await self.organisation_repository.set_status(
+            org,
+            status=OrganisationStatus.SUSPENDED,
+            suspended_at=datetime.now(UTC),
+            suspended_reason=reason,
+        )
+        await self.audit_service.record_event(
             audit_context=audit_context,
             category=AuditCategory.PLATFORM,
             action=AuditAction.ORGANISATION_SUSPENDED,
@@ -82,7 +87,6 @@ class PlatformOrganisationsService:
             target_id=org.id,
             reason=reason,
         )
-        await self.session.flush()
         return org
 
     async def restore_organisation(
@@ -112,10 +116,13 @@ class PlatformOrganisationsService:
         org = await self.get_organisation(organisation_id)
         if org.status == OrganisationStatus.ACTIVE:
             raise ConflictError(detail="Organisation already active")
-        org.status = OrganisationStatus.ACTIVE
-        org.suspended_at = None
-        org.suspended_reason = None
-        await AuditEventService(self.session).record_event(
+        org = await self.organisation_repository.set_status(
+            org,
+            status=OrganisationStatus.ACTIVE,
+            suspended_at=None,
+            suspended_reason=None,
+        )
+        await self.audit_service.record_event(
             audit_context=audit_context,
             category=AuditCategory.PLATFORM,
             action=AuditAction.ORGANISATION_RESTORED,
@@ -123,7 +130,6 @@ class PlatformOrganisationsService:
             target_id=org.id,
             reason=reason,
         )
-        await self.session.flush()
         return org
 
     async def correct_organisation_profile(
@@ -163,26 +169,41 @@ class PlatformOrganisationsService:
         normalized_slug = (
             OrganisationService.normalize_slug(slug) if slug is not None else None
         )
-        changed = False
+        changed_fields: list[str] = []
+        metadata_json: dict[str, object] = {
+            "correction_type": "platform_profile_correction",
+            "changed_fields": changed_fields,
+        }
+        update_name = None
+        update_slug = None
         if normalized_name is not None and normalized_name != org.name:
-            org.name = normalized_name
-            changed = True
+            metadata_json["old_name"] = org.name
+            metadata_json["new_name"] = normalized_name
+            changed_fields.append("name")
+            update_name = normalized_name
         if normalized_slug is not None and normalized_slug != org.slug:
-            org.slug = normalized_slug
-            changed = True
-        if not changed:
+            metadata_json["old_slug"] = org.slug
+            metadata_json["new_slug"] = normalized_slug
+            changed_fields.append("slug")
+            update_slug = normalized_slug
+        if not changed_fields:
             raise ConflictError(detail="No profile changes")
         try:
-            await self.session.flush()
+            org = await self.organisation_repository.update_details(
+                org,
+                name=update_name,
+                slug=update_slug,
+            )
         except IntegrityError as exc:
             raise ConflictError(detail="Organisation slug already exists") from exc
-        await AuditEventService(self.session).record_event(
+        await self.audit_service.record_event(
             audit_context=audit_context,
             category=AuditCategory.PLATFORM,
             action=AuditAction.ORGANISATION_UPDATED,
             target_type=AuditTargetType.ORGANISATION,
             target_id=org.id,
             reason=reason,
+            metadata_json=metadata_json,
         )
         return org
 
@@ -200,12 +221,12 @@ class PlatformOrganisationsService:
         Internal-only emergency correction flow until platform API is introduced.
         """
         _ = actor
-        replacement = await MembershipService(self.session).replace_owner_membership(
+        replacement = await self.membership_service.replace_owner_membership(
             organisation_id=organisation_id,
             source_owner_membership_id=source_owner_membership_id,
             replacement_membership_id=replacement_membership_id,
         )
-        await AuditEventService(self.session).record_event(
+        await self.audit_service.record_event(
             audit_context=audit_context,
             category=AuditCategory.PLATFORM,
             action=AuditAction.MEMBERSHIP_ROLE_CHANGED,
