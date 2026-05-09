@@ -349,7 +349,7 @@ Suggested commit:
 ### Add
 
 ```text
-python -m app.commands.create_platform_admin --email <email>
+python -m app.commands.make_platform_admin --email <email>
 ```
 
 ### Rules
@@ -445,7 +445,7 @@ Suggested commit:
 
 - Platform foundation implemented: `platform_staff`, platform permissions/dependency, and bootstrap command.
 
-- Platform access is DB-backed via `platform_staff`; JWT roles are ignored by backend authorization.
+- Platform access is DB-backed via `platform_staff`; external JWT roles never grant request-time backend permissions directly; future use is limited to controlled JIT provisioning of local DB records.
 - Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
 - Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
 - Last-platform-admin hardening is deferred to future platform staff-management stage.

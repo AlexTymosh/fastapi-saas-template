@@ -18,7 +18,7 @@ Platform access:
 - compliance_officer
 ```
 
-Platform-роли не являются tenant-ролями. Backend авторизует platform-доступ только по таблице `platform_staff`; JWT roles игнорируются как источник platform authorization. Platform actors работают только через `/api/v1/platform/*` и не получают bypass для `/api/v1/organisations/*`.
+Platform-роли не являются tenant-ролями. Backend авторизует platform-доступ только по таблице `platform_staff`; JWT/IdP roles не дают platform permissions напрямую во время запроса; future use возможен только как controlled JIT input для локальных DB records. Platform actors работают только через `/api/v1/platform/*` и не получают bypass для `/api/v1/organisations/*`.
 
 ## PR 1 — Remove legacy global-administrator bypass from tenant flows
 

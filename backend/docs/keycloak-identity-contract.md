@@ -9,7 +9,7 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 - `users.email` is mutable profile data projected from Keycloak claims.
 - `users.email_verified` is mutable profile data projected from Keycloak claims.
 - If claims change for the same `sub`, the backend updates the existing local row instead of creating a new user.
-- JIT provisioning happens on authenticated requests (for example `/api/v1/users/me` and organisation/member endpoints).
+- Identity JIT provisioning happens on authenticated requests (for example `/api/v1/users/me` and organisation/member endpoints). Authorization JIT provisioning from external IdP roles is not implemented; if added later, it must be controlled, idempotent, audited, and write local `memberships` or `platform_staff` records before permissions are granted.
 - The local `users` table is an application projection for authorization and domain linkage; it is not the identity authority.
 
 ## Operational rules
@@ -53,9 +53,9 @@ This backend treats Keycloak as the identity source of truth and keeps a local u
 - Keycloak is used only as identity provider (JWT issuer + claims source).
 - This backend validates bearer tokens and projects users locally by `external_auth_id == sub`.
 - Runtime JWT settings source of truth is `AUTH__*` (`AUTH__ENABLED`, `AUTH__ISSUER_URL`, `AUTH__AUDIENCE`, `AUTH__CLIENT_ID`).
-- Role extraction for `resource_access` uses `AUTH__CLIENT_ID` (auth-scoped config); local default is `fastapi-web`.
+- External IdP roles from `roles`, `realm_access`, `resource_access`, or similar claims do not grant backend request-time authorization; future use is limited to controlled JIT provisioning that writes local DB records first.
 - Audience validation uses `AUTH__AUDIENCE`; local default is `fastapi-api`.
 - Local realm bootstrap intentionally separates browser login client (`fastapi-web`) from API/resource audience client (`fastapi-api`).
 - JWT signature verification is intentionally limited to `RS256`.
-- Organisations, memberships, onboarding, and invites stay in the local business database.
+- Organisations, memberships, platform staff, onboarding, and invites stay in the local business database.
 - Registration, email verification, and CAPTCHA are intentionally delegated to Keycloak (not implemented in this backend).

@@ -26,7 +26,7 @@ The project uses two separate authorization planes:
 ```
 
 Platform roles are not tenant roles and must not bypass ordinary tenant endpoints.
-External JWT roles are not a backend authorization source.
+Authorization is DB-driven: tenant permissions come from local memberships, and platform permissions come from `platform_staff`. External IdP roles are not a backend request-time authorization source.
 
 ```text
 Tenant endpoints:   /api/v1/organisations/*
@@ -47,10 +47,12 @@ GET /api/v1/platform/organisations/{organisation_id}
 
 Authorization source of truth:
 
-- JWT is identity-only (`sub`, email, profile claims).
+- Keycloak is the identity/authentication provider, and JWT claims are identity input only (`sub`, email, profile claims).
+- The backend validates JWT access tokens before resolving local authorization.
 - Tenant authorization uses local user projection + user status + organisation membership + explicit permission dependencies.
 - Platform authorization uses the backend `platform_staff` table.
-- External JWT roles such as `platform_admin` must not grant tenant or platform permissions in backend logic.
+- External IdP roles from `roles`, `realm_access`, `resource_access`, direct assignments, or similar claims must not grant tenant or platform permissions directly at request time.
+- Future JIT provisioning may use external IdP roles only as controlled, idempotent, audited input that writes local `memberships` or `platform_staff` rows before permissions are granted.
 
 ## Documents
 

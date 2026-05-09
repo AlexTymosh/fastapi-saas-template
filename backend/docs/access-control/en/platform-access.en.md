@@ -26,7 +26,7 @@ Keycloak handles:
 - optional MFA;
 - JWT issuance.
 
-JWT claims are identity input only. Backend authorization must not trust external JWT roles.
+JWT claims are identity input only. Backend authorization is DB-driven and must not trust external JWT roles as request-time permissions.
 
 The backend handles:
 
@@ -36,7 +36,7 @@ The backend handles:
 - permissions;
 - audit trail.
 
-`platform_admin`, `realm_access.roles`, `resource_access.*.roles`, and similar JWT role claims must not grant backend tenant/platform permissions by themselves.
+`platform_admin`, `realm_access.roles`, `resource_access.*.roles`, direct `roles`, and similar IdP claims must not grant backend tenant/platform permissions directly at request time. Future JIT provisioning may use external IdP roles only as controlled, idempotent, audited input that writes local `memberships` or `platform_staff` records before permissions are granted.
 
 ## 3. Backend source of truth
 
@@ -192,18 +192,20 @@ The first platform admin should be created by a management command, not by publi
 Example command:
 
 ```bash
-python -m app.commands.create_platform_admin --email admin@example.com
+python -m app.commands.make_platform_admin --email admin@example.com
 ```
 
 Expected behaviour:
 
 ```text
-1. Find local user by email.
-2. Create platform_staff with role=platform_admin.
-3. Write bootstrap audit event.
+1. Find an existing local active user by email.
+2. Create `platform_staff` with `role=platform_admin` and `status=active` if missing.
+3. Return success without duplicate writes if the user is already an active platform admin.
+4. Fail on missing users, suspended users, or conflicting platform staff roles.
+5. Write bootstrap audit event.
 ```
 
-Do not allow public self-service creation of `platform_admin`.
+Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform admins with Keycloak roles, IdP role assignments, or manual database edits.
 
 ## 9. Audit requirements
 
@@ -277,9 +279,9 @@ internal operational path until a dedicated public API contract is introduced.
 ## Implementation status update (2026-04-30)
 - Added backend-managed `platform_staff` foundation.
 - Added `/api/v1/platform/*` endpoints for users, organisations, and audit-events.
-- Added `require_platform_permission()` DB-backed authorization (JWT roles ignored for authorization).
+- Added `require_platform_permission()` DB-backed authorization; external JWT/IdP roles do not grant request-time permissions.
 
-- Platform access is DB-backed via `platform_staff`; JWT roles are ignored by backend authorization.
+- Platform access is DB-backed via `platform_staff`; external JWT/IdP roles never grant request-time backend permissions directly and may only be future controlled JIT provisioning input for local DB records.
 - Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
 - Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
 - Last-platform-admin hardening is deferred to future platform staff-management stage.

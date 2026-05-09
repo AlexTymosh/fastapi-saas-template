@@ -67,6 +67,23 @@ def test_jwt_direct_roles_are_ignored_by_authenticated_principal() -> None:
     assert not hasattr(principal, "platform_roles")
 
 
+def test_legacy_superadmin_jwt_role_is_ignored_by_authenticated_principal() -> None:
+    principal = AuthenticatedPrincipal.from_unverified_jwt_claims(
+        {
+            "sub": "kc-legacy-superadmin-role",
+            "email": "legacy-superadmin@example.com",
+            "roles": ["superadmin"],
+            "realm_access": {"roles": ["superadmin"]},
+            "resource_access": {
+                "fastapi-web": {"roles": ["superadmin"]},
+            },
+        }
+    )
+
+    assert principal.external_auth_id == "kc-legacy-superadmin-role"
+    assert not hasattr(principal, "platform_roles")
+
+
 def test_verified_claim_mapping_ignores_realm_and_client_roles() -> None:
     principal = AuthenticatedPrincipal.from_verified_jwt_claims(
         {

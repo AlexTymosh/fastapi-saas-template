@@ -26,11 +26,14 @@
 ```
 
 Platform roles не должны обходить обычные tenant endpoints.
+Авторизация является DB-driven: tenant-права берутся из локальных memberships, а platform-права — из `platform_staff`. Внешние IdP/JWT roles не являются источником request-time authorization.
 
 ```text
 Tenant endpoints:   /api/v1/organisations/*
 Platform endpoints: /api/v1/platform/*
 ```
+
+Keycloak является identity/authentication provider. Backend валидирует JWT access tokens и использует JWT claims только как identity input. Роли из `roles`, `realm_access`, `resource_access`, direct assignments или похожих IdP claims не должны напрямую давать tenant/platform permissions во время обработки запроса. Если позже будет добавлен JIT provisioning, внешние IdP roles можно использовать только как контролируемый, идемпотентный и аудируемый input для записи локальных `memberships` или `platform_staff`; права появляются только после записи в локальную БД.
 
 ## Документы
 

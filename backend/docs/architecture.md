@@ -124,12 +124,12 @@ Some domains may not use every layer yet. For example, health endpoints do not n
 - Each active organisation must have exactly one active owner.
 - Soft-deleted organisations may have their memberships deactivated as part of the deletion flow.
 - The `owner` role cannot be assigned through the tenant invite flow.
-- Tenant roles must not be trusted from arbitrary client input or JWT claims.
+- Tenant roles must not be trusted from arbitrary client input or JWT claims. External IdP roles may only be considered in the future as controlled JIT provisioning input that writes local membership records before tenant permissions are granted.
 
 ## Platform Authorization
 
 - Platform authorization is based on `platform_staff`.
-- Platform roles and permissions are resolved from the database.
+- Platform roles and permissions are resolved from the database. External IdP roles may only be considered in the future as controlled JIT provisioning input that writes local `platform_staff` records before platform permissions are granted.
 - Platform access is separated from tenant access.
 - Tenant endpoints must not include a global-administrator bypass.
 - Platform endpoints live under `/api/v1/platform/*`.
@@ -206,7 +206,7 @@ pytest -q -m "not external_db"
 ## Security and GDPR Notes
 
 - Authentication and authorization are separate concerns.
-- Tenant and platform roles are resolved from local database state, not arbitrary client input.
+- Tenant and platform roles are resolved from local database state, not arbitrary client input or direct IdP role claims. Keycloak remains the identity/authentication provider; external roles from `roles`, `realm_access`, `resource_access`, or similar claims must never grant tenant or platform permissions directly at request time.
 - Logs must not contain passwords, tokens, API keys, raw email addresses, raw IP addresses, or other unnecessary personal data.
 - Audit and observability metadata must be reviewed before production use.
 - GDPR/privacy posture exists as a foundation but still requires project-specific hardening.
