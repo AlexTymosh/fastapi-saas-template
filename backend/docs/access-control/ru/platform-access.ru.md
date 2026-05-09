@@ -26,6 +26,8 @@ Keycloak отвечает за:
 - optional MFA;
 - JWT issuance.
 
+JWT claims являются только identity input. Backend authorization не должен доверять внешним JWT roles как request-time permissions.
+
 Backend отвечает за:
 
 - local user projection;
@@ -33,6 +35,8 @@ Backend отвечает за:
 - platform staff access;
 - permissions;
 - audit trail.
+
+Authorization является DB-driven. `platform_admin`, `realm_access.roles`, `resource_access.*.roles`, прямые `roles`, legacy `superadmin` и похожие IdP role claims не должны напрямую выдавать backend tenant/platform permissions во время обработки запроса. В будущем внешние IdP roles могут рассматриваться только как вход для controlled, idempotent, audited JIT provisioning, который записывает локальные `memberships` или `platform_staff` records до выдачи permissions.
 
 ## 3. Backend как source of truth
 
@@ -164,18 +168,19 @@ Limited audit view (`/api/v1/platform/audit-events/limited`) предназна�
 Пример команды:
 
 ```bash
-python -m app.commands.create_platform_admin --email admin@example.com
+python -m app.commands.make_platform_admin --email admin@example.com
 ```
 
 Ожидаемое поведение:
 
 ```text
-1. Find local user by email.
-2. Create platform_staff with role=platform_admin.
-3. Write bootstrap audit event.
+1. Find an existing local user by email.
+2. Require that user to be active.
+3. Create active `platform_staff` with `role=platform_admin`, or exit successfully if it already exists.
+4. Write bootstrap audit event when a new grant is made.
 ```
 
-Не разрешать public self-service creation of `platform_admin`.
+Не разрешать public self-service creation of `platform_admin`. Не использовать Keycloak roles для bootstrap platform-доступа и избегать ручных правок базы данных.
 
 ## 8. Audit requirements
 

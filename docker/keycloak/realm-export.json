@@ -7,11 +7,7 @@
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": true,
   "roles": {
-    "realm": [
-      {
-        "name": "member"
-      }
-    ]
+    "realm": []
   },
   "clients": [
     {
@@ -56,8 +52,7 @@
       ],
       "defaultClientScopes": [
         "profile",
-        "email",
-        "roles"
+        "email"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256"
@@ -77,9 +72,7 @@
       "fullScopeAllowed": false,
       "redirectUris": [],
       "webOrigins": [],
-      "defaultClientScopes": [
-        "roles"
-      ]
+      "defaultClientScopes": []
     }
   ],
   "users": [
@@ -96,9 +89,6 @@
           "value": "api-user-password",
           "temporary": false
         }
-      ],
-      "realmRoles": [
-        "member"
       ]
     }
   ]

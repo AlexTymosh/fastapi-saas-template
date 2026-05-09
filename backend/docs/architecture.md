@@ -124,15 +124,15 @@ Some domains may not use every layer yet. For example, health endpoints do not n
 - Each active organisation must have exactly one active owner.
 - Soft-deleted organisations may have their memberships deactivated as part of the deletion flow.
 - The `owner` role cannot be assigned through the tenant invite flow.
-- Tenant roles must not be trusted from arbitrary client input or JWT claims.
+- Tenant roles must not be trusted from arbitrary client input or JWT claims. External IdP roles may only be considered in the future as input for controlled, idempotent, audited JIT provisioning that writes local membership records before permissions are granted.
 
 ## Platform Authorization
 
 - Platform authorization is based on `platform_staff`.
-- Platform roles and permissions are resolved from the database.
+- Platform roles and permissions are resolved from the database. External IdP roles from direct `roles`, `realm_access`, `resource_access`, or similar claims must never grant request-time platform permissions.
 - Platform access is separated from tenant access.
 - Tenant endpoints must not include a global-administrator bypass.
-- Platform endpoints live under `/api/v1/platform/*`.
+- Platform endpoints live under `/api/v1/platform/*`. Future IdP-role-based JIT provisioning, if added, must write local `platform_staff` records before platform permissions are granted.
 
 ## Data Model Overview
 

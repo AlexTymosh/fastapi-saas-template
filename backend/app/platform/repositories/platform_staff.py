@@ -65,6 +65,17 @@ class PlatformStaffRepository:
         await self.session.refresh(staff)
         return staff
 
+    async def promote_to_active_platform_admin(
+        self, *, staff: PlatformStaff
+    ) -> PlatformStaff:
+        staff.role = PlatformStaffRole.PLATFORM_ADMIN.value
+        staff.status = PlatformStaffStatus.ACTIVE.value
+        staff.suspended_at = None
+        staff.suspended_reason = None
+        await self.session.flush()
+        await self.session.refresh(staff)
+        return staff
+
     async def suspend(self, *, staff: PlatformStaff, reason: str) -> PlatformStaff:
         staff.status = PlatformStaffStatus.SUSPENDED.value
         staff.suspended_at = datetime.now(UTC)
