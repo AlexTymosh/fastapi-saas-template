@@ -2,7 +2,7 @@
 
 ## Goal
 
-Remove the `superadmin` concept from tenant/business logic and introduce a clean separation between:
+Remove the legacy global-administrator bypass concept from tenant/business logic and introduce a clean separation between:
 
 ```text
 Tenant access:
@@ -18,12 +18,12 @@ Platform access:
 
 Platform roles are not tenant roles. Platform staff access is stored in backend (`platform_staff`) and must not be treated as organisation membership. Platform actors must use `/api/v1/platform/*` and must not bypass `/api/v1/organisations/*`.
 
-## PR 1 — Remove `superadmin` bypass from tenant flows
+## PR 1 — Remove legacy global-administrator bypass from tenant flows
 
 Suggested commit:
 
 ```text
-🔐 fix(authz): remove superadmin bypass from tenant flows
+🔐 fix(authz): remove legacy global-administrator bypass from tenant flows
 ```
 
 ### Files to change
@@ -36,7 +36,7 @@ backend/app/organisations/services/access.py
 
 ### Tasks
 
-- Remove `is_superadmin()`.
+- Remove legacy global-administrator helper functions.
 - Remove special branch from `POST /api/v1/organisations`.
 - Remove platform bypass from organisation access service.
 - Keep self-service organisation creation through onboarding service.
@@ -417,7 +417,7 @@ Suggested commit:
 ## Final Definition of Done
 
 ```text
-[ ] `is_superadmin` removed
+[x] legacy global-administrator helper functions removed
 [ ] platform roles do not bypass tenant endpoints
 [ ] user can exist without organisation
 [ ] user can create organisation and become owner

@@ -58,9 +58,9 @@ def test_jwt_claim_mapping_rejects_invalid_email_claim() -> None:
 def test_jwt_direct_roles_are_ignored_by_authenticated_principal() -> None:
     principal = AuthenticatedPrincipal.from_unverified_jwt_claims(
         {
-            "sub": "kc-super-1",
-            "email": "super@example.com",
-            "roles": ["superadmin"],
+            "sub": "kc-external-role-1",
+            "email": "external-role@example.com",
+            "roles": ["platform_admin"],
         }
     )
 

@@ -440,7 +440,7 @@ def test_invite_accept_rejects_transfer_for_sole_owner(
 
 
 @pytest.mark.authz
-def test_superadmin_role_cannot_invite_without_membership(
+def test_external_jwt_roles_are_ignored_for_invite_authorization(
     authenticated_client_factory,
     migrated_database_url: str,
     monkeypatch,
@@ -459,18 +459,18 @@ def test_superadmin_role_cannot_invite_without_membership(
         assert create_org.status_code == 201
         org_id = create_org.json()["id"]
 
-    super_client_bundle = authenticated_client_factory(
+    external_role_client_bundle = authenticated_client_factory(
         identity=_identity_for(
-            "kc-super",
-            "super@example.com",
-            roles=["superadmin"],
+            "kc-external-role",
+            "external-role@example.com",
+            roles=["platform_admin", "tenant_admin"],
         ),
         database_url=migrated_database_url,
         redis_url=None,
     )
-    super_client = super_client_bundle.client
+    external_role_client = external_role_client_bundle.client
     _override_token_sink(monkeypatch)
-    with super_client as client:
+    with external_role_client as client:
         response = client.post(
             f"/api/v1/organisations/{org_id}/invites",
             json={"email": "new@example.com", "role": "admin"},

@@ -4,7 +4,7 @@
 
 ## Цель
 
-Удалить концепцию `superadmin` из tenant/business logic и ввести чистое разделение между:
+Удалить legacy bypass-концепцию глобального администратора из tenant/business logic и ввести чистое разделение между:
 
 ```text
 Tenant access:
@@ -20,12 +20,12 @@ Platform access:
 
 Platform-роли не являются tenant-ролями. Backend авторизует platform-доступ только по таблице `platform_staff`; JWT roles игнорируются как источник platform authorization. Platform actors работают только через `/api/v1/platform/*` и не получают bypass для `/api/v1/organisations/*`.
 
-## PR 1 — Remove `superadmin` bypass from tenant flows
+## PR 1 — Remove legacy global-administrator bypass from tenant flows
 
 Suggested commit:
 
 ```text
-🔐 fix(authz): remove superadmin bypass from tenant flows
+🔐 fix(authz): remove legacy global-administrator bypass from tenant flows
 ```
 
 ### Файлы для изменения
@@ -38,7 +38,7 @@ backend/app/organisations/services/access.py
 
 ### Задачи
 
-- Remove `is_superadmin()`.
+- Remove legacy helper-функции глобального администратора.
 - Remove special branch from `POST /api/v1/organisations`.
 - Remove platform bypass from organisation access service.
 - Keep self-service organisation creation through onboarding service.
@@ -381,7 +381,7 @@ GET   /api/v1/platform/audit-events/limited
 ## Final Definition of Done
 
 ```text
-[ ] `is_superadmin` removed
+[x] legacy helper-функции глобального администратора удалены
 [ ] platform roles do not bypass tenant endpoints
 [ ] user can exist without organisation
 [ ] user can create organisation and become owner
