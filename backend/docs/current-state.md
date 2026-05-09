@@ -31,7 +31,7 @@ The following foundations are present in code and/or current documentation and s
 
 - GDPR/privacy posture.
 - Production hardening.
-- Platform workflows.
+- Platform workflows, including explicit platform visibility for soft-deleted organisations in admin operations while tenant organisation endpoints keep excluding deleted organisations by default.
 - Invite delivery pipeline.
 - Observability integration.
 - Full contract/security test coverage.
@@ -50,6 +50,7 @@ The following areas should not be presented as complete without code verificatio
 ## Known Risks
 
 - Documentation may lag code.
+- Soft-deleted organisations are operational/audit records: platform admin workflows may request explicit visibility for support, compliance, audit, or recovery, but tenant APIs must not accidentally expose them.
 - Production Docker/runtime hardening is not complete.
 - CORS policy is implemented as an explicit environment-driven allowlist and is disabled by default.
 - CI status must be verified.

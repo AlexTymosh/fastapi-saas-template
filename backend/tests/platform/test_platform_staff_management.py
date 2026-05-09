@@ -1,12 +1,18 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import func, select
 
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
+from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import ConflictError
 from app.core.platform import PlatformActor, PlatformRole
-from app.platform.models.platform_staff import PlatformStaffRole, PlatformStaffStatus
+from app.platform.models.platform_staff import (
+    PlatformStaff,
+    PlatformStaffRole,
+    PlatformStaffStatus,
+)
 from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.platform.services.platform_staff import PlatformStaffService
 from app.users.models.user import UserStatus
@@ -54,6 +60,36 @@ def _seed_staff(
             return user, staff
 
     return run_async(_run())
+
+
+def _actor(user, staff) -> PlatformActor:
+    return PlatformActor(user=user, staff=staff, permissions=frozenset())
+
+
+def _audit_context(user) -> AuditContext:
+    return AuditContext(actor_user_id=user.id)
+
+
+async def _audit_events_for_action(
+    session, action: AuditAction, target_id=None
+) -> list[AuditEvent]:
+    stmt = select(AuditEvent).where(AuditEvent.action == action.value)
+    if target_id is not None:
+        stmt = stmt.where(AuditEvent.target_id == target_id)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def _staff_count_for_user(session, user_id) -> int:
+    return int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(PlatformStaff)
+                .where(PlatformStaff.user_id == user_id)
+            )
+        ).scalar_one()
+    )
 
 
 @pytest.fixture
@@ -500,3 +536,587 @@ def test_platform_staff_audit_events(staff_env, migrated_session_factory):
             assert len(rows) >= 4
 
     run_async(_audit_verify())
+
+
+def test_platform_staff_service_admin_can_create_staff_with_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-create-admin",
+        email="service-create-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target = _seed_user(
+        migrated_session_factory,
+        ext_id="kc-service-create-target",
+        email="service-create-target@example.com",
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffService(session).create_staff(
+                    actor=_actor(actor_user, actor_staff),
+                    user_id=target.id,
+                    role=PlatformStaffRole.SUPPORT_AGENT,
+                    reason="support coverage",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert staff.role == PlatformStaffRole.SUPPORT_AGENT.value
+                assert staff.created_by_user_id == actor_user.id
+
+            events = await _audit_events_for_action(
+                session, AuditAction.PLATFORM_STAFF_CREATED, target_id=staff.id
+            )
+            event = next(event for event in events if event.target_id == staff.id)
+            assert event.metadata_json == {
+                "user_id": str(target.id),
+                "role": PlatformStaffRole.SUPPORT_AGENT.value,
+            }
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_create_duplicate_staff(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-duplicate-admin",
+        email="service-duplicate-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target_user, _ = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-duplicate-target",
+        email="service-duplicate-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(ConflictError, match="already exists"):
+                    await PlatformStaffService(session).create_staff(
+                        actor=_actor(actor_user, actor_staff),
+                        user_id=target_user.id,
+                        role=PlatformStaffRole.COMPLIANCE_OFFICER,
+                        reason="duplicate",
+                        audit_context=_audit_context(actor_user),
+                    )
+                assert await _staff_count_for_user(session, target_user.id) == 1
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_create_staff_for_suspended_user(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-suspended-admin",
+        email="service-suspended-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target = _seed_user(
+        migrated_session_factory,
+        ext_id="kc-service-suspended-target",
+        email="service-suspended-target@example.com",
+        status=UserStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(ConflictError, match="User is not active"):
+                    await PlatformStaffService(session).create_staff(
+                        actor=_actor(actor_user, actor_staff),
+                        user_id=target.id,
+                        role=PlatformStaffRole.SUPPORT_AGENT,
+                        reason="inactive",
+                        audit_context=_audit_context(actor_user),
+                    )
+                assert await _staff_count_for_user(session, target.id) == 0
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_demote_own_platform_admin_role(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-self-demote",
+        email="service-self-demote@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(ConflictError, match="Cannot demote own"):
+                    await PlatformStaffService(session).change_role(
+                        staff_id=actor_staff.id,
+                        actor=_actor(actor_user, actor_staff),
+                        role=PlatformStaffRole.SUPPORT_AGENT,
+                        reason="self demote",
+                        audit_context=_audit_context(actor_user),
+                    )
+                staff = await PlatformStaffRepository(session).get_by_id(actor_staff.id)
+                assert staff is not None
+                assert staff.role == PlatformStaffRole.PLATFORM_ADMIN.value
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_ROLE_CHANGED,
+                    target_id=actor_staff.id,
+                )
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_demote_last_active_platform_admin_with_no_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-last-demote-actor",
+        email="service-last-demote-actor@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+    _, admin_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-last-demote-admin",
+        email="service-last-demote-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(
+                    ConflictError, match="Cannot demote last active platform admin"
+                ):
+                    await PlatformStaffService(session).change_role(
+                        staff_id=admin_staff.id,
+                        actor=_actor(actor_user, actor_staff),
+                        role=PlatformStaffRole.SUPPORT_AGENT,
+                        reason="last admin",
+                        audit_context=_audit_context(actor_user),
+                    )
+                staff = await PlatformStaffRepository(session).get_by_id(admin_staff.id)
+                assert staff is not None
+                assert staff.role == PlatformStaffRole.PLATFORM_ADMIN.value
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_ROLE_CHANGED,
+                    target_id=admin_staff.id,
+                )
+
+    run_async(_run())
+
+
+def test_platform_staff_service_can_demote_admin_with_another_admin_with_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-demote-actor",
+        email="service-demote-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target_user, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-demote-target",
+        email="service-demote-target@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffService(session).change_role(
+                    staff_id=target_staff.id,
+                    actor=_actor(actor_user, actor_staff),
+                    role=PlatformStaffRole.SUPPORT_AGENT,
+                    reason="rotate",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert staff.role == PlatformStaffRole.SUPPORT_AGENT.value
+
+            events = await _audit_events_for_action(
+                session,
+                AuditAction.PLATFORM_STAFF_ROLE_CHANGED,
+                target_id=target_staff.id,
+            )
+            event = next(
+                event for event in events if event.target_id == target_staff.id
+            )
+            assert event.metadata_json == {
+                "old_role": PlatformStaffRole.PLATFORM_ADMIN.value,
+                "new_role": PlatformStaffRole.SUPPORT_AGENT.value,
+                "target_user_id": str(target_user.id),
+            }
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_suspend_own_record_with_no_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-self-suspend",
+        email="service-self-suspend@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(ConflictError, match="Cannot suspend own"):
+                    await PlatformStaffService(session).suspend_staff(
+                        staff_id=actor_staff.id,
+                        actor=_actor(actor_user, actor_staff),
+                        reason="self suspend",
+                        audit_context=_audit_context(actor_user),
+                    )
+                staff = await PlatformStaffRepository(session).get_by_id(actor_staff.id)
+                assert staff is not None
+                assert staff.status == PlatformStaffStatus.ACTIVE.value
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_id=actor_staff.id,
+                )
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_suspend_last_active_platform_admin_with_no_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-last-suspend-actor",
+        email="service-last-suspend-actor@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+    _, admin_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-last-suspend-admin",
+        email="service-last-suspend-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(
+                    ConflictError, match="Cannot suspend last active platform admin"
+                ):
+                    await PlatformStaffService(session).suspend_staff(
+                        staff_id=admin_staff.id,
+                        actor=_actor(actor_user, actor_staff),
+                        reason="last admin",
+                        audit_context=_audit_context(actor_user),
+                    )
+                staff = await PlatformStaffRepository(session).get_by_id(admin_staff.id)
+                assert staff is not None
+                assert staff.status == PlatformStaffStatus.ACTIVE.value
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_id=admin_staff.id,
+                )
+
+    run_async(_run())
+
+
+def test_platform_staff_service_can_suspend_admin_with_another_admin_with_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-suspend-actor",
+        email="service-suspend-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target_user, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-suspend-target",
+        email="service-suspend-target@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffService(session).suspend_staff(
+                    staff_id=target_staff.id,
+                    actor=_actor(actor_user, actor_staff),
+                    reason="policy",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert staff.status == PlatformStaffStatus.SUSPENDED.value
+                assert staff.suspended_at is not None
+                assert staff.suspended_reason == "policy"
+
+            events = await _audit_events_for_action(
+                session, AuditAction.PLATFORM_STAFF_SUSPENDED, target_id=target_staff.id
+            )
+            event = next(
+                event for event in events if event.target_id == target_staff.id
+            )
+            assert event.metadata_json == {
+                "target_user_id": str(target_user.id),
+                "role": PlatformStaffRole.PLATFORM_ADMIN.value,
+            }
+
+    run_async(_run())
+
+
+def test_platform_staff_service_can_restore_suspended_staff_with_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, _ = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-restore-actor",
+        email="service-restore-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target_user, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-restore-target",
+        email="service-restore-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_id(
+                    target_staff.id
+                )
+                assert staff is not None
+                staff.suspended_reason = "old"
+                staff.suspended_at = staff.created_at
+
+            async with session.begin():
+                staff = await PlatformStaffService(session).restore_staff(
+                    staff_id=target_staff.id,
+                    reason="resolved",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert staff.status == PlatformStaffStatus.ACTIVE.value
+                assert staff.suspended_at is None
+                assert staff.suspended_reason is None
+
+            events = await _audit_events_for_action(
+                session, AuditAction.PLATFORM_STAFF_RESTORED, target_id=target_staff.id
+            )
+            event = next(
+                event for event in events if event.target_id == target_staff.id
+            )
+            assert event.metadata_json == {
+                "target_user_id": str(target_user.id),
+                "role": PlatformStaffRole.SUPPORT_AGENT.value,
+            }
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_restore_already_active_staff_with_no_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, _ = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-active-restore-actor",
+        email="service-active-restore-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-active-restore-target",
+        email="service-active-restore-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(ConflictError, match="already active"):
+                    await PlatformStaffService(session).restore_staff(
+                        staff_id=target_staff.id,
+                        reason="already",
+                        audit_context=_audit_context(actor_user),
+                    )
+                staff = await PlatformStaffRepository(session).get_by_id(
+                    target_staff.id
+                )
+                assert staff is not None
+                assert staff.status == PlatformStaffStatus.ACTIVE.value
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_RESTORED,
+                    target_id=target_staff.id,
+                )
+
+    run_async(_run())
+
+
+@pytest.mark.audit
+def test_platform_staff_create_rolls_back_on_audit_failure(
+    migrated_session_factory, monkeypatch
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-create-rollback-admin",
+        email="service-create-rollback-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target = _seed_user(
+        migrated_session_factory,
+        ext_id="kc-service-create-rollback-target",
+        email="service-create-rollback-target@example.com",
+    )
+
+    async def _raise(*args, **kwargs):
+        raise RuntimeError("audit failed")
+
+    monkeypatch.setattr(AuditEventService, "record_event", _raise)
+
+    async def _run():
+        with pytest.raises(RuntimeError, match="audit failed"):
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    await PlatformStaffService(session).create_staff(
+                        actor=_actor(actor_user, actor_staff),
+                        user_id=target.id,
+                        role=PlatformStaffRole.SUPPORT_AGENT,
+                        reason="rollback",
+                        audit_context=_audit_context(actor_user),
+                    )
+
+        async with migrated_session_factory() as session:
+            assert await _staff_count_for_user(session, target.id) == 0
+
+    run_async(_run())
+
+
+@pytest.mark.audit
+def test_platform_staff_change_role_rolls_back_on_audit_failure(
+    migrated_session_factory, monkeypatch
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-role-rollback-admin",
+        email="service-role-rollback-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-role-rollback-target",
+        email="service-role-rollback-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+
+    async def _raise(*args, **kwargs):
+        raise RuntimeError("audit failed")
+
+    monkeypatch.setattr(AuditEventService, "record_event", _raise)
+
+    async def _run():
+        with pytest.raises(RuntimeError, match="audit failed"):
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    await PlatformStaffService(session).change_role(
+                        staff_id=target_staff.id,
+                        actor=_actor(actor_user, actor_staff),
+                        role=PlatformStaffRole.COMPLIANCE_OFFICER,
+                        reason="rollback",
+                        audit_context=_audit_context(actor_user),
+                    )
+
+        async with migrated_session_factory() as session:
+            staff = await PlatformStaffRepository(session).get_by_id(target_staff.id)
+            assert staff is not None
+            assert staff.role == PlatformStaffRole.SUPPORT_AGENT.value
+
+    run_async(_run())
+
+
+@pytest.mark.audit
+def test_platform_staff_suspend_rolls_back_on_audit_failure(
+    migrated_session_factory, monkeypatch
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-suspend-rollback-admin",
+        email="service-suspend-rollback-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-suspend-rollback-target",
+        email="service-suspend-rollback-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+
+    async def _raise(*args, **kwargs):
+        raise RuntimeError("audit failed")
+
+    monkeypatch.setattr(AuditEventService, "record_event", _raise)
+
+    async def _run():
+        with pytest.raises(RuntimeError, match="audit failed"):
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    await PlatformStaffService(session).suspend_staff(
+                        staff_id=target_staff.id,
+                        actor=_actor(actor_user, actor_staff),
+                        reason="rollback",
+                        audit_context=_audit_context(actor_user),
+                    )
+
+        async with migrated_session_factory() as session:
+            staff = await PlatformStaffRepository(session).get_by_id(target_staff.id)
+            assert staff is not None
+            assert staff.status == PlatformStaffStatus.ACTIVE.value
+            assert staff.suspended_at is None
+            assert staff.suspended_reason is None
+
+    run_async(_run())
+
+
+def test_platform_staff_service_keeps_external_transaction_open(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-staff-tx-admin",
+        email="service-staff-tx-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    target = _seed_user(
+        migrated_session_factory,
+        ext_id="kc-service-staff-tx-target",
+        email="service-staff-tx-target@example.com",
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                service = PlatformStaffService(session)
+                assert session.in_transaction()
+                await service.create_staff(
+                    actor=_actor(actor_user, actor_staff),
+                    user_id=target.id,
+                    role=PlatformStaffRole.SUPPORT_AGENT,
+                    reason="tx ownership",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert session.in_transaction()
+
+    run_async(_run())
