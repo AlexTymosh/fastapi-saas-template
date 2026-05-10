@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import status
 from fastapi.testclient import TestClient
 
 from app.core.auth import get_authenticated_principal
@@ -190,6 +191,6 @@ def test_platform_staff_write_real_redis_blocks_after_policy_limit(
         ]
 
     for response in responses[:10]:
-        assert response.status_code == 200
+        assert response.status_code == status.HTTP_201_CREATED
 
     _assert_over_limit_response(responses[10])

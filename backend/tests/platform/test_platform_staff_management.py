@@ -384,6 +384,84 @@ def test_cannot_suspend_last_active_platform_admin(migrated_session_factory):
     run_async(_run())
 
 
+def test_suspend_already_suspended_staff_is_idempotent_without_duplicate_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-idempotent-suspend-actor",
+        email="idempotent-suspend-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-idempotent-suspend-target",
+        email="idempotent-suspend-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                before = await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_staff.id,
+                )
+                actor = PlatformActor(
+                    user=actor_user,
+                    staff=actor_staff,
+                    permissions=frozenset(),
+                )
+                staff = await PlatformStaffService(session).suspend_staff(
+                    staff_id=target_staff.id,
+                    actor=actor,
+                    reason="repeat suspension",
+                    audit_context=AuditContext(actor_user_id=actor_user.id),
+                )
+                after = await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_staff.id,
+                )
+
+        assert staff.status == PlatformStaffStatus.SUSPENDED.value
+        assert len(after) == len(before)
+
+    run_async(_run())
+
+
+def test_self_suspend_already_suspended_staff_remains_forbidden(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-self-suspended-staff",
+        email="self-suspended-staff@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                actor = PlatformActor(
+                    user=actor_user,
+                    staff=actor_staff,
+                    permissions=frozenset(),
+                )
+                with pytest.raises(ConflictError, match="own platform staff record"):
+                    await PlatformStaffService(session).suspend_staff(
+                        staff_id=actor_staff.id,
+                        actor=actor,
+                        reason="self repeat",
+                        audit_context=AuditContext(actor_user_id=actor_user.id),
+                    )
+
+    run_async(_run())
+
+
 def test_can_demote_platform_admin_when_another_active_admin_exists(
     staff_env, migrated_session_factory
 ):
