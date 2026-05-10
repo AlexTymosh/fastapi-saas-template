@@ -105,6 +105,54 @@ INVITE_CREATE_POLICY = RateLimitPolicySpec(
     sensitivity="sensitive",
 )
 
+INVITE_CREATE_ORGANISATION_POLICY = RateLimitPolicySpec(
+    name="invite_create_organisation",
+    default_limit=50,
+    default_window_seconds=3600,
+    default_fail_open=False,
+    sensitivity="sensitive",
+)
+
+INVITE_CREATE_ORGANISATION_DAILY_POLICY = RateLimitPolicySpec(
+    name="invite_create_organisation_daily",
+    default_limit=200,
+    default_window_seconds=86400,
+    default_fail_open=False,
+    sensitivity="critical",
+)
+
+INVITE_CREATE_TARGET_EMAIL_POLICY = RateLimitPolicySpec(
+    name="invite_create_target_email",
+    default_limit=3,
+    default_window_seconds=86400,
+    default_fail_open=False,
+    sensitivity="critical",
+)
+
+INVITE_CREATE_TARGET_DOMAIN_POLICY = RateLimitPolicySpec(
+    name="invite_create_target_domain",
+    default_limit=50,
+    default_window_seconds=86400,
+    default_fail_open=False,
+    sensitivity="sensitive",
+)
+
+INVITE_RESEND_INVITE_POLICY = RateLimitPolicySpec(
+    name="invite_resend_invite",
+    default_limit=5,
+    default_window_seconds=3600,
+    default_fail_open=False,
+    sensitivity="sensitive",
+)
+
+INVITE_RESEND_ORGANISATION_DAILY_POLICY = RateLimitPolicySpec(
+    name="invite_resend_organisation_daily",
+    default_limit=200,
+    default_window_seconds=86400,
+    default_fail_open=False,
+    sensitivity="sensitive",
+)
+
 
 PLATFORM_WRITE_POLICY = RateLimitPolicySpec(
     name="platform_write",

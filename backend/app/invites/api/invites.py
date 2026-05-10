@@ -17,14 +17,18 @@ from app.core.errors.openapi import (
 )
 from app.core.rate_limit import (
     INVITE_ACCEPT_POLICY,
-    INVITE_CREATE_POLICY,
     INVITE_MUTATION_POLICY,
     rate_limit_dependency,
+)
+from app.invites.api.rate_limits import (
+    InviteCreateRateLimitContext,
+    InviteResendRateLimitContext,
+    require_rate_limited_invite_create_context,
+    require_rate_limited_invite_resend_context,
 )
 from app.invites.schemas.invites import (
     AcceptInviteRequest,
     AcceptInviteResponse,
-    CreateInviteRequest,
     InviteResponse,
     RevokeInviteRequest,
 )
@@ -48,19 +52,22 @@ PrincipalDep = Annotated[
 )
 async def create_invite(
     organisation_id: UUID,
-    payload: CreateInviteRequest,
-    identity: PrincipalDep,
     request: Request,
-    _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
+    rate_limit_context: Annotated[
+        InviteCreateRateLimitContext,
+        Depends(require_rate_limited_invite_create_context),
+    ],
     db_session: DbSessionDep,
 ) -> InviteResponse:
-    user = await UserService(db_session).provision_current_user(identity)
+    user = await UserService(db_session).provision_current_user(
+        rate_limit_context.principal
+    )
     invite_service = InviteService(db_session)
     invite = await invite_service.create_invite(
         organisation_id=organisation_id,
         actor_user_id=user.id,
-        role=payload.role,
-        email=payload.email,
+        role=rate_limit_context.payload.role,
+        email=rate_limit_context.payload.email,
         audit_context=build_audit_context_from_request(
             actor_user_id=user.id, request=request
         ),
@@ -129,12 +136,16 @@ async def revoke_invite(
 async def resend_invite(
     organisation_id: UUID,
     invite_id: UUID,
-    identity: PrincipalDep,
     request: Request,
-    _: Annotated[None, Depends(rate_limit_dependency(INVITE_MUTATION_POLICY))],
+    rate_limit_context: Annotated[
+        InviteResendRateLimitContext,
+        Depends(require_rate_limited_invite_resend_context),
+    ],
     db_session: DbSessionDep,
 ) -> InviteResponse:
-    user = await UserService(db_session).provision_current_user(identity)
+    user = await UserService(db_session).provision_current_user(
+        rate_limit_context.principal
+    )
     invite_service = InviteService(db_session)
     invite = await invite_service.resend_invite(
         organisation_id=organisation_id,

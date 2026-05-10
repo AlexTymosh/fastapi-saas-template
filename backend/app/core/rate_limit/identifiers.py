@@ -19,6 +19,26 @@ class RateLimitIdentifier:
     bucket_key: str
 
 
+@dataclass(frozen=True)
+class RateLimitBucket:
+    kind: str
+    raw_value: str
+
+
+def build_bucket_identifier(
+    *,
+    bucket: RateLimitBucket,
+    identifier_secret: SecretStr | str,
+) -> RateLimitIdentifier:
+    return RateLimitIdentifier(
+        kind=bucket.kind,
+        bucket_key=_build_bucket_key(
+            message=f"{bucket.kind}:{bucket.raw_value}",
+            secret=_secret_value(identifier_secret),
+        ),
+    )
+
+
 def build_identifier(
     *,
     principal: AuthenticatedPrincipal | None,

@@ -172,9 +172,10 @@ class RateLimitPolicyOverride(BaseModel):
     @field_validator("window_seconds")
     @classmethod
     def validate_supported_window(cls, value: int | None) -> int | None:
-        if value is not None and value not in {60, 300, 3600}:
+        if value is not None and value not in {60, 300, 3600, 86400}:
             raise ValueError(
-                "RATE_LIMITING policy window_seconds must be one of 60, 300, 3600"
+                "RATE_LIMITING policy window_seconds must be one of "
+                "60, 300, 3600, 86400"
             )
         return value
 

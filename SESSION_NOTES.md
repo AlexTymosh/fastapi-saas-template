@@ -487,3 +487,63 @@ cd backend && git diff --check
 - The container could not fetch `origin/main`, so the working branch was created from the available local HEAD after the remote fetch failed. Verify/rebase against actual `main` in an environment with GitHub access before merging.
 - Pytest could not run in this container because dependencies are incomplete and dependency installation is blocked by the configured proxy. Compile, lint, format, and diff whitespace checks passed.
 - Redis/Testcontainers integration tests were not run because the Python test environment could not collect tests.
+
+---
+
+## Update: Layered Invite Anti-Abuse Rate Limits
+
+## Current Focus
+
+Implement layered Redis-backed invite anti-abuse controls in the core rate-limit layer while keeping durable invite business rules in `InviteService`.
+
+## Last Completed
+
+Added generic HMAC-protected business rate-limit buckets and sequential multi-bucket checkers. Invite create now checks actor, organisation hourly, organisation daily, organisation+target-email, and organisation+target-domain buckets before DB/session/service execution. Invite resend now checks actor, per-invite, and organisation daily buckets before DB/session/service execution. Added daily 86400-second policy window support, registered new invite policies, updated endpoint protection/rate-limit tests, and documented the anti-abuse versus durable business-limit distinction.
+
+## Files Touched
+
+- `backend/app/core/rate_limit/identifiers.py`
+- `backend/app/core/rate_limit/dependencies.py`
+- `backend/app/core/rate_limit/policies.py`
+- `backend/app/core/rate_limit/registry.py`
+- `backend/app/core/rate_limit/__init__.py`
+- `backend/app/core/config/settings.py`
+- `backend/app/invites/api/rate_limits.py`
+- `backend/app/invites/api/invites.py`
+- `backend/tests/rate_limit/test_identifiers.py`
+- `backend/tests/rate_limit/test_policy_registry.py`
+- `backend/tests/rate_limit/test_endpoint_protection.py`
+- `backend/tests/api/test_rate_limiting.py`
+- `backend/tests/api/test_rate_limiting_integration.py`
+- `backend/docs/rate-limiting.md`
+- `backend/docs/current-state.md`
+- `SESSION_NOTES.md`
+
+## Checks Run
+
+```bash
+cd backend && python -m pip install -e ".[dev]"  # blocked: proxy 403 fetching setuptools>=69
+cd backend && ruff check .
+cd backend && ruff format --check .
+cd backend && pytest -q -m "rate_limit and not external_db"  # blocked: missing httpx
+cd backend && pytest -q -m "security and not external_db"  # blocked: missing httpx
+cd backend && pytest -q -m "not external_db"  # blocked: missing httpx
+cd backend && python -m py_compile app/core/rate_limit/identifiers.py app/core/rate_limit/dependencies.py app/core/rate_limit/policies.py app/core/rate_limit/registry.py app/invites/api/rate_limits.py app/invites/api/invites.py tests/rate_limit/test_identifiers.py tests/rate_limit/test_policy_registry.py tests/rate_limit/test_endpoint_protection.py tests/api/test_rate_limiting.py tests/api/test_rate_limiting_integration.py
+cd backend && python - <<'PY'
+from limits import RateLimitItemPerDay
+item = RateLimitItemPerDay(1)
+print(item.get_expiry(), item.amount)
+PY
+cd backend && python - <<'PY'
+from app.main import create_app
+app=create_app()
+print('routes', len(app.routes))
+PY
+cd backend && python <invite route policy introspection smoke script>
+git diff --check
+```
+
+## Known Risks
+
+- Pytest could not collect in this container because `httpx` is missing and editable dev dependency installation is blocked by the configured proxy returning 403 for `setuptools>=69`.
+- The new Redis integration test was added but not executed locally for the same test-environment reason.

@@ -19,7 +19,12 @@ from app.core.observability import (
     record_rate_limit_check_duration,
     record_rate_limit_decision,
 )
-from app.core.rate_limit.identifiers import build_identifier
+from app.core.rate_limit.identifiers import (
+    RateLimitBucket,
+    RateLimitIdentifier,
+    build_bucket_identifier,
+    build_identifier,
+)
 from app.core.rate_limit.policies import RateLimitPolicy, RateLimitPolicySpec
 from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
@@ -60,21 +65,14 @@ def _record_rate_limit_outcome(
     )
 
 
-async def check_rate_limit(
+async def _check_rate_limit_for_identifier(
     *,
     request: Request,
-    principal: AuthenticatedPrincipal,
-    policy: RateLimitPolicy | RateLimitPolicySpec,
+    policy: RateLimitPolicy,
+    identifier: RateLimitIdentifier,
+    started_at: float,
 ) -> None:
     settings = get_settings()
-
-    if not settings.rate_limiting.enabled:
-        return
-
-    if isinstance(policy, RateLimitPolicySpec):
-        policy = get_effective_rate_limit_policy(request.app, policy.name)
-
-    started_at = time.perf_counter()
     runtime = _runtime_from_request(request)
 
     if runtime is None or runtime.limiter is None:
@@ -92,30 +90,6 @@ async def check_rate_limit(
         raise RateLimiterUnavailableError(
             detail="Rate limiter is unavailable.",
         )
-
-    identifier_secret = settings.rate_limiting.identifier_secret
-    if identifier_secret is None:
-        record_rate_limit_backend_error(
-            policy_name=policy.name,
-            identifier_kind="unknown",
-            error_type="IdentifierSecretUnavailable",
-        )
-        _record_rate_limit_outcome(
-            policy_name=policy.name,
-            result="runtime_unavailable",
-            identifier_kind="unknown",
-            started_at=started_at,
-        )
-        raise RateLimiterUnavailableError(
-            detail="Rate limiter is unavailable.",
-        )
-
-    identifier = build_identifier(
-        principal=principal,
-        request=request,
-        trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
-        identifier_secret=identifier_secret,
-    )
 
     namespace = f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
     item = policy.item
@@ -203,6 +177,112 @@ async def check_rate_limit(
             "Retry-After": retry_after,
             "Access-Control-Expose-Headers": "Retry-After",
         },
+    )
+
+
+def _effective_policy(
+    *, request: Request, policy: RateLimitPolicy | RateLimitPolicySpec
+) -> RateLimitPolicy:
+    if isinstance(policy, RateLimitPolicySpec):
+        return get_effective_rate_limit_policy(request.app, policy.name)
+    return policy
+
+
+def _identifier_secret_or_error(*, policy_name: str, started_at: float) -> str:
+    settings = get_settings()
+    identifier_secret = settings.rate_limiting.identifier_secret
+    if identifier_secret is None:
+        record_rate_limit_backend_error(
+            policy_name=policy_name,
+            identifier_kind="unknown",
+            error_type="IdentifierSecretUnavailable",
+        )
+        _record_rate_limit_outcome(
+            policy_name=policy_name,
+            result="runtime_unavailable",
+            identifier_kind="unknown",
+            started_at=started_at,
+        )
+        raise RateLimiterUnavailableError(
+            detail="Rate limiter is unavailable.",
+        )
+    if hasattr(identifier_secret, "get_secret_value"):
+        return identifier_secret.get_secret_value()
+    return str(identifier_secret)
+
+
+async def check_rate_limit_for_bucket(
+    *,
+    request: Request,
+    bucket: RateLimitBucket,
+    policy: RateLimitPolicy | RateLimitPolicySpec,
+) -> None:
+    settings = get_settings()
+
+    if not settings.rate_limiting.enabled:
+        return
+
+    effective_policy = _effective_policy(request=request, policy=policy)
+    started_at = time.perf_counter()
+    identifier_secret = _identifier_secret_or_error(
+        policy_name=effective_policy.name,
+        started_at=started_at,
+    )
+    identifier = build_bucket_identifier(
+        bucket=bucket,
+        identifier_secret=identifier_secret,
+    )
+    await _check_rate_limit_for_identifier(
+        request=request,
+        policy=effective_policy,
+        identifier=identifier,
+        started_at=started_at,
+    )
+
+
+async def check_rate_limits_for_buckets(
+    *,
+    request: Request,
+    checks: list[tuple[RateLimitPolicy | RateLimitPolicySpec, RateLimitBucket]],
+) -> None:
+    for policy, bucket in checks:
+        await check_rate_limit_for_bucket(
+            request=request,
+            bucket=bucket,
+            policy=policy,
+        )
+
+
+async def check_rate_limit(
+    *,
+    request: Request,
+    principal: AuthenticatedPrincipal,
+    policy: RateLimitPolicy | RateLimitPolicySpec,
+) -> None:
+    settings = get_settings()
+
+    if not settings.rate_limiting.enabled:
+        return
+
+    effective_policy = _effective_policy(request=request, policy=policy)
+    started_at = time.perf_counter()
+    identifier_secret = _identifier_secret_or_error(
+        policy_name=effective_policy.name,
+        started_at=started_at,
+    )
+
+    identifier = build_identifier(
+        principal=principal,
+        request=request,
+        trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
+        identifier_secret=identifier_secret,
+    )
+
+    await _check_rate_limit_for_identifier(
+        request=request,
+        policy=effective_policy,
+        identifier=identifier,
+        started_at=started_at,
     )
 
 
