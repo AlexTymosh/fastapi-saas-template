@@ -91,6 +91,13 @@ def client_factory(monkeypatch):
             "RATE_LIMITING__ENABLED",
             "true" if rate_limiting_enabled else "false",
         )
+        if rate_limiting_enabled:
+            monkeypatch.setenv(
+                "RATE_LIMITING__IDENTIFIER_SECRET",
+                "test-rate-limit-identifier-secret-32-bytes",
+            )
+        else:
+            monkeypatch.delenv("RATE_LIMITING__IDENTIFIER_SECRET", raising=False)
 
         reset_settings_cache()
         app = create_app()
@@ -121,6 +128,13 @@ def authenticated_client_factory(monkeypatch):
             "RATE_LIMITING__ENABLED",
             "true" if rate_limiting_enabled else "false",
         )
+        if rate_limiting_enabled:
+            monkeypatch.setenv(
+                "RATE_LIMITING__IDENTIFIER_SECRET",
+                "test-rate-limit-identifier-secret-32-bytes",
+            )
+        else:
+            monkeypatch.delenv("RATE_LIMITING__IDENTIFIER_SECRET", raising=False)
 
         reset_settings_cache()
         test_auth_provider = FakeAuthProvider()

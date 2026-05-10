@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -64,13 +64,33 @@ async def list_platform_staff(
     )
 
 
+@router.get(
+    "/{staff_id}",
+    response_model=PlatformStaffResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+)
+async def get_platform_staff(
+    staff_id: UUID,
+    _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
+    _: Annotated[
+        PlatformActor,
+        Depends(require_platform_permission(PlatformPermission.PLATFORM_STAFF_MANAGE)),
+    ],
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PlatformStaffResponse:
+    staff = await PlatformStaffService(db_session).get_staff(staff_id)
+    return PlatformStaffResponse.model_validate(staff)
+
+
 @router.post(
     "",
     response_model=PlatformStaffResponse,
+    status_code=status.HTTP_201_CREATED,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def create_platform_staff(
     payload: CreatePlatformStaffRequest,
+    response: Response,
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
@@ -92,6 +112,9 @@ async def create_platform_staff(
         audit_context=build_audit_context_from_request(
             actor_user_id=actor.user.id, request=request
         ),
+    )
+    response.headers["Location"] = str(
+        request.url_for("get_platform_staff", staff_id=str(staff.id))
     )
     return PlatformStaffResponse.model_validate(staff)
 
@@ -132,6 +155,7 @@ async def update_platform_staff_role(
 @router.post(
     "/{staff_id}/suspend",
     response_model=PlatformStaffResponse,
+    status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def suspend_platform_staff(
@@ -164,6 +188,7 @@ async def suspend_platform_staff(
 @router.post(
     "/{staff_id}/restore",
     response_model=PlatformStaffResponse,
+    status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def restore_platform_staff(

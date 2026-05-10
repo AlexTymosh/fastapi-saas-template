@@ -191,6 +191,7 @@ def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
     assert "/api/v1/platform/audit-events" in paths
     assert "/api/v1/platform/audit-events/limited" in paths
     assert "/api/v1/platform/staff" in paths
+    assert "/api/v1/platform/staff/{staff_id}" in paths
     assert "/api/v1/platform/staff/{staff_id}/role" in paths
     assert "/api/v1/platform/staff/{staff_id}/suspend" in paths
     assert "/api/v1/platform/staff/{staff_id}/restore" in paths

@@ -106,6 +106,53 @@ def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
 
 @pytest.mark.security
 @pytest.mark.rate_limit
+@pytest.mark.secrets
+def test_rate_limiting_enabled_requires_identifier_secret(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.delenv("RATE_LIMITING__IDENTIFIER_SECRET", raising=False)
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="RATE_LIMITING__IDENTIFIER_SECRET"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
+@pytest.mark.secrets
+def test_rate_limiting_rejects_short_identifier_secret(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", "too-short")
+
+    reset_settings_cache()
+    with pytest.raises(ValueError):
+        get_settings()
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
+@pytest.mark.secrets
+def test_rate_limiting_accepts_and_redacts_identifier_secret(monkeypatch) -> None:
+    secret = "test-rate-limit-identifier-secret-32-bytes"
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", secret)
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.rate_limiting.identifier_secret is not None
+    assert settings.rate_limiting.identifier_secret.get_secret_value() == secret
+    assert secret not in repr(settings.rate_limiting)
+    assert secret not in str(settings.rate_limiting.model_dump(mode="json"))
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.rate_limit
 def test_settings_reads_rate_limit_policy_override(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT", "9")
     monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS", "300")

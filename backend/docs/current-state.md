@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-05-06
+2026-05-10
 
 ## Project Phase
 
@@ -23,7 +23,7 @@ The following foundations are present in code and/or current documentation and s
 - Platform staff and permissions foundation.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
-- Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, invite flows, platform read/audit reads, and fail-closed platform write policies.
+- Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, invite flows, platform read/audit reads, fail-closed platform write policies, and versioned HMAC-SHA256 limiter bucket identifiers.
 - Observability/OpenTelemetry foundation.
 - pytest/Testcontainers foundation.
 

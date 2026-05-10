@@ -201,7 +201,23 @@ def test_platform_staff_creation(staff_env, migrated_session_factory):
             "reason": "new support",
         },
     )
-    assert create_response.status_code == 200
+    assert create_response.status_code == 201
+
+    assert create_response.headers["location"].endswith(
+        f"/api/v1/platform/staff/{create_response.json()['id']}"
+    )
+    get_response = staff_env.admin_bundle.client.get(
+        create_response.headers["location"]
+    )
+    assert get_response.status_code == 200
+    assert get_response.json()["id"] == create_response.json()["id"]
+
+    assert (
+        staff_env.support_bundle.client.get(
+            create_response.headers["location"]
+        ).status_code
+        == 403
+    )
 
     # Verify duplicate prevention (candidate again)
     assert (
@@ -292,13 +308,13 @@ def test_platform_staff_lifecycle_management(staff_env):
         == 200
     )
 
-    # Verify prevention of redundant restores
+    # Verify idempotent redundant restores
     assert (
         staff_env.admin_bundle.client.post(
             f"/api/v1/platform/staff/{staff_env.support_staff.id}/restore",
             json={"reason": "again"},
         ).status_code
-        == 409
+        == 200
     )
 
 
@@ -876,6 +892,52 @@ def test_platform_staff_service_can_suspend_admin_with_another_admin_with_audit(
     run_async(_run())
 
 
+def test_platform_staff_service_suspend_already_suspended_is_idempotent_with_no_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-suspend-idem-actor",
+        email="service-suspend-idem-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-suspend-idem-target",
+        email="service-suspend-idem-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_id(
+                    target_staff.id
+                )
+                assert staff is not None
+                staff.suspended_reason = "original"
+                staff.suspended_at = staff.created_at
+
+            async with session.begin():
+                staff = await PlatformStaffService(session).suspend_staff(
+                    staff_id=target_staff.id,
+                    actor=_actor(actor_user, actor_staff),
+                    reason="new reason",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert staff.status == PlatformStaffStatus.SUSPENDED.value
+                assert staff.suspended_reason == "original"
+                assert staff.suspended_at == staff.created_at
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_id=target_staff.id,
+                )
+
+    run_async(_run())
+
+
 def test_platform_staff_service_can_restore_suspended_staff_with_audit(
     migrated_session_factory,
 ) -> None:
@@ -927,7 +989,7 @@ def test_platform_staff_service_can_restore_suspended_staff_with_audit(
     run_async(_run())
 
 
-def test_platform_staff_service_cannot_restore_already_active_staff_with_no_audit(
+def test_platform_staff_service_restore_already_active_is_idempotent_with_no_audit(
     migrated_session_factory,
 ) -> None:
     actor_user, _ = _seed_staff(
@@ -946,16 +1008,11 @@ def test_platform_staff_service_cannot_restore_already_active_staff_with_no_audi
     async def _run():
         async with migrated_session_factory() as session:
             async with session.begin():
-                with pytest.raises(ConflictError, match="already active"):
-                    await PlatformStaffService(session).restore_staff(
-                        staff_id=target_staff.id,
-                        reason="already",
-                        audit_context=_audit_context(actor_user),
-                    )
-                staff = await PlatformStaffRepository(session).get_by_id(
-                    target_staff.id
+                staff = await PlatformStaffService(session).restore_staff(
+                    staff_id=target_staff.id,
+                    reason="already",
+                    audit_context=_audit_context(actor_user),
                 )
-                assert staff is not None
                 assert staff.status == PlatformStaffStatus.ACTIVE.value
                 assert not await _audit_events_for_action(
                     session,

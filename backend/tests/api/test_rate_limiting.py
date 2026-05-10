@@ -92,6 +92,13 @@ def _build_app(
 
     monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true" if enabled else "false")
+    if enabled:
+        monkeypatch.setenv(
+            "RATE_LIMITING__IDENTIFIER_SECRET",
+            "test-rate-limit-identifier-secret-32-bytes",
+        )
+    else:
+        monkeypatch.delenv("RATE_LIMITING__IDENTIFIER_SECRET", raising=False)
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
     reset_settings_cache()
 
@@ -353,6 +360,10 @@ def test_authenticated_users_have_independent_buckets(monkeypatch) -> None:
     _, first_key, *_ = fake.hit_calls[0]
     _, second_key, *_ = fake.hit_calls[1]
     assert first_key != second_key
+    assert first_key.startswith("rlid:v1:hmac-sha256:")
+    assert second_key.startswith("rlid:v1:hmac-sha256:")
+    assert "user-a" not in first_key
+    assert "user-b" not in second_key
 
 
 def test_health_endpoints_are_not_rate_limited(monkeypatch) -> None:

@@ -209,3 +209,96 @@ def test_platform_list_users_uses_deterministic_order(migrated_session_factory) 
         ]
 
     run_async(_run())
+
+
+@pytest.mark.audit
+def test_suspend_already_suspended_user_is_idempotent_with_no_duplicate_audit(
+    migrated_session_factory,
+) -> None:
+    actor = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-platform-user-idem-suspend-actor",
+        email="platform-user-idem-suspend-actor@example.com",
+    )
+    target = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-platform-user-idem-suspend-target",
+        email="platform-user-idem-suspend-target@example.com",
+    )
+    original_suspended_at = datetime(2026, 1, 2, tzinfo=UTC)
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                db_target = await session.get(User, target.id)
+                assert db_target is not None
+                db_target.status = UserStatus.SUSPENDED
+                db_target.suspended_at = original_suspended_at
+                db_target.suspended_reason = "original reason"
+                staff = await PlatformStaffRepository(session).get_by_user_id(actor.id)
+                assert staff is not None
+                service = PlatformUsersService(session)
+                user = await service.suspend_user(
+                    user_id=target.id,
+                    actor=PlatformActor(
+                        user=actor, staff=staff, permissions=frozenset()
+                    ),
+                    reason="new reason",
+                    audit_context=AuditContext(actor_user_id=actor.id),
+                )
+                assert user.status == UserStatus.SUSPENDED
+                assert user.suspended_at == original_suspended_at
+                assert user.suspended_reason == "original reason"
+                event = (
+                    await session.execute(
+                        AuditEvent.__table__.select().where(
+                            AuditEvent.action == AuditAction.USER_SUSPENDED.value,
+                            AuditEvent.target_id == target.id,
+                        )
+                    )
+                ).first()
+                assert event is None
+
+    run_async(_run())
+
+
+@pytest.mark.audit
+def test_restore_already_active_user_is_idempotent_with_no_duplicate_audit(
+    migrated_session_factory,
+) -> None:
+    actor = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-platform-user-idem-restore-actor",
+        email="platform-user-idem-restore-actor@example.com",
+    )
+    target = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-platform-user-idem-restore-target",
+        email="platform-user-idem-restore-target@example.com",
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_user_id(actor.id)
+                assert staff is not None
+                user = await PlatformUsersService(session).restore_user(
+                    user_id=target.id,
+                    actor=PlatformActor(
+                        user=actor, staff=staff, permissions=frozenset()
+                    ),
+                    reason="already active",
+                    audit_context=AuditContext(actor_user_id=actor.id),
+                )
+                assert user.status == UserStatus.ACTIVE
+                event = (
+                    await session.execute(
+                        AuditEvent.__table__.select().where(
+                            AuditEvent.action == AuditAction.USER_RESTORED.value,
+                            AuditEvent.target_id == target.id,
+                        )
+                    )
+                ).first()
+                assert event is None
+
+    run_async(_run())

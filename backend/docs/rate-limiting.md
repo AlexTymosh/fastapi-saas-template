@@ -19,6 +19,7 @@ Primary settings:
 - `RATE_LIMITING__BACKEND`
 - `RATE_LIMITING__REDIS_PREFIX`
 - `RATE_LIMITING__TRUST_PROXY_HEADERS`
+- `RATE_LIMITING__IDENTIFIER_SECRET`
 - `RATE_LIMITING__MODE` (`normal`, `strict`, `relaxed`, `panic`)
 - `RATE_LIMITING__POLICIES__<POLICY_NAME>__LIMIT`
 - `RATE_LIMITING__POLICIES__<POLICY_NAME>__WINDOW_SECONDS`
@@ -29,7 +30,9 @@ Primary settings:
 Rules:
 
 - `REDIS__URL` is required only when `RATE_LIMITING__ENABLED=true`.
-- If enabled without `REDIS__URL`, startup fails fast.
+- `RATE_LIMITING__IDENTIFIER_SECRET` is required when `RATE_LIMITING__ENABLED=true`; it must be at least 32 characters and must be a dedicated server-side secret for rate-limit identifiers.
+- Do not reuse Keycloak/client secrets, invite outbox encryption keys, database credentials, or any other application secret as `RATE_LIMITING__IDENTIFIER_SECRET`.
+- If enabled without `REDIS__URL` or without `RATE_LIMITING__IDENTIFIER_SECRET`, startup fails fast.
 - Unknown policy override names fail fast, for example `RATE_LIMITING__POLICIES__UNKNOWN_POLICY__LIMIT=10`.
 - Invalid override limits/windows fail fast. Supported runtime windows are 60 seconds, 300 seconds, and 3600 seconds.
 - `relaxed` mode is rejected in production.
@@ -42,6 +45,14 @@ Policy defaults are declared once in `backend/app/core/rate_limit/policies.py` a
 3. explicit per-policy override.
 
 Exception: in `panic` mode, sensitive and critical policies always remain fail-closed even if an override attempts `FAIL_OPEN=true`.
+
+Generate a local/dev identifier secret with a cryptographically strong random value, for example:
+
+```bash
+openssl rand -hex 32
+```
+
+Do not hardcode weak values or commit real secrets. Local development can use a locally generated secret in an uncommitted `.env`; staging and production should inject it through the deployment environment or a secrets manager.
 
 Example override:
 
@@ -105,6 +116,7 @@ Fail-open is reserved for low-risk authenticated reads where availability is pre
 | POST | `/api/v1/platform/organisations/{organisation_id}/restore` | `platform_write` |
 | PATCH | `/api/v1/platform/organisations/{organisation_id}` | `platform_write` |
 | GET | `/api/v1/platform/staff` | `platform_read` |
+| GET | `/api/v1/platform/staff/{staff_id}` | `platform_read` |
 | POST | `/api/v1/platform/staff` | `platform_staff_write` |
 | PATCH | `/api/v1/platform/staff/{staff_id}/role` | `platform_staff_write` |
 | POST | `/api/v1/platform/staff/{staff_id}/suspend` | `platform_staff_write` |
@@ -116,9 +128,12 @@ Fail-open is reserved for low-risk authenticated reads where availability is pre
 
 - Authenticated requests are bucketed by principal identity.
 - Identifier kind is tracked via `rate_limit.identifier_kind` for observability.
-- Identifier values are hashed before becoming Redis keys.
-- Raw user ID/email/IP must not appear in logs/metrics.
+- Redis bucket keys use versioned HMAC-SHA256 identifiers in the format `rlid:v1:hmac-sha256:<digest>`.
+- HMAC input is domain separated: user buckets use `user:<external_auth_id>` and IP buckets use `ip:<normalised_ip>`.
+- Raw `external_auth_id`, email, or IP values must not appear in Redis keys, logs, or metrics.
+- IP identifiers are normalised with standard-library IP parsing before HMAC generation; invalid IP input falls back to `0.0.0.0`.
 - Keep `RATE_LIMITING__TRUST_PROXY_HEADERS=false` unless proxy chain is explicitly trusted.
+- Rotating `RATE_LIMITING__IDENTIFIER_SECRET` resets active limiter buckets because new HMAC keys no longer match old Redis bucket keys. This is acceptable for rate limiting; prefer rotation during a low-traffic window or as part of compromise response.
 
 ## Auth-before-rate-limit rule
 

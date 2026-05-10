@@ -80,6 +80,7 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
             "platform_read",
         ),
         ("GET", "/api/v1/platform/staff", "platform_read"),
+        ("GET", "/api/v1/platform/staff/{staff_id}", "platform_read"),
         ("GET", "/api/v1/platform/audit-events/limited", "audit_read"),
         ("GET", "/api/v1/platform/audit-events", "audit_read"),
     ],

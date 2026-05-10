@@ -68,6 +68,10 @@ def test_lifespan_fails_fast_when_rate_limiting_enabled_without_redis(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv(
+        "RATE_LIMITING__IDENTIFIER_SECRET",
+        "test-rate-limit-identifier-secret-32-bytes",
+    )
     monkeypatch.delenv("REDIS__URL", raising=False)
     reset_settings_cache()
 
