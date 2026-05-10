@@ -72,7 +72,7 @@ class PlatformOrganisationsService:
         _ = actor
         org = await self.get_organisation(organisation_id)
         if org.status == OrganisationStatus.SUSPENDED:
-            raise ConflictError(detail="Organisation already suspended")
+            return org
         org = await self.organisation_repository.set_status(
             org,
             status=OrganisationStatus.SUSPENDED,
@@ -115,7 +115,7 @@ class PlatformOrganisationsService:
         _ = actor
         org = await self.get_organisation(organisation_id)
         if org.status == OrganisationStatus.ACTIVE:
-            raise ConflictError(detail="Organisation already active")
+            return org
         org = await self.organisation_repository.set_status(
             org,
             status=OrganisationStatus.ACTIVE,

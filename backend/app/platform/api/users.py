@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -79,6 +79,7 @@ async def get_platform_user(
 @router.post(
     "/{user_id}/suspend",
     response_model=PlatformUserResponse,
+    status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def suspend_platform_user(
@@ -110,6 +111,7 @@ async def suspend_platform_user(
 @router.post(
     "/{user_id}/restore",
     response_model=PlatformUserResponse,
+    status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def restore_platform_user(

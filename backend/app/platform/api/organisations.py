@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -84,6 +84,7 @@ async def get_platform_org(
 @router.post(
     "/{organisation_id}/suspend",
     response_model=PlatformOrganisationResponse,
+    status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def suspend_platform_org(
@@ -117,6 +118,7 @@ async def suspend_platform_org(
 @router.post(
     "/{organisation_id}/restore",
     response_model=PlatformOrganisationResponse,
+    status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
 )
 async def restore_platform_org(

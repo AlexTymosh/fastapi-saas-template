@@ -119,8 +119,10 @@ class PlatformStaffService:
         audit_context: AuditContext,
     ):
         staff = await self.get_staff(staff_id)
+        if staff.status == PlatformStaffStatus.SUSPENDED.value:
+            return staff
         if staff.status != PlatformStaffStatus.ACTIVE.value:
-            raise ConflictError(detail="Platform staff already suspended")
+            raise ConflictError(detail="Platform staff is not active")
         if staff.user_id == actor.user.id:
             raise ConflictError(detail="Cannot suspend own platform staff record")
         if staff.role == PlatformStaffRole.PLATFORM_ADMIN.value:
@@ -146,8 +148,10 @@ class PlatformStaffService:
         self, *, staff_id: UUID, reason: str, audit_context: AuditContext
     ):
         staff = await self.get_staff(staff_id)
+        if staff.status == PlatformStaffStatus.ACTIVE.value:
+            return staff
         if staff.status != PlatformStaffStatus.SUSPENDED.value:
-            raise ConflictError(detail="Platform staff already active")
+            raise ConflictError(detail="Platform staff is not suspended")
         staff = await self.repository.restore(staff=staff)
         await AuditEventService(self.session).record_event(
             audit_context=audit_context,
