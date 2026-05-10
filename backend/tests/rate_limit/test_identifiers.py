@@ -149,3 +149,66 @@ def test_trusted_proxy_headers_are_normalised() -> None:
     )
 
     assert resolve_client_ip(request=request, trust_proxy_headers=True) == "2001:db8::2"
+
+
+def test_same_business_bucket_and_secret_build_same_bucket_key() -> None:
+    from app.core.rate_limit.identifiers import RateLimitBucket, build_bucket_identifier
+
+    bucket = RateLimitBucket(
+        kind="organisation_target_email",
+        raw_value="organisation:00000000-0000-4000-8000-000000000001:email:invitee@example.com",
+    )
+
+    first = build_bucket_identifier(bucket=bucket, identifier_secret=SECRET_A)
+    second = build_bucket_identifier(bucket=bucket, identifier_secret=SECRET_A)
+
+    assert first.bucket_key == second.bucket_key
+    assert first.kind == "organisation_target_email"
+
+
+def test_business_bucket_kind_raw_value_and_secret_are_domain_separated() -> None:
+    from app.core.rate_limit.identifiers import RateLimitBucket, build_bucket_identifier
+
+    raw_value = "organisation:00000000-0000-4000-8000-000000000001"
+    organisation = build_bucket_identifier(
+        bucket=RateLimitBucket(kind="organisation", raw_value=raw_value),
+        identifier_secret=SECRET_A,
+    )
+    invite = build_bucket_identifier(
+        bucket=RateLimitBucket(kind="invite", raw_value=raw_value),
+        identifier_secret=SECRET_A,
+    )
+    other_raw = build_bucket_identifier(
+        bucket=RateLimitBucket(kind="organisation", raw_value=f"{raw_value}:different"),
+        identifier_secret=SECRET_A,
+    )
+    other_secret = build_bucket_identifier(
+        bucket=RateLimitBucket(kind="organisation", raw_value=raw_value),
+        identifier_secret=SECRET_B,
+    )
+
+    assert organisation.bucket_key != invite.bucket_key
+    assert organisation.bucket_key != other_raw.bucket_key
+    assert organisation.bucket_key != other_secret.bucket_key
+
+
+def test_business_bucket_key_hides_raw_email_domain_organisation_and_invite() -> None:
+    from app.core.rate_limit.identifiers import RateLimitBucket, build_bucket_identifier
+
+    organisation_id = "00000000-0000-4000-8000-000000000001"
+    invite_id = "00000000-0000-4000-8000-000000000002"
+    email = "invitee@example.com"
+    domain = "example.com"
+    identifier = build_bucket_identifier(
+        bucket=RateLimitBucket(
+            kind="organisation_target_email",
+            raw_value=f"organisation:{organisation_id}:invite:{invite_id}:email:{email}",
+        ),
+        identifier_secret=SECRET_A,
+    )
+
+    assert identifier.bucket_key.startswith(f"{BUCKET_KEY_PREFIX}:")
+    assert email not in identifier.bucket_key
+    assert domain not in identifier.bucket_key
+    assert organisation_id not in identifier.bucket_key
+    assert invite_id not in identifier.bucket_key

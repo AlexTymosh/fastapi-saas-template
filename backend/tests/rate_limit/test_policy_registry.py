@@ -7,8 +7,14 @@ from app.core.rate_limit.policies import (
     AUDIT_READ_POLICY,
     AUTHENTICATED_DEFAULT_POLICY,
     INVITE_ACCEPT_POLICY,
+    INVITE_CREATE_ORGANISATION_DAILY_POLICY,
+    INVITE_CREATE_ORGANISATION_POLICY,
     INVITE_CREATE_POLICY,
+    INVITE_CREATE_TARGET_DOMAIN_POLICY,
+    INVITE_CREATE_TARGET_EMAIL_POLICY,
     INVITE_MUTATION_POLICY,
+    INVITE_RESEND_INVITE_POLICY,
+    INVITE_RESEND_ORGANISATION_DAILY_POLICY,
     ORGANISATION_CREATE_POLICY,
     PLATFORM_READ_POLICY,
     PLATFORM_STAFF_WRITE_POLICY,
@@ -33,7 +39,13 @@ EXPECTED_POLICIES = {
     "organisation_create": ORGANISATION_CREATE_POLICY,
     "invite_accept": INVITE_ACCEPT_POLICY,
     "invite_create": INVITE_CREATE_POLICY,
+    "invite_create_organisation": INVITE_CREATE_ORGANISATION_POLICY,
+    "invite_create_organisation_daily": INVITE_CREATE_ORGANISATION_DAILY_POLICY,
+    "invite_create_target_email": INVITE_CREATE_TARGET_EMAIL_POLICY,
+    "invite_create_target_domain": INVITE_CREATE_TARGET_DOMAIN_POLICY,
     "invite_mutation": INVITE_MUTATION_POLICY,
+    "invite_resend_invite": INVITE_RESEND_INVITE_POLICY,
+    "invite_resend_organisation_daily": INVITE_RESEND_ORGANISATION_DAILY_POLICY,
     "platform_read": PLATFORM_READ_POLICY,
     "audit_read": AUDIT_READ_POLICY,
     "platform_write": PLATFORM_WRITE_POLICY,
@@ -120,9 +132,33 @@ def test_default_effective_policies_preserve_current_behaviour() -> None:
     assert registry["invite_create"].item.get_expiry() == 3600
     assert registry["invite_create"].fail_open is False
 
+    assert registry["invite_create_organisation"].item.amount == 50
+    assert registry["invite_create_organisation"].item.get_expiry() == 3600
+    assert registry["invite_create_organisation"].fail_open is False
+
+    assert registry["invite_create_organisation_daily"].item.amount == 200
+    assert registry["invite_create_organisation_daily"].item.get_expiry() == 86400
+    assert registry["invite_create_organisation_daily"].fail_open is False
+
+    assert registry["invite_create_target_email"].item.amount == 3
+    assert registry["invite_create_target_email"].item.get_expiry() == 86400
+    assert registry["invite_create_target_email"].fail_open is False
+
+    assert registry["invite_create_target_domain"].item.amount == 50
+    assert registry["invite_create_target_domain"].item.get_expiry() == 86400
+    assert registry["invite_create_target_domain"].fail_open is False
+
     assert registry["invite_mutation"].item.amount == 30
     assert registry["invite_mutation"].item.get_expiry() == 3600
     assert registry["invite_mutation"].fail_open is False
+
+    assert registry["invite_resend_invite"].item.amount == 5
+    assert registry["invite_resend_invite"].item.get_expiry() == 3600
+    assert registry["invite_resend_invite"].fail_open is False
+
+    assert registry["invite_resend_organisation_daily"].item.amount == 200
+    assert registry["invite_resend_organisation_daily"].item.get_expiry() == 86400
+    assert registry["invite_resend_organisation_daily"].fail_open is False
 
 
 def test_duplicate_policy_names_are_rejected() -> None:
@@ -225,3 +261,48 @@ def test_nested_policy_override_env_shape(monkeypatch) -> None:
     # pydantic-settings lower-cases nested env keys with default case-insensitive
     # parsing, so production policy names remain snake_case.
     assert settings.rate_limiting.policies["tenant_write"].limit == 9
+
+
+def test_unknown_policy_override_name_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown rate limit policy override name"):
+        Settings(
+            rate_limiting={
+                "policies": {"missing_policy": RateLimitPolicyOverride(limit=1)}
+            },
+            outbox={"invite_delivery_enabled": False},
+        )
+
+
+def test_daily_window_override_is_supported() -> None:
+    registry = build_effective_policy_registry(
+        _settings(
+            policies={
+                "tenant_write": RateLimitPolicyOverride(window_seconds=86400),
+            }
+        )
+    )
+
+    assert registry["tenant_write"].item.get_expiry() == 86400
+
+
+def test_panic_keeps_invite_sensitive_and_critical_policies_fail_closed() -> None:
+    registry = build_effective_policy_registry(
+        _settings(
+            mode="panic",
+            policies={
+                "invite_create_organisation": RateLimitPolicyOverride(fail_open=True),
+                "invite_create_organisation_daily": RateLimitPolicyOverride(
+                    fail_open=True
+                ),
+                "invite_create_target_email": RateLimitPolicyOverride(fail_open=True),
+                "invite_resend_organisation_daily": RateLimitPolicyOverride(
+                    fail_open=True
+                ),
+            },
+        )
+    )
+
+    assert registry["invite_create_organisation"].fail_open is False
+    assert registry["invite_create_organisation_daily"].fail_open is False
+    assert registry["invite_create_target_email"].fail_open is False
+    assert registry["invite_resend_organisation_daily"].fail_open is False

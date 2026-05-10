@@ -19,11 +19,19 @@ from app.core.auth import (
 )
 from app.core.db.session import get_db_session
 from app.core.observability import rate_limit_metrics
-from app.core.rate_limit.dependencies import rate_limit_dependency
+from app.core.rate_limit.dependencies import (
+    check_rate_limit,
+    check_rate_limits_for_buckets,
+    rate_limit_dependency,
+)
+from app.core.rate_limit.identifiers import RateLimitBucket
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
     INVITE_ACCEPT_POLICY,
+    INVITE_CREATE_ORGANISATION_POLICY,
     INVITE_CREATE_POLICY,
+    INVITE_CREATE_TARGET_EMAIL_POLICY,
+    INVITE_RESEND_INVITE_POLICY,
     TENANT_WRITE_POLICY,
     RateLimitPolicy,
 )
@@ -33,14 +41,35 @@ from tests.helpers.settings import reset_settings_cache
 pytestmark = [pytest.mark.security, pytest.mark.rate_limit]
 
 
+_SENSITIVE_PROBLEM_DETAIL_FIELDS = ("detail", "title", "error_code", "type")
+
+
+def _assert_problem_details_sensitive_fields_do_not_contain(
+    response,
+    *raw_values: str,
+) -> None:
+    payload = response.json()
+    for field in _SENSITIVE_PROBLEM_DETAIL_FIELDS:
+        field_value = str(payload.get(field, "")).lower()
+        for raw_value in raw_values:
+            assert raw_value.lower() not in field_value
+
+
 @dataclass
 class _WindowStats:
     reset_time: float
 
 
 class FakeLimiter:
-    def __init__(self, *, allow: bool = True, raise_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        allow: bool = True,
+        allow_sequence: list[bool] | None = None,
+        raise_error: Exception | None = None,
+    ):
         self.allow = allow
+        self.allow_sequence = list(allow_sequence or [])
         self.raise_error = raise_error
         self.hit_calls: list[tuple[str, str, int, int]] = []
         self.hit_expiries: list[int] = []
@@ -51,6 +80,8 @@ class FakeLimiter:
             raise self.raise_error
         self.hit_calls.append((namespace, key, item.amount, item.multiples))
         self.hit_expiries.append(item.get_expiry())
+        if self.allow_sequence:
+            return self.allow_sequence.pop(0)
         return self.allow
 
     async def get_window_stats(self, item, namespace: str, key: str) -> _WindowStats:
@@ -844,3 +875,259 @@ def test_unauthenticated_protected_endpoint_returns_401_before_rate_limit(
 
     assert response.status_code == 401
     assert fake.hit_calls == []
+
+
+def test_invite_create_checks_layered_policy_order_before_db(monkeypatch) -> None:
+    fake = FakeLimiter(allow_sequence=[True, True, True, False])
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    invite_service_cls, user_service_cls, db_session_opened = (
+        _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+    )
+
+    organisation_id = "00000000-0000-4000-8000-000000000001"
+    with client as api_client:
+        response = api_client.post(
+            f"/api/v1/organisations/{organisation_id}/invites",
+            json={"email": "Invitee@Example.com", "role": "member"},
+        )
+
+    assert response.status_code == 429
+    assert [call[0].split(":")[1] for call in fake.hit_calls] == [
+        "invite_create",
+        "invite_create_organisation",
+        "invite_create_organisation_daily",
+        "invite_create_target_email",
+    ]
+    assert fake.hit_calls[1][1] == fake.hit_calls[2][1]
+    blocked_key = fake.hit_calls[3][1]
+    blocked_namespace = fake.hit_calls[3][0]
+    assert "Invitee" not in blocked_key
+    assert "invitee@example.com" not in blocked_key
+    assert "example.com" not in blocked_key
+    assert organisation_id not in blocked_key
+    assert organisation_id not in blocked_namespace
+    _assert_problem_details_sensitive_fields_do_not_contain(
+        response,
+        "Invitee@Example.com",
+        "invitee@example.com",
+        "example.com",
+        organisation_id,
+    )
+    assert db_session_opened() is False
+    user_service_cls.assert_not_called()
+    invite_service_cls.assert_not_called()
+
+
+def test_invite_create_domain_bucket_is_checked_after_target_email(monkeypatch) -> None:
+    fake = FakeLimiter(allow_sequence=[True, True, True, True, False])
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001/invites",
+            json={"email": "first@example.com", "role": "member"},
+        )
+
+    assert response.status_code == 429
+    assert [call[0].split(":")[1] for call in fake.hit_calls] == [
+        "invite_create",
+        "invite_create_organisation",
+        "invite_create_organisation_daily",
+        "invite_create_target_email",
+        "invite_create_target_domain",
+    ]
+    assert fake.hit_calls[3][1] != fake.hit_calls[4][1]
+
+
+def test_invite_resend_checks_layered_policy_order_before_db(monkeypatch) -> None:
+    fake = FakeLimiter(allow_sequence=[True, False])
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    invite_service_cls, user_service_cls, db_session_opened = (
+        _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+    )
+
+    organisation_id = "00000000-0000-4000-8000-000000000001"
+    invite_id = "00000000-0000-4000-8000-000000000002"
+    with client as api_client:
+        response = api_client.post(
+            f"/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend",
+        )
+
+    assert response.status_code == 429
+    assert [call[0].split(":")[1] for call in fake.hit_calls] == [
+        "invite_mutation",
+        "invite_resend_invite",
+    ]
+    assert organisation_id not in fake.hit_calls[1][1]
+    assert invite_id not in fake.hit_calls[1][1]
+    _assert_problem_details_sensitive_fields_do_not_contain(
+        response,
+        organisation_id,
+        invite_id,
+    )
+    assert db_session_opened() is False
+    user_service_cls.assert_not_called()
+    invite_service_cls.assert_not_called()
+
+
+def test_invite_resend_organisation_daily_bucket_is_checked(monkeypatch) -> None:
+    fake = FakeLimiter(allow_sequence=[True, True, False])
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001"
+            "/invites/00000000-0000-4000-8000-000000000002/resend",
+        )
+
+    assert response.status_code == 429
+    assert [call[0].split(":")[1] for call in fake.hit_calls] == [
+        "invite_mutation",
+        "invite_resend_invite",
+        "invite_resend_organisation_daily",
+    ]
+
+
+@pytest.mark.anyio
+async def test_custom_business_buckets_share_organisation_across_actors(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=True)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    request = SimpleNamespace(
+        app=client.app,
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={},
+    )
+    organisation_bucket = RateLimitBucket(
+        kind="organisation",
+        raw_value="organisation:00000000-0000-4000-8000-000000000001",
+    )
+
+    with client:
+        await check_rate_limit(
+            request=request,
+            principal=await _principal_user_a(),
+            policy=INVITE_CREATE_POLICY,
+        )
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[(INVITE_CREATE_ORGANISATION_POLICY, organisation_bucket)],
+        )
+        await check_rate_limit(
+            request=request,
+            principal=await _principal_user_b(),
+            policy=INVITE_CREATE_POLICY,
+        )
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[(INVITE_CREATE_ORGANISATION_POLICY, organisation_bucket)],
+        )
+
+    actor_keys = [fake.hit_calls[0][1], fake.hit_calls[2][1]]
+    organisation_keys = [fake.hit_calls[1][1], fake.hit_calls[3][1]]
+    assert actor_keys[0] != actor_keys[1]
+    assert organisation_keys[0] == organisation_keys[1]
+
+
+@pytest.mark.anyio
+async def test_invite_target_and_invite_business_buckets_are_scoped_and_private(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=True)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    request = SimpleNamespace(
+        app=client.app,
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers={},
+    )
+    organisation_a = "00000000-0000-4000-8000-000000000001"
+    organisation_b = "00000000-0000-4000-8000-000000000002"
+
+    with client:
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[
+                (
+                    INVITE_CREATE_TARGET_EMAIL_POLICY,
+                    RateLimitBucket(
+                        kind="organisation_target_email",
+                        raw_value=f"organisation:{organisation_a}:email:same@example.com",
+                    ),
+                ),
+                (
+                    INVITE_CREATE_TARGET_EMAIL_POLICY,
+                    RateLimitBucket(
+                        kind="organisation_target_email",
+                        raw_value=f"organisation:{organisation_b}:email:same@example.com",
+                    ),
+                ),
+                (
+                    INVITE_RESEND_INVITE_POLICY,
+                    RateLimitBucket(
+                        kind="invite",
+                        raw_value=f"organisation:{organisation_a}:invite:{organisation_a}",
+                    ),
+                ),
+                (
+                    INVITE_RESEND_INVITE_POLICY,
+                    RateLimitBucket(
+                        kind="invite",
+                        raw_value=f"organisation:{organisation_a}:invite:{organisation_b}",
+                    ),
+                ),
+            ],
+        )
+
+    keys = [call[1] for call in fake.hit_calls]
+    assert keys[0] != keys[1]
+    assert keys[2] != keys[3]
+    for namespace, key, *_ in fake.hit_calls:
+        assert "same@example.com" not in key
+        assert "example.com" not in key
+        assert organisation_a not in key
+        assert organisation_b not in key
+        assert organisation_a not in namespace
+        assert organisation_b not in namespace
