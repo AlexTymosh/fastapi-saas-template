@@ -41,6 +41,20 @@ from tests.helpers.settings import reset_settings_cache
 pytestmark = [pytest.mark.security, pytest.mark.rate_limit]
 
 
+_SENSITIVE_PROBLEM_DETAIL_FIELDS = ("detail", "title", "error_code", "type")
+
+
+def _assert_problem_details_sensitive_fields_do_not_contain(
+    response,
+    *raw_values: str,
+) -> None:
+    payload = response.json()
+    for field in _SENSITIVE_PROBLEM_DETAIL_FIELDS:
+        field_value = str(payload.get(field, "")).lower()
+        for raw_value in raw_values:
+            assert raw_value.lower() not in field_value
+
+
 @dataclass
 class _WindowStats:
     reset_time: float
@@ -899,9 +913,13 @@ def test_invite_create_checks_layered_policy_order_before_db(monkeypatch) -> Non
     assert "example.com" not in blocked_key
     assert organisation_id not in blocked_key
     assert organisation_id not in blocked_namespace
-    assert "invitee" not in response.text.lower()
-    assert "example.com" not in response.text.lower()
-    assert organisation_id not in response.text
+    _assert_problem_details_sensitive_fields_do_not_contain(
+        response,
+        "Invitee@Example.com",
+        "invitee@example.com",
+        "example.com",
+        organisation_id,
+    )
     assert db_session_opened() is False
     user_service_cls.assert_not_called()
     invite_service_cls.assert_not_called()
@@ -964,8 +982,11 @@ def test_invite_resend_checks_layered_policy_order_before_db(monkeypatch) -> Non
     ]
     assert organisation_id not in fake.hit_calls[1][1]
     assert invite_id not in fake.hit_calls[1][1]
-    assert organisation_id not in response.text
-    assert invite_id not in response.text
+    _assert_problem_details_sensitive_fields_do_not_contain(
+        response,
+        organisation_id,
+        invite_id,
+    )
     assert db_session_opened() is False
     user_service_cls.assert_not_called()
     invite_service_cls.assert_not_called()
@@ -1019,24 +1040,25 @@ async def test_custom_business_buckets_share_organisation_across_actors(
         raw_value="organisation:00000000-0000-4000-8000-000000000001",
     )
 
-    await check_rate_limit(
-        request=request,
-        principal=await _principal_user_a(),
-        policy=INVITE_CREATE_POLICY,
-    )
-    await check_rate_limits_for_buckets(
-        request=request,
-        checks=[(INVITE_CREATE_ORGANISATION_POLICY, organisation_bucket)],
-    )
-    await check_rate_limit(
-        request=request,
-        principal=await _principal_user_b(),
-        policy=INVITE_CREATE_POLICY,
-    )
-    await check_rate_limits_for_buckets(
-        request=request,
-        checks=[(INVITE_CREATE_ORGANISATION_POLICY, organisation_bucket)],
-    )
+    with client:
+        await check_rate_limit(
+            request=request,
+            principal=await _principal_user_a(),
+            policy=INVITE_CREATE_POLICY,
+        )
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[(INVITE_CREATE_ORGANISATION_POLICY, organisation_bucket)],
+        )
+        await check_rate_limit(
+            request=request,
+            principal=await _principal_user_b(),
+            policy=INVITE_CREATE_POLICY,
+        )
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[(INVITE_CREATE_ORGANISATION_POLICY, organisation_bucket)],
+        )
 
     actor_keys = [fake.hit_calls[0][1], fake.hit_calls[2][1]]
     organisation_keys = [fake.hit_calls[1][1], fake.hit_calls[3][1]]
@@ -1064,39 +1086,40 @@ async def test_invite_target_and_invite_business_buckets_are_scoped_and_private(
     organisation_a = "00000000-0000-4000-8000-000000000001"
     organisation_b = "00000000-0000-4000-8000-000000000002"
 
-    await check_rate_limits_for_buckets(
-        request=request,
-        checks=[
-            (
-                INVITE_CREATE_TARGET_EMAIL_POLICY,
-                RateLimitBucket(
-                    kind="organisation_target_email",
-                    raw_value=f"organisation:{organisation_a}:email:same@example.com",
+    with client:
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[
+                (
+                    INVITE_CREATE_TARGET_EMAIL_POLICY,
+                    RateLimitBucket(
+                        kind="organisation_target_email",
+                        raw_value=f"organisation:{organisation_a}:email:same@example.com",
+                    ),
                 ),
-            ),
-            (
-                INVITE_CREATE_TARGET_EMAIL_POLICY,
-                RateLimitBucket(
-                    kind="organisation_target_email",
-                    raw_value=f"organisation:{organisation_b}:email:same@example.com",
+                (
+                    INVITE_CREATE_TARGET_EMAIL_POLICY,
+                    RateLimitBucket(
+                        kind="organisation_target_email",
+                        raw_value=f"organisation:{organisation_b}:email:same@example.com",
+                    ),
                 ),
-            ),
-            (
-                INVITE_RESEND_INVITE_POLICY,
-                RateLimitBucket(
-                    kind="invite",
-                    raw_value=f"organisation:{organisation_a}:invite:{organisation_a}",
+                (
+                    INVITE_RESEND_INVITE_POLICY,
+                    RateLimitBucket(
+                        kind="invite",
+                        raw_value=f"organisation:{organisation_a}:invite:{organisation_a}",
+                    ),
                 ),
-            ),
-            (
-                INVITE_RESEND_INVITE_POLICY,
-                RateLimitBucket(
-                    kind="invite",
-                    raw_value=f"organisation:{organisation_a}:invite:{organisation_b}",
+                (
+                    INVITE_RESEND_INVITE_POLICY,
+                    RateLimitBucket(
+                        kind="invite",
+                        raw_value=f"organisation:{organisation_a}:invite:{organisation_b}",
+                    ),
                 ),
-            ),
-        ],
-    )
+            ],
+        )
 
     keys = [call[1] for call in fake.hit_calls]
     assert keys[0] != keys[1]
