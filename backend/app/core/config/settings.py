@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Annotated, Literal
 
 from cryptography.fernet import Fernet
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -185,9 +185,33 @@ class RateLimitingSettings(BaseModel):
     backend: Literal["redis"] = "redis"
     redis_prefix: str = "rate-limit"
     trust_proxy_headers: bool = False
+    identifier_secret: SecretStr | None = None
     mode: Literal["normal", "strict", "relaxed", "panic"] = "normal"
     policies: dict[str, RateLimitPolicyOverride] = Field(default_factory=dict)
     storage_timeout_seconds: float = Field(default=1.0, gt=0)
+
+    @field_validator("identifier_secret")
+    @classmethod
+    def validate_identifier_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value().strip()
+        if not secret:
+            return None
+        if len(secret) < 32:
+            raise ValueError(
+                "RATE_LIMITING__IDENTIFIER_SECRET must be at least 32 characters"
+            )
+        return SecretStr(secret)
+
+    @model_validator(mode="after")
+    def validate_identifier_secret_required(self) -> RateLimitingSettings:
+        if self.enabled and self.identifier_secret is None:
+            raise ValueError(
+                "RATE_LIMITING__IDENTIFIER_SECRET is required when "
+                "RATE_LIMITING__ENABLED=true"
+            )
+        return self
 
     @field_validator("policies")
     @classmethod

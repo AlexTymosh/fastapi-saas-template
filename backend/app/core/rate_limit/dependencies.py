@@ -93,10 +93,28 @@ async def check_rate_limit(
             detail="Rate limiter is unavailable.",
         )
 
+    identifier_secret = settings.rate_limiting.identifier_secret
+    if identifier_secret is None:
+        record_rate_limit_backend_error(
+            policy_name=policy.name,
+            identifier_kind="unknown",
+            error_type="IdentifierSecretUnavailable",
+        )
+        _record_rate_limit_outcome(
+            policy_name=policy.name,
+            result="runtime_unavailable",
+            identifier_kind="unknown",
+            started_at=started_at,
+        )
+        raise RateLimiterUnavailableError(
+            detail="Rate limiter is unavailable.",
+        )
+
     identifier = build_identifier(
         principal=principal,
         request=request,
         trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
+        identifier_secret=identifier_secret,
     )
 
     namespace = f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
@@ -104,7 +122,7 @@ async def check_rate_limit(
 
     try:
         allowed = await _await_with_timeout(
-            runtime.limiter.hit(item, namespace, identifier.hashed_value),
+            runtime.limiter.hit(item, namespace, identifier.bucket_key),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
     except (
@@ -166,7 +184,7 @@ async def check_rate_limit(
             runtime.limiter.get_window_stats(
                 item,
                 namespace,
-                identifier.hashed_value,
+                identifier.bucket_key,
             ),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )

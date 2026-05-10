@@ -60,7 +60,7 @@ class PlatformUsersService:
             raise ConflictError(detail="Platform actor cannot suspend own account")
         user = await self.get_user(user_id)
         if user.status == UserStatus.SUSPENDED:
-            raise ConflictError(detail="User already suspended")
+            return user
         user = await self.user_repository.set_status(
             user,
             status=UserStatus.SUSPENDED,
@@ -103,7 +103,7 @@ class PlatformUsersService:
         _ = actor
         user = await self.get_user(user_id)
         if user.status == UserStatus.ACTIVE:
-            raise ConflictError(detail="User already active")
+            return user
         user = await self.user_repository.set_status(
             user,
             status=UserStatus.ACTIVE,

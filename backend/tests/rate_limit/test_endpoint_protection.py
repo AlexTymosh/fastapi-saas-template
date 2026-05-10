@@ -80,6 +80,7 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
             "platform_read",
         ),
         ("GET", "/api/v1/platform/staff", "platform_read"),
+        ("GET", "/api/v1/platform/staff/{staff_id}", "platform_read"),
         ("GET", "/api/v1/platform/audit-events/limited", "audit_read"),
         ("GET", "/api/v1/platform/audit-events", "audit_read"),
     ],
@@ -110,3 +111,23 @@ def test_operational_health_endpoints_remain_unprotected(
         getattr(call, "__rate_limit_policy_name__", None)
         for call in iter_dependant_calls(route.dependant)
     )
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/v1/platform/users/{user_id}/suspend"),
+        ("POST", "/api/v1/platform/users/{user_id}/restore"),
+        ("POST", "/api/v1/platform/organisations/{organisation_id}/suspend"),
+        ("POST", "/api/v1/platform/organisations/{organisation_id}/restore"),
+        ("POST", "/api/v1/platform/staff/{staff_id}/suspend"),
+        ("POST", "/api/v1/platform/staff/{staff_id}/restore"),
+    ],
+)
+def test_platform_command_endpoints_declare_success_status_200(
+    method: str, path: str
+) -> None:
+    app = create_app()
+    route = find_route(app, path=path, method=method)
+
+    assert route.status_code == 200

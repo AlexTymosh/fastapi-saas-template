@@ -58,6 +58,9 @@ def _install_fake_rate_limiter(monkeypatch, limiter: FakeLimiter) -> None:
 
     monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv(
+        "RATE_LIMITING__IDENTIFIER_SECRET", "test-rate-limit-identifier-secret-32chars"
+    )
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "platform-rl-test")
     reset_settings_cache()
 
@@ -166,6 +169,8 @@ def test_platform_user_suspend_over_limit_returns_429_and_does_not_suspend_user(
     assert response.headers["retry-after"].isdigit()
     assert response.headers["access-control-expose-headers"] == "Retry-After"
     assert limiter.hit_calls[0][0].startswith("platform-rl-test:platform_write:")
+    assert limiter.hit_calls[0][1].startswith("rlid:v1:hmac-sha256:")
+    assert admin.external_auth_id not in limiter.hit_calls[0][1]
     assert limiter.hit_calls[0][2] == PLATFORM_WRITE_POLICY.default_limit
 
     async def _verify() -> None:

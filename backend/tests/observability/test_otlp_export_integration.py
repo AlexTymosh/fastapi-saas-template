@@ -103,6 +103,9 @@ async def test_otlp_collector_receives_http_and_rate_limit_metrics_export(
     monkeypatch.setenv("OBSERVABILITY__OTLP_TIMEOUT_SECONDS", "1.0")
     monkeypatch.setenv("REDIS__URL", redis_integration_url)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv(
+        "RATE_LIMITING__IDENTIFIER_SECRET", "test-rate-limit-identifier-secret-32chars"
+    )
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", redis_prefix)
     monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "false")
 

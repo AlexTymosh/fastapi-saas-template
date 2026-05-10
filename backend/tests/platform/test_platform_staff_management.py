@@ -157,6 +157,12 @@ def test_platform_staff_access_control(staff_env):
     assert (
         staff_env.regular_bundle.client.get("/api/v1/platform/staff").status_code == 403
     )
+    assert (
+        staff_env.regular_bundle.client.get(
+            f"/api/v1/platform/staff/{staff_env.admin_staff.id}"
+        ).status_code
+        == 403
+    )
 
     assert (
         staff_env.support_bundle.client.post(
@@ -201,7 +207,16 @@ def test_platform_staff_creation(staff_env, migrated_session_factory):
             "reason": "new support",
         },
     )
-    assert create_response.status_code == 200
+    assert create_response.status_code == 201
+    created_staff_id = create_response.json()["id"]
+    assert create_response.headers["Location"].endswith(
+        f"/api/v1/platform/staff/{created_staff_id}"
+    )
+    detail_response = staff_env.admin_bundle.client.get(
+        f"/api/v1/platform/staff/{created_staff_id}"
+    )
+    assert detail_response.status_code == 200
+    assert detail_response.json()["id"] == created_staff_id
 
     # Verify duplicate prevention (candidate again)
     assert (
@@ -292,13 +307,13 @@ def test_platform_staff_lifecycle_management(staff_env):
         == 200
     )
 
-    # Verify prevention of redundant restores
+    # Verify redundant restores are idempotent.
     assert (
         staff_env.admin_bundle.client.post(
             f"/api/v1/platform/staff/{staff_env.support_staff.id}/restore",
             json={"reason": "again"},
         ).status_code
-        == 409
+        == 200
     )
 
 
@@ -363,6 +378,84 @@ def test_cannot_suspend_last_active_platform_admin(migrated_session_factory):
                         staff_id=admin_staff.id,
                         actor=actor,
                         reason="regression",
+                        audit_context=AuditContext(actor_user_id=actor_user.id),
+                    )
+
+    run_async(_run())
+
+
+def test_suspend_already_suspended_staff_is_idempotent_without_duplicate_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-idempotent-suspend-actor",
+        email="idempotent-suspend-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-idempotent-suspend-target",
+        email="idempotent-suspend-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                before = await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_staff.id,
+                )
+                actor = PlatformActor(
+                    user=actor_user,
+                    staff=actor_staff,
+                    permissions=frozenset(),
+                )
+                staff = await PlatformStaffService(session).suspend_staff(
+                    staff_id=target_staff.id,
+                    actor=actor,
+                    reason="repeat suspension",
+                    audit_context=AuditContext(actor_user_id=actor_user.id),
+                )
+                after = await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_staff.id,
+                )
+
+        assert staff.status == PlatformStaffStatus.SUSPENDED.value
+        assert len(after) == len(before)
+
+    run_async(_run())
+
+
+def test_self_suspend_already_suspended_staff_remains_forbidden(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-self-suspended-staff",
+        email="self-suspended-staff@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                actor = PlatformActor(
+                    user=actor_user,
+                    staff=actor_staff,
+                    permissions=frozenset(),
+                )
+                with pytest.raises(ConflictError, match="own platform staff record"):
+                    await PlatformStaffService(session).suspend_staff(
+                        staff_id=actor_staff.id,
+                        actor=actor,
+                        reason="self repeat",
                         audit_context=AuditContext(actor_user_id=actor_user.id),
                     )
 
@@ -927,7 +1020,7 @@ def test_platform_staff_service_can_restore_suspended_staff_with_audit(
     run_async(_run())
 
 
-def test_platform_staff_service_cannot_restore_already_active_staff_with_no_audit(
+def test_platform_staff_service_restore_active_staff_is_idempotent_without_audit(
     migrated_session_factory,
 ) -> None:
     actor_user, _ = _seed_staff(
@@ -946,12 +1039,12 @@ def test_platform_staff_service_cannot_restore_already_active_staff_with_no_audi
     async def _run():
         async with migrated_session_factory() as session:
             async with session.begin():
-                with pytest.raises(ConflictError, match="already active"):
-                    await PlatformStaffService(session).restore_staff(
-                        staff_id=target_staff.id,
-                        reason="already",
-                        audit_context=_audit_context(actor_user),
-                    )
+                restored = await PlatformStaffService(session).restore_staff(
+                    staff_id=target_staff.id,
+                    reason="already",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert restored.status == PlatformStaffStatus.ACTIVE.value
                 staff = await PlatformStaffRepository(session).get_by_id(
                     target_staff.id
                 )
@@ -1118,5 +1211,53 @@ def test_platform_staff_service_keeps_external_transaction_open(
                     audit_context=_audit_context(actor_user),
                 )
                 assert session.in_transaction()
+
+    run_async(_run())
+
+
+@pytest.mark.audit
+def test_platform_staff_service_suspend_suspended_staff_is_idempotent_without_audit(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-idem-suspend-actor",
+        email="service-idem-suspend-actor@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    _, target_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-idem-suspend-target",
+        email="service-idem-suspend-target@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_id(
+                    target_staff.id
+                )
+                assert staff is not None
+                staff.suspended_reason = "original reason"
+                staff.suspended_at = staff.created_at
+
+            async with session.begin():
+                service = PlatformStaffService(session)
+                staff = await service.suspend_staff(
+                    staff_id=target_staff.id,
+                    actor=_actor(actor_user, actor_staff),
+                    reason="new reason",
+                    audit_context=_audit_context(actor_user),
+                )
+                assert staff.status == PlatformStaffStatus.SUSPENDED.value
+                assert staff.suspended_reason == "original reason"
+                assert staff.suspended_at == staff.created_at
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_id=target_staff.id,
+                )
 
     run_async(_run())

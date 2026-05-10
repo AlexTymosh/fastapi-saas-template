@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -92,6 +93,10 @@ def _build_app(
 
     monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true" if enabled else "false")
+    monkeypatch.setenv(
+        "RATE_LIMITING__IDENTIFIER_SECRET",
+        "test-rate-limit-identifier-secret-32chars",
+    )
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
     reset_settings_cache()
 
@@ -199,6 +204,42 @@ def test_rate_limiter_failure_fail_closed_returns_503(monkeypatch) -> None:
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["error_code"] == "rate_limiter_unavailable"
+
+
+def test_missing_identifier_secret_returns_503_without_hitting_limiter(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=True)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    settings_without_identifier_secret = SimpleNamespace(
+        rate_limiting=SimpleNamespace(
+            enabled=True,
+            trust_proxy_headers=False,
+            identifier_secret=None,
+            redis_prefix="test-rl",
+            storage_timeout_seconds=1.0,
+        )
+    )
+
+    with patch(
+        "app.core.rate_limit.dependencies.get_settings",
+        return_value=settings_without_identifier_secret,
+    ):
+        with client as api_client:
+            response = api_client.get("/api/v1/test/rate-limit/protected")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "rate_limiter_unavailable"
+    assert fake.hit_calls == []
 
 
 def test_rate_limiter_failure_fail_open_allows_request(monkeypatch) -> None:
@@ -353,6 +394,10 @@ def test_authenticated_users_have_independent_buckets(monkeypatch) -> None:
     _, first_key, *_ = fake.hit_calls[0]
     _, second_key, *_ = fake.hit_calls[1]
     assert first_key != second_key
+    assert first_key.startswith("rlid:v1:hmac-sha256:")
+    assert second_key.startswith("rlid:v1:hmac-sha256:")
+    assert "user-a" not in first_key
+    assert "user-b" not in second_key
 
 
 def test_health_endpoints_are_not_rate_limited(monkeypatch) -> None:

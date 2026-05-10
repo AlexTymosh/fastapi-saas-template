@@ -27,6 +27,9 @@ async def test_real_redis_rate_limiter_blocks_after_threshold(
 
     monkeypatch.setenv("REDIS__URL", redis_integration_url)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv(
+        "RATE_LIMITING__IDENTIFIER_SECRET", "test-rate-limit-identifier-secret-32chars"
+    )
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", prefix)
     monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "false")
     reset_settings_cache()

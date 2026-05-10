@@ -160,7 +160,7 @@ def test_suspend_missing_organisation_returns_404(
     assert response.status_code == 404
 
 
-def test_restore_active_organisation_returns_409(
+def test_restore_active_organisation_is_idempotent(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
     admin = _seed_platform_admin(
@@ -177,7 +177,7 @@ def test_restore_active_organisation_returns_409(
         f"/api/v1/platform/organisations/{org.id}/restore",
         json={"reason": "reason"},
     )
-    assert response.status_code == 409
+    assert response.status_code == 200
 
 
 @pytest.mark.audit
@@ -435,5 +435,97 @@ def test_platform_get_organisation_includes_soft_deleted_organisations(
 
         assert found.id == organisation_id
         assert found.deleted_at is not None
+
+    run_async(_run())
+
+
+@pytest.mark.audit
+def test_suspend_already_suspended_organisation_is_idempotent_without_audit(
+    migrated_session_factory,
+) -> None:
+    admin = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-idem-org-admin",
+        email="idem-org-admin@example.com",
+    )
+    org = _seed_organisation(migrated_session_factory, name="Idem Org", slug="idem-org")
+    suspended_at = datetime.now(UTC) - timedelta(days=1)
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                db_org = await session.get(Organisation, org.id)
+                assert db_org is not None
+                db_org.status = OrganisationStatus.SUSPENDED
+                db_org.suspended_at = suspended_at
+                db_org.suspended_reason = "original reason"
+
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_user_id(admin.id)
+                assert staff is not None
+                actor = PlatformActor(user=admin, staff=staff, permissions=frozenset())
+                updated = await PlatformOrganisationsService(
+                    session
+                ).suspend_organisation(
+                    organisation_id=org.id,
+                    actor=actor,
+                    reason="new reason",
+                    audit_context=AuditContext(actor_user_id=admin.id),
+                )
+                assert updated.status == OrganisationStatus.SUSPENDED
+                assert updated.suspended_at == suspended_at
+                assert updated.suspended_reason == "original reason"
+
+            events = (
+                await session.execute(
+                    AuditEvent.__table__.select().where(
+                        AuditEvent.action == AuditAction.ORGANISATION_SUSPENDED.value,
+                        AuditEvent.target_id == org.id,
+                    )
+                )
+            ).all()
+            assert events == []
+
+    run_async(_run())
+
+
+@pytest.mark.audit
+def test_restore_active_organisation_is_idempotent_without_audit(
+    migrated_session_factory,
+) -> None:
+    admin = _seed_platform_admin(
+        migrated_session_factory,
+        external_auth_id="kc-idem-org-restore-admin",
+        email="idem-org-restore-admin@example.com",
+    )
+    org = _seed_organisation(
+        migrated_session_factory, name="Idem Restore Org", slug="idem-restore-org"
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                staff = await PlatformStaffRepository(session).get_by_user_id(admin.id)
+                assert staff is not None
+                actor = PlatformActor(user=admin, staff=staff, permissions=frozenset())
+                updated = await PlatformOrganisationsService(
+                    session
+                ).restore_organisation(
+                    organisation_id=org.id,
+                    actor=actor,
+                    reason="already active",
+                    audit_context=AuditContext(actor_user_id=admin.id),
+                )
+                assert updated.status == OrganisationStatus.ACTIVE
+
+            events = (
+                await session.execute(
+                    AuditEvent.__table__.select().where(
+                        AuditEvent.action == AuditAction.ORGANISATION_RESTORED.value,
+                        AuditEvent.target_id == org.id,
+                    )
+                )
+            ).all()
+            assert events == []
 
     run_async(_run())

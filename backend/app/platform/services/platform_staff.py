@@ -119,10 +119,12 @@ class PlatformStaffService:
         audit_context: AuditContext,
     ):
         staff = await self.get_staff(staff_id)
-        if staff.status != PlatformStaffStatus.ACTIVE.value:
-            raise ConflictError(detail="Platform staff already suspended")
         if staff.user_id == actor.user.id:
             raise ConflictError(detail="Cannot suspend own platform staff record")
+        if staff.status == PlatformStaffStatus.SUSPENDED.value:
+            return staff
+        if staff.status != PlatformStaffStatus.ACTIVE.value:
+            raise ConflictError(detail="Platform staff is not active")
         if staff.role == PlatformStaffRole.PLATFORM_ADMIN.value:
             active_admins = await self.repository.lock_active_platform_admins()
             has_another_active_admin = any(
@@ -146,8 +148,10 @@ class PlatformStaffService:
         self, *, staff_id: UUID, reason: str, audit_context: AuditContext
     ):
         staff = await self.get_staff(staff_id)
+        if staff.status == PlatformStaffStatus.ACTIVE.value:
+            return staff
         if staff.status != PlatformStaffStatus.SUSPENDED.value:
-            raise ConflictError(detail="Platform staff already active")
+            raise ConflictError(detail="Platform staff is not suspended")
         staff = await self.repository.restore(staff=staff)
         await AuditEventService(self.session).record_event(
             audit_context=audit_context,

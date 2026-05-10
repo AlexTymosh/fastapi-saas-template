@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-import hashlib
+import hmac
 import ipaddress
 from dataclasses import dataclass
+from hashlib import sha256
 
 from fastapi import Request
+from pydantic import SecretStr
 
 from app.core.auth import AuthenticatedPrincipal
+
+BUCKET_KEY_PREFIX = "rlid:v1:hmac-sha256"
 
 
 @dataclass(frozen=True)
 class RateLimitIdentifier:
     kind: str
-    hashed_value: str
+    bucket_key: str
 
 
 def build_identifier(
@@ -20,51 +24,68 @@ def build_identifier(
     principal: AuthenticatedPrincipal | None,
     request: Request,
     trust_proxy_headers: bool,
+    identifier_secret: SecretStr | str,
 ) -> RateLimitIdentifier:
+    secret = _secret_value(identifier_secret)
     if principal is not None:
         return RateLimitIdentifier(
             kind="user",
-            hashed_value=_hash_value(principal.external_auth_id),
+            bucket_key=_build_bucket_key(
+                message=f"user:{principal.external_auth_id}",
+                secret=secret,
+            ),
         )
 
     ip_value = resolve_client_ip(
         request=request,
         trust_proxy_headers=trust_proxy_headers,
     )
-    return RateLimitIdentifier(kind="ip", hashed_value=_hash_value(ip_value))
+    return RateLimitIdentifier(
+        kind="ip",
+        bucket_key=_build_bucket_key(message=f"ip:{ip_value}", secret=secret),
+    )
 
 
 def resolve_client_ip(*, request: Request, trust_proxy_headers: bool) -> str:
     if not trust_proxy_headers:
-        return _normalize_ip(request.client.host if request.client else None)
+        return _normalise_ip(request.client.host if request.client else None)
 
     x_forwarded_for = request.headers.get("x-forwarded-for")
     if x_forwarded_for:
         first_hop = x_forwarded_for.split(",", maxsplit=1)[0].strip()
-        if _is_valid_ip(first_hop):
-            return first_hop
+        normalised_first_hop = _normalise_ip(first_hop)
+        if normalised_first_hop != "0.0.0.0":
+            return normalised_first_hop
 
     x_real_ip = request.headers.get("x-real-ip")
-    if x_real_ip and _is_valid_ip(x_real_ip.strip()):
-        return x_real_ip.strip()
+    if x_real_ip:
+        normalised_real_ip = _normalise_ip(x_real_ip.strip())
+        if normalised_real_ip != "0.0.0.0":
+            return normalised_real_ip
 
-    return _normalize_ip(request.client.host if request.client else None)
+    return _normalise_ip(request.client.host if request.client else None)
 
 
-def _normalize_ip(value: str | None) -> str:
+def _normalise_ip(value: str | None) -> str:
     candidate = (value or "").strip()
-    if _is_valid_ip(candidate):
-        return candidate
-    return "0.0.0.0"
-
-
-def _is_valid_ip(value: str) -> bool:
     try:
-        ipaddress.ip_address(value)
+        # TODO: consider truncating IPv6 client identifiers to /64 to reduce
+        # bypass risk from IPv6 address rotation.
+        return ipaddress.ip_address(candidate).compressed
     except ValueError:
-        return False
-    return True
+        return "0.0.0.0"
 
 
-def _hash_value(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _secret_value(secret: SecretStr | str) -> str:
+    if isinstance(secret, SecretStr):
+        return secret.get_secret_value()
+    return secret
+
+
+def _build_bucket_key(*, message: str, secret: str) -> str:
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        message.encode("utf-8"),
+        sha256,
+    ).hexdigest()
+    return f"{BUCKET_KEY_PREFIX}:{digest}"
