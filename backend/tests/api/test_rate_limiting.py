@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import APIRouter, Depends
@@ -27,6 +28,12 @@ from app.core.rate_limit.policies import (
     TENANT_WRITE_POLICY,
     RateLimitPolicy,
 )
+from app.invites.api.rate_limits import (
+    RateLimitedInviteCreateContext,
+    RateLimitedInviteMutationContext,
+    require_rate_limited_invite_create_context,
+    require_rate_limited_invite_resend_context,
+)
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
 
@@ -38,9 +45,36 @@ class _WindowStats:
     reset_time: float
 
 
+class StatefulLimiter:
+    def __init__(self) -> None:
+        self.hit_calls: list[tuple[str, str, int, int]] = []
+        self.hit_expiries: list[int] = []
+        self.window_calls: list[tuple[str, str, int, int]] = []
+        self._counts: dict[tuple[str, str], int] = {}
+
+    async def hit(self, item, namespace: str, key: str) -> bool:
+        self.hit_calls.append((namespace, key, item.amount, item.multiples))
+        self.hit_expiries.append(item.get_expiry())
+        counter_key = (namespace, key)
+        count = self._counts.get(counter_key, 0) + 1
+        self._counts[counter_key] = count
+        return count <= item.amount
+
+    async def get_window_stats(self, item, namespace: str, key: str) -> _WindowStats:
+        self.window_calls.append((namespace, key, item.amount, item.multiples))
+        return _WindowStats(reset_time=4_102_444_800.0)
+
+
 class FakeLimiter:
-    def __init__(self, *, allow: bool = True, raise_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        allow: bool = True,
+        allow_sequence: list[bool] | None = None,
+        raise_error: Exception | None = None,
+    ):
         self.allow = allow
+        self.allow_sequence = list(allow_sequence or [])
         self.raise_error = raise_error
         self.hit_calls: list[tuple[str, str, int, int]] = []
         self.hit_expiries: list[int] = []
@@ -51,6 +85,8 @@ class FakeLimiter:
             raise self.raise_error
         self.hit_calls.append((namespace, key, item.amount, item.multiples))
         self.hit_expiries.append(item.get_expiry())
+        if self.allow_sequence:
+            return self.allow_sequence.pop(0)
         return self.allow
 
     async def get_window_stats(self, item, namespace: str, key: str) -> _WindowStats:
@@ -79,6 +115,7 @@ def _build_app(
     *,
     enabled: bool,
     runtime: RateLimiterRuntime | None = None,
+    policy_limits: dict[str, int] | None = None,
 ) -> TestClient:
     async def _fake_init_rate_limiter(app, settings) -> None:
         from app.core.rate_limit.registry import build_effective_policy_registry
@@ -98,6 +135,9 @@ def _build_app(
         "test-rate-limit-identifier-secret-32chars",
     )
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "test-rl")
+    for policy_name, limit in (policy_limits or {}).items():
+        env_name = f"RATE_LIMITING__POLICIES__{policy_name.upper()}__LIMIT"
+        monkeypatch.setenv(env_name, str(limit))
     reset_settings_cache()
 
     app = create_app()
@@ -411,6 +451,258 @@ def test_health_endpoints_are_not_rate_limited(monkeypatch) -> None:
     with client as api_client:
         response = api_client.get("/api/v1/health/live")
     assert response.status_code == 200
+
+
+def test_invite_create_checks_all_layered_policies_before_db(monkeypatch) -> None:
+    fake = FakeLimiter(allow_sequence=[True, True, True, True, False])
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    invite_service_cls, user_service_cls, db_session_opened = (
+        _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+    )
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001/invites",
+            json={"email": "Invitee@Example.com", "role": "member"},
+        )
+
+    assert response.status_code == 429
+    assert [call[0].split(":")[1] for call in fake.hit_calls] == [
+        "invite_create",
+        "invite_create_organisation",
+        "invite_create_organisation_daily",
+        "invite_create_target_email",
+        "invite_create_target_domain",
+    ]
+    assert all(
+        "Invitee" not in call[0] and "Example.com" not in call[0]
+        for call in fake.hit_calls
+    )
+    assert db_session_opened() is False
+    user_service_cls.assert_not_called()
+    invite_service_cls.assert_not_called()
+
+
+def test_invite_resend_checks_all_layered_policies_before_db(monkeypatch) -> None:
+    fake = FakeLimiter(allow_sequence=[True, True, False])
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+    invite_service_cls, user_service_cls, db_session_opened = (
+        _install_invite_endpoint_over_limit_guards(client, monkeypatch)
+    )
+
+    with client as api_client:
+        response = api_client.post(
+            "/api/v1/organisations/00000000-0000-4000-8000-000000000001"
+            "/invites/00000000-0000-4000-8000-000000000002/resend",
+        )
+
+    assert response.status_code == 429
+    assert [call[0].split(":")[1] for call in fake.hit_calls] == [
+        "invite_mutation",
+        "invite_resend_invite",
+        "invite_resend_organisation_daily",
+    ]
+    assert db_session_opened() is False
+    user_service_cls.assert_not_called()
+    invite_service_cls.assert_not_called()
+
+
+def _add_invite_layer_probe_routes(client: TestClient) -> None:
+    router = APIRouter()
+
+    @router.post("/api/v1/test/layered-invites/{organisation_id}/create")
+    async def _create_probe(
+        organisation_id: UUID,
+        context: Annotated[
+            RateLimitedInviteCreateContext,
+            Depends(require_rate_limited_invite_create_context),
+        ],
+    ) -> dict[str, str]:
+        return {
+            "organisation_id": str(organisation_id),
+            "email": str(context.payload.email),
+        }
+
+    @router.post("/api/v1/test/layered-invites/{organisation_id}/{invite_id}/resend")
+    async def _resend_probe(
+        context: Annotated[
+            RateLimitedInviteMutationContext,
+            Depends(require_rate_limited_invite_resend_context),
+        ],
+    ) -> dict[str, str]:
+        assert context.principal.external_auth_id
+        return {"ok": "true"}
+
+    client.app.include_router(router)
+
+
+def test_two_actors_share_invite_create_organisation_bucket(monkeypatch) -> None:
+    limiter = StatefulLimiter()
+    runtime = RateLimiterRuntime(True, object(), limiter, "moving-window")
+    client = _build_app(
+        monkeypatch,
+        enabled=True,
+        runtime=runtime,
+        policy_limits={"invite_create_organisation": 1},
+    )
+    _add_invite_layer_probe_routes(client)
+
+    with client as api_client:
+        api_client.app.dependency_overrides[get_authenticated_principal] = (
+            _principal_user_a
+        )
+        first = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001/create",
+            json={"email": "one@example.com", "role": "member"},
+        )
+        api_client.app.dependency_overrides[get_authenticated_principal] = (
+            _principal_user_b
+        )
+        second = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001/create",
+            json={"email": "two@example.net", "role": "member"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["detail"] == "Too many requests."
+    assert "organisation" not in second.text.lower()
+
+
+def test_same_target_email_bucket_is_per_organisation(monkeypatch) -> None:
+    limiter = StatefulLimiter()
+    runtime = RateLimiterRuntime(True, object(), limiter, "moving-window")
+    client = _build_app(
+        monkeypatch,
+        enabled=True,
+        runtime=runtime,
+        policy_limits={"invite_create_target_email": 1},
+    )
+    _add_invite_layer_probe_routes(client)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    with client as api_client:
+        same_org_first = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001/create",
+            json={"email": "Same@Target.example", "role": "member"},
+        )
+        same_org_second = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001/create",
+            json={"email": "same@target.example", "role": "member"},
+        )
+        different_org = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000099/create",
+            json={"email": "same@target.example", "role": "member"},
+        )
+
+    assert same_org_first.status_code == 200
+    assert same_org_second.status_code == 429
+    assert different_org.status_code == 200
+
+
+def test_same_target_domain_bucket_is_per_organisation(monkeypatch) -> None:
+    limiter = StatefulLimiter()
+    runtime = RateLimiterRuntime(True, object(), limiter, "moving-window")
+    client = _build_app(
+        monkeypatch,
+        enabled=True,
+        runtime=runtime,
+        policy_limits={"invite_create_target_domain": 1},
+    )
+    _add_invite_layer_probe_routes(client)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    with client as api_client:
+        first = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001/create",
+            json={"email": "one@example.org", "role": "member"},
+        )
+        second = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001/create",
+            json={"email": "two@example.org", "role": "member"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
+def test_invite_resend_bucket_is_per_invite(monkeypatch) -> None:
+    limiter = StatefulLimiter()
+    runtime = RateLimiterRuntime(True, object(), limiter, "moving-window")
+    client = _build_app(
+        monkeypatch,
+        enabled=True,
+        runtime=runtime,
+        policy_limits={"invite_resend_invite": 1},
+    )
+    _add_invite_layer_probe_routes(client)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    with client as api_client:
+        first = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001"
+            "/00000000-0000-4000-8000-000000000002/resend",
+        )
+        second = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001"
+            "/00000000-0000-4000-8000-000000000002/resend",
+        )
+        different_invite = api_client.post(
+            "/api/v1/test/layered-invites/00000000-0000-4000-8000-000000000001"
+            "/00000000-0000-4000-8000-000000000003/resend",
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert different_invite.status_code == 200
+
+
+def test_invite_layered_limit_keys_and_errors_do_not_expose_raw_values(
+    monkeypatch,
+) -> None:
+    raw_email = "sensitive@example.test"
+    raw_domain = "example.test"
+    raw_organisation_id = "00000000-0000-4000-8000-000000000001"
+    limiter = StatefulLimiter()
+    runtime = RateLimiterRuntime(True, object(), limiter, "moving-window")
+    client = _build_app(
+        monkeypatch,
+        enabled=True,
+        runtime=runtime,
+        policy_limits={"invite_create_target_email": 1},
+    )
+    _add_invite_layer_probe_routes(client)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    with client as api_client:
+        for _ in range(2):
+            response = api_client.post(
+                f"/api/v1/test/layered-invites/{raw_organisation_id}/create",
+                json={"email": raw_email, "role": "member"},
+            )
+
+    assert response.status_code == 429
+    combined_redis_material = " ".join(
+        f"{namespace} {key}" for namespace, key, _, _ in limiter.hit_calls
+    )
+    combined_error = response.text
+    for raw_value in (raw_email, raw_domain, raw_organisation_id):
+        assert raw_value not in combined_redis_material
+        assert raw_value not in combined_error
 
 
 def test_unauthenticated_protected_endpoint_returns_401_before_rate_limiter(

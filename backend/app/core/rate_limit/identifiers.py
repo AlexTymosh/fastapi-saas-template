@@ -14,6 +14,12 @@ BUCKET_KEY_PREFIX = "rlid:v1:hmac-sha256"
 
 
 @dataclass(frozen=True)
+class RateLimitBucket:
+    kind: str
+    raw_value: str
+
+
+@dataclass(frozen=True)
 class RateLimitIdentifier:
     kind: str
     bucket_key: str
@@ -26,23 +32,34 @@ def build_identifier(
     trust_proxy_headers: bool,
     identifier_secret: SecretStr | str,
 ) -> RateLimitIdentifier:
-    secret = _secret_value(identifier_secret)
     if principal is not None:
-        return RateLimitIdentifier(
-            kind="user",
-            bucket_key=_build_bucket_key(
-                message=f"user:{principal.external_auth_id}",
-                secret=secret,
+        return build_identifier_for_bucket(
+            bucket=RateLimitBucket(
+                kind="user",
+                raw_value=principal.external_auth_id,
             ),
+            identifier_secret=identifier_secret,
         )
 
     ip_value = resolve_client_ip(
         request=request,
         trust_proxy_headers=trust_proxy_headers,
     )
+    return build_identifier_for_bucket(
+        bucket=RateLimitBucket(kind="ip", raw_value=ip_value),
+        identifier_secret=identifier_secret,
+    )
+
+
+def build_identifier_for_bucket(
+    *, bucket: RateLimitBucket, identifier_secret: SecretStr | str
+) -> RateLimitIdentifier:
     return RateLimitIdentifier(
-        kind="ip",
-        bucket_key=_build_bucket_key(message=f"ip:{ip_value}", secret=secret),
+        kind=bucket.kind,
+        bucket_key=_build_bucket_key(
+            message=f"{bucket.kind}:{bucket.raw_value}",
+            secret=_secret_value(identifier_secret),
+        ),
     )
 
 

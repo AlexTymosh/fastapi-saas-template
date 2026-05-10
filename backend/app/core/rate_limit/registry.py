@@ -5,15 +5,21 @@ from math import floor
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
-from limits import RateLimitItemPerHour, RateLimitItemPerMinute
+from limits import RateLimitItemPerDay, RateLimitItemPerHour, RateLimitItemPerMinute
 from limits.limits import RateLimitItem
 
 from app.core.rate_limit.policies import (
     AUDIT_READ_POLICY,
     AUTHENTICATED_DEFAULT_POLICY,
     INVITE_ACCEPT_POLICY,
+    INVITE_CREATE_ORGANISATION_DAILY_POLICY,
+    INVITE_CREATE_ORGANISATION_POLICY,
     INVITE_CREATE_POLICY,
+    INVITE_CREATE_TARGET_DOMAIN_POLICY,
+    INVITE_CREATE_TARGET_EMAIL_POLICY,
     INVITE_MUTATION_POLICY,
+    INVITE_RESEND_INVITE_POLICY,
+    INVITE_RESEND_ORGANISATION_DAILY_POLICY,
     ORGANISATION_CREATE_POLICY,
     PLATFORM_READ_POLICY,
     PLATFORM_STAFF_WRITE_POLICY,
@@ -50,9 +56,11 @@ def _rate_limit_item_from_window(*, limit: int, window_seconds: int) -> RateLimi
         return RateLimitItemPerMinute(limit, multiples=5)
     if window_seconds == 3600:
         return RateLimitItemPerHour(limit)
+    if window_seconds == 86400:
+        return RateLimitItemPerDay(limit)
     raise ValueError(
         "Unsupported rate limit window_seconds: "
-        f"{window_seconds}. Supported values are 60, 300, and 3600."
+        f"{window_seconds}. Supported values are 60, 300, 3600, and 86400."
     )
 
 
@@ -113,7 +121,13 @@ _REGISTERED_POLICY_SPECS: tuple[RateLimitPolicySpec, ...] = (
     ORGANISATION_CREATE_POLICY,
     INVITE_ACCEPT_POLICY,
     INVITE_CREATE_POLICY,
+    INVITE_CREATE_ORGANISATION_POLICY,
+    INVITE_CREATE_ORGANISATION_DAILY_POLICY,
+    INVITE_CREATE_TARGET_EMAIL_POLICY,
+    INVITE_CREATE_TARGET_DOMAIN_POLICY,
     INVITE_MUTATION_POLICY,
+    INVITE_RESEND_INVITE_POLICY,
+    INVITE_RESEND_ORGANISATION_DAILY_POLICY,
     PLATFORM_READ_POLICY,
     AUDIT_READ_POLICY,
     PLATFORM_WRITE_POLICY,

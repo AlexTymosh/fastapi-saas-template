@@ -17,14 +17,18 @@ from app.core.errors.openapi import (
 )
 from app.core.rate_limit import (
     INVITE_ACCEPT_POLICY,
-    INVITE_CREATE_POLICY,
     INVITE_MUTATION_POLICY,
     rate_limit_dependency,
+)
+from app.invites.api.rate_limits import (
+    RateLimitedInviteCreateContext,
+    RateLimitedInviteMutationContext,
+    require_rate_limited_invite_create_context,
+    require_rate_limited_invite_resend_context,
 )
 from app.invites.schemas.invites import (
     AcceptInviteRequest,
     AcceptInviteResponse,
-    CreateInviteRequest,
     InviteResponse,
     RevokeInviteRequest,
 )
@@ -48,13 +52,15 @@ PrincipalDep = Annotated[
 )
 async def create_invite(
     organisation_id: UUID,
-    payload: CreateInviteRequest,
-    identity: PrincipalDep,
+    context: Annotated[
+        RateLimitedInviteCreateContext,
+        Depends(require_rate_limited_invite_create_context),
+    ],
     request: Request,
-    _: Annotated[None, Depends(rate_limit_dependency(INVITE_CREATE_POLICY))],
     db_session: DbSessionDep,
 ) -> InviteResponse:
-    user = await UserService(db_session).provision_current_user(identity)
+    user = await UserService(db_session).provision_current_user(context.principal)
+    payload = context.payload
     invite_service = InviteService(db_session)
     invite = await invite_service.create_invite(
         organisation_id=organisation_id,
@@ -129,12 +135,14 @@ async def revoke_invite(
 async def resend_invite(
     organisation_id: UUID,
     invite_id: UUID,
-    identity: PrincipalDep,
+    context: Annotated[
+        RateLimitedInviteMutationContext,
+        Depends(require_rate_limited_invite_resend_context),
+    ],
     request: Request,
-    _: Annotated[None, Depends(rate_limit_dependency(INVITE_MUTATION_POLICY))],
     db_session: DbSessionDep,
 ) -> InviteResponse:
-    user = await UserService(db_session).provision_current_user(identity)
+    user = await UserService(db_session).provision_current_user(context.principal)
     invite_service = InviteService(db_session)
     invite = await invite_service.resend_invite(
         organisation_id=organisation_id,

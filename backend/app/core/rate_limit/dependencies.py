@@ -19,7 +19,12 @@ from app.core.observability import (
     record_rate_limit_check_duration,
     record_rate_limit_decision,
 )
-from app.core.rate_limit.identifiers import build_identifier
+from app.core.rate_limit.identifiers import (
+    RateLimitBucket,
+    RateLimitIdentifier,
+    build_identifier,
+    build_identifier_for_bucket,
+)
 from app.core.rate_limit.policies import RateLimitPolicy, RateLimitPolicySpec
 from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
@@ -67,6 +72,62 @@ async def check_rate_limit(
     policy: RateLimitPolicy | RateLimitPolicySpec,
 ) -> None:
     settings = get_settings()
+    identifier: RateLimitIdentifier | None = None
+    bucket: RateLimitBucket | None = None
+    if (
+        settings.rate_limiting.enabled
+        and settings.rate_limiting.identifier_secret is not None
+    ):
+        identifier = build_identifier(
+            principal=principal,
+            request=request,
+            trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
+            identifier_secret=settings.rate_limiting.identifier_secret,
+        )
+        bucket = RateLimitBucket(kind=identifier.kind, raw_value="")
+    await _check_rate_limit_for_identifier(
+        request=request,
+        policy=policy,
+        bucket=bucket,
+        prebuilt_identifier=identifier,
+    )
+
+
+async def check_rate_limit_for_bucket(
+    *,
+    request: Request,
+    policy: RateLimitPolicy | RateLimitPolicySpec,
+    bucket: RateLimitBucket,
+) -> None:
+    await _check_rate_limit_for_identifier(
+        request=request,
+        policy=policy,
+        bucket=bucket,
+        prebuilt_identifier=None,
+    )
+
+
+async def check_rate_limits_for_buckets(
+    *,
+    request: Request,
+    checks: list[tuple[RateLimitPolicy | RateLimitPolicySpec, RateLimitBucket]],
+) -> None:
+    for policy, bucket in checks:
+        await check_rate_limit_for_bucket(
+            request=request,
+            policy=policy,
+            bucket=bucket,
+        )
+
+
+async def _check_rate_limit_for_identifier(
+    *,
+    request: Request,
+    policy: RateLimitPolicy | RateLimitPolicySpec,
+    bucket: RateLimitBucket | None,
+    prebuilt_identifier: RateLimitIdentifier | None,
+) -> None:
+    settings = get_settings()
 
     if not settings.rate_limiting.enabled:
         return
@@ -110,12 +171,15 @@ async def check_rate_limit(
             detail="Rate limiter is unavailable.",
         )
 
-    identifier = build_identifier(
-        principal=principal,
-        request=request,
-        trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
-        identifier_secret=identifier_secret,
-    )
+    if prebuilt_identifier is None:
+        if bucket is None:
+            raise RuntimeError("Rate limit bucket is required")
+        identifier = build_identifier_for_bucket(
+            bucket=bucket,
+            identifier_secret=identifier_secret,
+        )
+    else:
+        identifier = prebuilt_identifier
 
     namespace = f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
     item = policy.item

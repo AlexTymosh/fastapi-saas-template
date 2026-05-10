@@ -29,10 +29,13 @@ def iter_dependant_calls(dependant) -> Iterator[object]:
 
 
 def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
-    return any(
-        getattr(call, "__rate_limit_policy_name__", None) == policy_name
-        for call in iter_dependant_calls(route.dependant)
-    )
+    for call in iter_dependant_calls(route.dependant):
+        if getattr(call, "__rate_limit_policy_name__", None) == policy_name:
+            return True
+        policy_names = getattr(call, "__rate_limit_policy_names__", ())
+        if policy_name in policy_names:
+            return True
+    return False
 
 
 @pytest.mark.parametrize(
@@ -60,6 +63,26 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
             "/api/v1/organisations/{organisation_id}/invites",
             "invite_create",
         ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites",
+            "invite_create_organisation",
+        ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites",
+            "invite_create_organisation_daily",
+        ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites",
+            "invite_create_target_email",
+        ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites",
+            "invite_create_target_domain",
+        ),
         ("POST", "/api/v1/invites/accept", "invite_accept"),
         (
             "DELETE",
@@ -70,6 +93,16 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
             "POST",
             "/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend",
             "invite_mutation",
+        ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend",
+            "invite_resend_invite",
+        ),
+        (
+            "POST",
+            "/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend",
+            "invite_resend_organisation_daily",
         ),
         ("GET", "/api/v1/platform/users", "platform_read"),
         ("GET", "/api/v1/platform/users/{user_id}", "platform_read"),

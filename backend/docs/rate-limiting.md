@@ -33,7 +33,7 @@ Rules:
 - `RATE_LIMITING__IDENTIFIER_SECRET` is required when `RATE_LIMITING__ENABLED=true` and must be at least 32 characters. It is used only for rate-limit identifier HMAC bucket keys and must not match Keycloak, client, outbox/Fernet, database, Redis, or other application secrets.
 - If enabled without `REDIS__URL` or `RATE_LIMITING__IDENTIFIER_SECRET`, startup fails fast.
 - Unknown policy override names fail fast, for example `RATE_LIMITING__POLICIES__UNKNOWN_POLICY__LIMIT=10`.
-- Invalid override limits/windows fail fast. Supported runtime windows are 60 seconds, 300 seconds, and 3600 seconds.
+- Invalid override limits/windows fail fast. Supported runtime windows are 60 seconds, 300 seconds, 3600 seconds, and 86400 seconds.
 - `relaxed` mode is rejected in production.
 - `panic` mode is accepted in production and is config-level only in this change; there is no runtime/admin-UI panic switch.
 
@@ -79,8 +79,14 @@ Mode behaviour:
 | `tenant_write` | 30 | 1 minute | fail-closed | sensitive | Tenant mutations and membership management |
 | `organisation_create` | 5 | 1 hour | fail-closed | critical | Protect organisation creation/onboarding from abuse |
 | `invite_accept` | 5 | 5 minutes | fail-closed | critical | Protect invite acceptance from brute force/token guessing |
-| `invite_create` | 20 | 1 hour | fail-closed | sensitive | Protect invite creation from abuse |
-| `invite_mutation` | 30 | 1 hour | fail-closed | sensitive | Protect invite revoke/resend/admin invite operations |
+| `invite_create` | 20 | 1 hour | fail-closed | sensitive | Actor bucket for invite creation |
+| `invite_create_organisation` | 50 | 1 hour | fail-closed | sensitive | Organisation-wide invite creation pressure across admins |
+| `invite_create_organisation_daily` | 200 | 1 day | fail-closed | critical | Daily organisation-wide invite creation cap |
+| `invite_create_target_email` | 3 | 1 day | fail-closed | critical | Repeated targeting of the same email in one organisation |
+| `invite_create_target_domain` | 50 | 1 day | fail-closed | sensitive | Flooding one email domain from one organisation |
+| `invite_mutation` | 30 | 1 hour | fail-closed | sensitive | Actor bucket for invite revoke/resend/admin invite operations |
+| `invite_resend_invite` | 5 | 1 hour | fail-closed | sensitive | Repeated resend attempts for one invite |
+| `invite_resend_organisation_daily` | 200 | 1 day | fail-closed | sensitive | Daily organisation-wide resend pressure |
 | `platform_read` | 60 | 1 minute | fail-closed | sensitive | Reduce platform user/organisation/staff enumeration and listing abuse |
 | `audit_read` | 30 | 1 minute | fail-closed | critical | Protect sensitive full and limited audit listing/filtering |
 | `platform_write` | 30 | 1 minute | fail-closed | critical | Protect sensitive platform user/organisation writes from abuse with a valid platform token |
@@ -245,3 +251,63 @@ pytest tests/observability/test_otlp_export_integration.py -q -m "integration an
 - [x] Over-limit requests do not perform DB I/O for newly covered sensitive paths.
 - [x] Fail-closed backend outage returns `503` Problem Details.
 - [x] Observability uses low-cardinality policy/result/identifier-kind/error-type labels only.
+
+
+## Layered invite anti-abuse limits
+
+Invite creation and resend routes use layered Redis-backed anti-abuse checks before opening a database session or constructing application services. These checks live in the core rate-limit layer and are intentionally separate from durable invite, membership, billing, or subscription rules.
+
+### Invite create buckets
+
+`POST /api/v1/organisations/{organisation_id}/invites` checks these policies in order:
+
+1. `invite_create` on the authenticated user bucket. This limits one actor's invite creation rate.
+2. `invite_create_organisation` on the organisation bucket. This prevents several admins in the same organisation from multiplying hourly invite spam.
+3. `invite_create_organisation_daily` on the same organisation bucket. This caps daily outbox/email pressure from one organisation.
+4. `invite_create_target_email` on the organisation + normalised target email bucket. This prevents repeatedly targeting the same email in one organisation.
+5. `invite_create_target_domain` on the organisation + normalised target domain bucket. This limits flooding one email domain from one organisation.
+
+`CreateInviteRequest` validation is reused before these business buckets are built. The target email is stripped and lowercased, and the domain is extracted from that validated normalised email.
+
+### Invite resend buckets
+
+`POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend` checks these policies in order:
+
+1. `invite_mutation` on the authenticated user bucket.
+2. `invite_resend_invite` on the per-invite bucket. This prevents repeatedly resending one invite.
+3. `invite_resend_organisation_daily` on the organisation bucket. This caps daily resend pressure from one organisation.
+
+Invite revoke keeps the existing `invite_mutation` actor bucket only. Organisation-level revoke throttling is intentionally not added because revoke does not create email/outbox pressure.
+
+### Privacy and key material
+
+All rate-limit identifiers are versioned HMAC-SHA256 bucket keys built with `RATE_LIMITING__IDENTIFIER_SECRET`. Raw bucket values may exist briefly in process memory while dependencies build checks, but raw email addresses, email domains, organisation IDs, invite IDs, user IDs, tokens, token hashes, and encrypted raw tokens must not be stored in Redis keys, namespaces, metrics, logs, audit metadata, or API errors.
+
+Redis namespaces include only the configured prefix, policy name, and safe bucket kind, for example:
+
+```text
+{redis_prefix}:{policy.name}:{bucket.kind}
+```
+
+The variable Redis key component is the HMAC bucket key, not the raw business value. Internal metrics may record policy name and bucket kind only. Client-facing `429 Too Many Requests` Problem Details responses are generic and do not reveal whether the actor, organisation, target email, target domain, or invite bucket blocked the request.
+
+### Override examples
+
+```bash
+RATE_LIMITING__POLICIES__INVITE_CREATE_ORGANISATION__LIMIT=25
+RATE_LIMITING__POLICIES__INVITE_CREATE_ORGANISATION__WINDOW_SECONDS=3600
+RATE_LIMITING__POLICIES__INVITE_CREATE_TARGET_EMAIL__LIMIT=2
+RATE_LIMITING__POLICIES__INVITE_CREATE_TARGET_EMAIL__WINDOW_SECONDS=86400
+RATE_LIMITING__POLICIES__INVITE_RESEND_INVITE__LIMIT=3
+RATE_LIMITING__POLICIES__INVITE_RESEND_INVITE__WINDOW_SECONDS=3600
+```
+
+### Anti-abuse versus durable business limits
+
+Redis rate limits are ephemeral anti-abuse controls. They are allowed to expire, protect against spam, brute force, floods, and excessive retries, and return `429 Too Many Requests`. They must not be used as product billing, subscription, entitlement, seat, capacity, or plan truth.
+
+Durable product/business limits belong in the database-backed service/repository layer, for example maximum team members allowed by plan, paid feature access, subscription entitlement, organisation capacity, seat limits, and owner/admin invariants. Those future contracts should return `403`, `402`, or `409` depending on the product semantics, not `429`.
+
+### Sequential multi-bucket consumption
+
+Invite checks are intentionally sequential. If an earlier bucket is consumed and a later bucket blocks the request, the earlier consumption remains. This conservative behaviour is acceptable for abuse throttling and avoids introducing Lua scripts, custom Redis script engines, or atomic multi-key Redis transactions at this stage.
