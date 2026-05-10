@@ -191,6 +191,7 @@ def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
     assert "/api/v1/platform/audit-events" in paths
     assert "/api/v1/platform/audit-events/limited" in paths
     assert "/api/v1/platform/staff" in paths
+    assert "/api/v1/platform/staff/{staff_id}" in paths
     assert "/api/v1/platform/staff/{staff_id}/role" in paths
     assert "/api/v1/platform/staff/{staff_id}/suspend" in paths
     assert "/api/v1/platform/staff/{staff_id}/restore" in paths
@@ -208,6 +209,8 @@ def test_openapi_platform_collection_and_errors_contract(monkeypatch) -> None:
     orgs_get = spec["paths"]["/api/v1/platform/organisations"]["get"]
     audit_get = spec["paths"]["/api/v1/platform/audit-events"]["get"]
     limited_audit_get = spec["paths"]["/api/v1/platform/audit-events/limited"]["get"]
+    staff_post = spec["paths"]["/api/v1/platform/staff"]["post"]
+    staff_detail_get = spec["paths"]["/api/v1/platform/staff/{staff_id}"]["get"]
 
     assert users_get["responses"]["200"]["content"]["application/json"]["schema"][
         "$ref"
@@ -221,6 +224,12 @@ def test_openapi_platform_collection_and_errors_contract(monkeypatch) -> None:
     assert limited_audit_get["responses"]["200"]["content"]["application/json"][
         "schema"
     ]["$ref"].endswith("/PlatformLimitedAuditEventsCollectionResponse")
+    assert staff_post["responses"]["201"]["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/PlatformStaffResponse")
+    assert staff_detail_get["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]["$ref"].endswith("/PlatformStaffResponse")
 
     for status in ("401", "403", "422"):
         assert status in users_get["responses"]

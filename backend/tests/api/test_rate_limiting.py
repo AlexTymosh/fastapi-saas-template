@@ -16,6 +16,7 @@ from app.core.auth import (
     get_authenticated_principal,
     require_authenticated_principal,
 )
+from app.core.config.settings import get_settings
 from app.core.db.session import get_db_session
 from app.core.observability import rate_limit_metrics
 from app.core.rate_limit.dependencies import rate_limit_dependency
@@ -203,6 +204,45 @@ def test_rate_limiter_failure_fail_closed_returns_503(monkeypatch) -> None:
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["error_code"] == "rate_limiter_unavailable"
+
+
+def test_missing_identifier_secret_returns_503_without_building_identifier(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=True)
+    runtime = RateLimiterRuntime(
+        enabled=True,
+        storage=object(),
+        limiter=fake,
+        strategy_name="moving-window",
+    )
+    client = _build_app(monkeypatch, enabled=True, runtime=runtime)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    settings = get_settings()
+    unsafe_settings = settings.model_copy(
+        update={
+            "rate_limiting": settings.rate_limiting.model_copy(
+                update={"identifier_secret": None}
+            )
+        }
+    )
+
+    with (
+        patch(
+            "app.core.rate_limit.dependencies.get_settings",
+            return_value=unsafe_settings,
+        ),
+        patch("app.core.rate_limit.dependencies.build_identifier") as build_identifier,
+        client as api_client,
+    ):
+        response = api_client.get("/api/v1/test/rate-limit/protected")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "rate_limiter_unavailable"
+    build_identifier.assert_not_called()
+    assert fake.hit_calls == []
 
 
 def test_rate_limiter_failure_fail_open_allows_request(monkeypatch) -> None:

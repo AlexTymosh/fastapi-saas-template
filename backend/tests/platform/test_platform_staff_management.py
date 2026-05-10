@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import status
 from sqlalchemy import func, select
 
 from app.audit.context import AuditContext
@@ -14,6 +15,7 @@ from app.platform.models.platform_staff import (
     PlatformStaffStatus,
 )
 from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.platform.schemas.platform_staff import PlatformStaffResponse
 from app.platform.services.platform_staff import PlatformStaffService
 from app.users.models.user import UserStatus
 from app.users.services.users import UserService
@@ -161,7 +163,13 @@ def test_platform_staff_access_control(staff_env):
         staff_env.regular_bundle.client.get(
             f"/api/v1/platform/staff/{staff_env.admin_staff.id}"
         ).status_code
-        == 403
+        == status.HTTP_403_FORBIDDEN
+    )
+    assert (
+        staff_env.support_bundle.client.get(
+            f"/api/v1/platform/staff/{staff_env.admin_staff.id}"
+        ).status_code
+        == status.HTTP_403_FORBIDDEN
     )
 
     assert (
@@ -173,7 +181,7 @@ def test_platform_staff_access_control(staff_env):
                 "reason": "r",
             },
         ).status_code
-        == 403
+        == status.HTTP_403_FORBIDDEN
     )
 
     assert (
@@ -185,12 +193,12 @@ def test_platform_staff_access_control(staff_env):
                 "reason": "r",
             },
         ).status_code
-        == 403
+        == status.HTTP_403_FORBIDDEN
     )
 
     # Ensure admin has access and receives the correct paginated schema
     list_response = staff_env.admin_bundle.client.get("/api/v1/platform/staff")
-    assert list_response.status_code == 200
+    assert list_response.status_code == status.HTTP_200_OK
     assert set(list_response.json().keys()) == {"data", "meta", "links"}
 
 
@@ -207,16 +215,18 @@ def test_platform_staff_creation(staff_env, migrated_session_factory):
             "reason": "new support",
         },
     )
-    assert create_response.status_code == 201
-    created_staff_id = create_response.json()["id"]
+    assert create_response.status_code == status.HTTP_201_CREATED
+    created_staff = PlatformStaffResponse.model_validate(create_response.json())
+    created_staff_id = str(created_staff.id)
     assert create_response.headers["Location"].endswith(
         f"/api/v1/platform/staff/{created_staff_id}"
     )
     detail_response = staff_env.admin_bundle.client.get(
         f"/api/v1/platform/staff/{created_staff_id}"
     )
-    assert detail_response.status_code == 200
-    assert detail_response.json()["id"] == created_staff_id
+    assert detail_response.status_code == status.HTTP_200_OK
+    detail_staff = PlatformStaffResponse.model_validate(detail_response.json())
+    assert str(detail_staff.id) == created_staff_id
 
     # Verify duplicate prevention (candidate again)
     assert (
@@ -1133,6 +1143,39 @@ def test_platform_staff_service_keeps_external_transaction_open(
                     audit_context=_audit_context(actor_user),
                 )
                 assert session.in_transaction()
+
+    run_async(_run())
+
+
+def test_platform_staff_service_cannot_self_suspend_when_already_suspended(
+    migrated_session_factory,
+) -> None:
+    actor_user, actor_staff = _seed_staff(
+        migrated_session_factory,
+        ext_id="kc-service-self-suspend-suspended",
+        email="service-self-suspend-suspended@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                with pytest.raises(ConflictError, match="Cannot suspend own"):
+                    await PlatformStaffService(session).suspend_staff(
+                        staff_id=actor_staff.id,
+                        actor=_actor(actor_user, actor_staff),
+                        reason="self suspend again",
+                        audit_context=_audit_context(actor_user),
+                    )
+                staff = await PlatformStaffRepository(session).get_by_id(actor_staff.id)
+                assert staff is not None
+                assert staff.status == PlatformStaffStatus.SUSPENDED.value
+                assert not await _audit_events_for_action(
+                    session,
+                    AuditAction.PLATFORM_STAFF_SUSPENDED,
+                    target_id=actor_staff.id,
+                )
 
     run_async(_run())
 
