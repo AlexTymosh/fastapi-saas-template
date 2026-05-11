@@ -82,6 +82,8 @@ Platform services remain responsible for orchestration: permission-aware workflo
 
 Platform organisation visibility is intentionally explicit. Platform admin endpoints may see soft-deleted organisations when needed for operational, audit, support, compliance, or recovery workflows because soft-deleted organisations remain operational and audit records. Tenant-facing organisation endpoints must exclude soft-deleted organisations by default. `OrganisationRepository.get_by_id(..., include_deleted=False)` remains the safe default, and platform services must pass `include_deleted=True` when they intentionally need platform visibility over deleted organisations.
 
+Organisation slugs are globally unique only for active organisations. Soft-deleted organisation rows preserve their original slug for auditability and historical correctness, and database partial unique indexes enforce active-only slug uniqueness (`deleted_at IS NULL`) so a deleted row does not block slug reuse by a new active organisation.
+
 ## Transaction Ownership
 
 Repositories may use `flush()` and `refresh()` to synchronise ORM state, but they must not call `commit()` or `rollback()`. Application services should not commit by default; they orchestrate business rules, repository calls, and audit writes inside a transaction provided by the caller.

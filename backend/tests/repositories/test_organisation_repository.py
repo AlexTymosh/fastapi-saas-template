@@ -2,9 +2,184 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import UUID
 
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+
 from app.organisations.models.organisation import Organisation, OrganisationStatus
 from app.organisations.repositories.organisations import OrganisationRepository
 from tests.helpers.asyncio_runner import run_async
+
+
+def test_organisation_repository_soft_delete_preserves_slug_and_allows_reuse(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                repository = OrganisationRepository(session)
+                deleted = await repository.create(name="Acme Old", slug="acme")
+                deleted_id = deleted.id
+                await repository.soft_delete(deleted)
+                replacement = await repository.create(name="Acme New", slug="acme")
+                replacement_id = replacement.id
+
+        async with migrated_session_factory() as session:
+            deleted = await OrganisationRepository(session).get_by_id(
+                deleted_id,
+                include_deleted=True,
+            )
+            replacement = await OrganisationRepository(session).get_by_id(
+                replacement_id
+            )
+
+        assert deleted is not None
+        assert deleted.deleted_at is not None
+        assert deleted.slug == "acme"
+        assert replacement is not None
+        assert replacement.deleted_at is None
+        assert replacement.slug == "acme"
+
+    run_async(_run())
+
+
+def test_organisation_repository_get_by_slug_ignores_soft_deleted_duplicate(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                deleted = Organisation(
+                    name="Deleted Acme",
+                    slug="acme-lookup",
+                    deleted_at=datetime.now(UTC),
+                )
+                active = Organisation(name="Active Acme", slug="acme-lookup")
+                session.add_all([deleted, active])
+                await session.flush()
+                active_id = active.id
+
+        async with migrated_session_factory() as session:
+            found = await OrganisationRepository(session).get_by_slug("acme-lookup")
+
+        assert found is not None
+        assert found.id == active_id
+        assert found.deleted_at is None
+
+    run_async(_run())
+
+
+def test_organisation_repository_active_slug_uniqueness_is_enforced_by_database(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                await OrganisationRepository(session).create(
+                    name="Acme One",
+                    slug="acme-conflict",
+                )
+
+        with pytest.raises(IntegrityError):
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    await OrganisationRepository(session).create(
+                        name="Acme Two",
+                        slug="acme-conflict",
+                    )
+
+    run_async(_run())
+
+
+def test_organisation_repository_update_slug_to_deleted_slug_succeeds(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                deleted = Organisation(
+                    name="Archived Slug",
+                    slug="archived-slug",
+                    deleted_at=datetime.now(UTC),
+                )
+                active = Organisation(name="Current Slug", slug="current-slug")
+                session.add_all([deleted, active])
+                await session.flush()
+                active_id = active.id
+
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                repository = OrganisationRepository(session)
+                active = await repository.get_by_id(active_id)
+                assert active is not None
+                updated = await repository.update_details(active, slug="archived-slug")
+                assert updated.slug == "archived-slug"
+
+        async with migrated_session_factory() as session:
+            updated = await OrganisationRepository(session).get_by_id(active_id)
+            assert updated is not None
+            assert updated.slug == "archived-slug"
+
+    run_async(_run())
+
+
+def test_organisation_repository_update_slug_to_active_slug_fails(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                taken = Organisation(name="Taken", slug="taken-active")
+                active = Organisation(name="Active", slug="free-active")
+                session.add_all([taken, active])
+                await session.flush()
+                active_id = active.id
+
+        with pytest.raises(IntegrityError):
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    repository = OrganisationRepository(session)
+                    active = await repository.get_by_id(active_id)
+                    assert active is not None
+                    await repository.update_details(active, slug="taken-active")
+
+    run_async(_run())
+
+
+def test_migrated_sqlite_database_has_active_slug_partial_unique_index(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            index_rows = (
+                (await session.execute(text("PRAGMA index_list('organisations')")))
+                .mappings()
+                .all()
+            )
+            active_index = next(
+                row
+                for row in index_rows
+                if row["name"] == "uq_organisations_slug_active"
+            )
+            assert active_index["unique"] == 1
+            assert active_index["partial"] == 1
+
+            sql_row = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT sql FROM sqlite_master "
+                            "WHERE type = 'index' "
+                            "AND name = 'uq_organisations_slug_active'"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert "deleted_at IS NULL" in sql_row["sql"]
+
+    run_async(_run())
 
 
 def test_organisation_repository_get_by_id_respects_include_deleted(

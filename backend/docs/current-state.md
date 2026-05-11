@@ -32,6 +32,7 @@ The following foundations are present in code and/or current documentation and s
 - GDPR/privacy posture.
 - Production hardening.
 - Platform workflows, including explicit platform visibility for soft-deleted organisations in admin operations while tenant organisation endpoints keep excluding deleted organisations by default.
+- Organisation soft deletion preserves the original slug, while database-level active-only uniqueness allows slug reuse after deletion without allowing duplicate active slugs.
 - Invite delivery pipeline.
 - Observability integration.
 - Full contract/security test coverage.

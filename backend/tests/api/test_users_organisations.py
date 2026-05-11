@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.db import Base, get_db_session
 from app.main import create_app
@@ -1154,8 +1155,27 @@ def test_soft_deleted_organisation_slug_is_released_for_reuse(
 
     soft_deleted_org = run_async(_fetch_soft_deleted_org(first_organisation_id))
     assert soft_deleted_org.deleted_at is not None
-    assert soft_deleted_org.slug != "reusable-org"
-    assert soft_deleted_org.slug == f"deleted-{soft_deleted_org.id}-reusable-org"
+    assert soft_deleted_org.slug == "reusable-org"
+
+    async def _fetch_delete_audit_metadata(org_id: UUID) -> dict[str, object]:
+        async with migrated_session_factory() as session:
+            result = await session.execute(
+                select(AuditEvent.metadata_json).where(
+                    AuditEvent.action == AuditAction.ORGANISATION_DELETED,
+                    AuditEvent.target_id == org_id,
+                )
+            )
+            metadata = result.scalar_one()
+            assert metadata is not None
+            return metadata
+
+    delete_audit_metadata = run_async(
+        _fetch_delete_audit_metadata(first_organisation_id)
+    )
+    assert delete_audit_metadata == {
+        "slug": "reusable-org",
+        "soft_delete": True,
+    }
 
     second_owner_client_bundle = authenticated_client_factory(
         identity=_identity_for(
