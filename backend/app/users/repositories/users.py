@@ -34,15 +34,32 @@ class UserRepository:
         *,
         limit: int,
         offset: int,
+        status: UserStatus | None = None,
+        q: str | None = None,
     ) -> tuple[list[User], int]:
+        stmt = select(User)
+        total_stmt = select(func.count()).select_from(User)
+        conditions = []
+        if status is not None:
+            conditions.append(User.status == status)
+        if q:
+            pattern = f"%{q.lower()}%"
+            conditions.append(
+                or_(
+                    func.lower(User.email).like(pattern),
+                    func.lower(User.first_name).like(pattern),
+                    func.lower(User.last_name).like(pattern),
+                )
+            )
+        for condition in conditions:
+            stmt = stmt.where(condition)
+            total_stmt = total_stmt.where(condition)
         stmt = (
-            select(User)
-            .order_by(User.created_at.desc(), User.id.desc())
+            stmt.order_by(User.created_at.desc(), User.id.desc())
             .offset(offset)
             .limit(limit)
         )
         result = await self.session.execute(stmt)
-        total_stmt = select(func.count()).select_from(User)
         total_result = await self.session.execute(total_stmt)
         return list(result.scalars().all()), int(total_result.scalar_one())
 

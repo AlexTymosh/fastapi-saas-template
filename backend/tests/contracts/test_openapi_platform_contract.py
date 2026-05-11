@@ -32,6 +32,47 @@ PLATFORM_PATHS = {
     "/api/v1/platform/staff/{staff_id}/restore": {"post": "platform-staff"},
 }
 
+EXPECTED_PLATFORM_OPERATION_IDS = {
+    ("get", "/api/v1/platform/me"): "get_platform_identity",
+    ("get", "/api/v1/platform/users"): "list_platform_users",
+    ("get", "/api/v1/platform/users/limited"): "list_limited_platform_users",
+    ("get", "/api/v1/platform/users/{user_id}"): "get_platform_user",
+    ("post", "/api/v1/platform/users/{user_id}/suspend"): "suspend_platform_user",
+    ("post", "/api/v1/platform/users/{user_id}/restore"): "restore_platform_user",
+    ("get", "/api/v1/platform/organisations"): "list_platform_organisations",
+    (
+        "get",
+        "/api/v1/platform/organisations/limited",
+    ): "list_limited_platform_organisations",
+    (
+        "get",
+        "/api/v1/platform/organisations/{organisation_id}",
+    ): "get_platform_organisation",
+    (
+        "patch",
+        "/api/v1/platform/organisations/{organisation_id}",
+    ): "patch_platform_organisation",
+    (
+        "post",
+        "/api/v1/platform/organisations/{organisation_id}/suspend",
+    ): "suspend_platform_organisation",
+    (
+        "post",
+        "/api/v1/platform/organisations/{organisation_id}/restore",
+    ): "restore_platform_organisation",
+    ("get", "/api/v1/platform/audit-events"): "list_platform_audit_events",
+    (
+        "get",
+        "/api/v1/platform/audit-events/limited",
+    ): "list_limited_platform_audit_events",
+    ("get", "/api/v1/platform/staff"): "list_platform_staff",
+    ("post", "/api/v1/platform/staff"): "create_platform_staff",
+    ("get", "/api/v1/platform/staff/{staff_id}"): "get_platform_staff",
+    ("patch", "/api/v1/platform/staff/{staff_id}/role"): "update_platform_staff_role",
+    ("post", "/api/v1/platform/staff/{staff_id}/suspend"): "suspend_platform_staff",
+    ("post", "/api/v1/platform/staff/{staff_id}/restore"): "restore_platform_staff",
+}
+
 READ_POLICIES = {
     ("GET", "/api/v1/platform/me"): "platform_read",
     ("GET", "/api/v1/platform/users"): "platform_read",
@@ -126,8 +167,10 @@ def test_platform_routes_are_documented_with_stable_operation_ids_and_tags(
         assert path in spec["paths"]
         for method, expected_tag in methods.items():
             operation = spec["paths"][path][method]
-            assert operation["operationId"]
-            assert "default" not in operation["operationId"].lower()
+            assert (
+                operation["operationId"]
+                == EXPECTED_PLATFORM_OPERATION_IDS[(method, path)]
+            )
             assert expected_tag in operation["tags"]
 
     assert spec["paths"]["/api/v1/platform/me"]["get"]["tags"] == ["platform-identity"]

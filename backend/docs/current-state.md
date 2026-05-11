@@ -20,7 +20,7 @@ The following foundations are present in code and/or current documentation and s
 - Keycloak JWT validation hardened for OAuth2 Resource Server access tokens, including strict issuer/audience/`azp`/`iat`/`kid`/lifetime checks, startup OIDC metadata validation, and JWKS forced refresh cooldown/singleflight protection.
 - Local user projection with `external_auth_id`.
 - Organisations, memberships, and invites foundation.
-- Platform staff, permissions, current platform identity endpoint foundation, and limited platform user/organisation views for future admin frontend clients.
+- Platform staff, permissions, current platform identity endpoint foundation, full platform list filters, and limited platform user/organisation/audit views for future admin frontend clients.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, layered invite anti-abuse flows, platform read/audit reads, fail-closed platform write policies, and versioned HMAC-SHA256 identifier bucket keys backed by a dedicated rate-limit secret.
@@ -35,7 +35,7 @@ The following foundations are present in code and/or current documentation and s
 - Organisation soft deletion preserves the original slug, while database-level active-only uniqueness allows slug reuse after deletion without allowing duplicate active slugs.
 - Invite delivery pipeline.
 - Observability integration.
-- Full contract/security test coverage beyond the current platform OpenAPI contract and platform permission matrix tests.
+- Full contract/security test coverage beyond the current platform OpenAPI contract, exact platform operation ID checks, full-list filter tests, and platform permission matrix tests.
 
 ## Not Implemented / Planned
 
@@ -55,7 +55,7 @@ The following areas should not be presented as complete without code verificatio
 - Production Docker/runtime hardening is not complete.
 - CORS policy is implemented as an explicit environment-driven allowlist and is disabled by default.
 - CI status must be verified.
-- Access-control tests need continuous expansion; platform OpenAPI contract, permission matrix, and limited field-authorisation coverage are present for current platform endpoints.
+- Access-control tests need continuous expansion; platform OpenAPI contract, exact operation ID checks, full-list filter tests, permission matrix, and limited field-authorisation coverage are present for current platform endpoints.
 - Deleted or renamed docs must not leave broken links.
 - Documentation must not claim planned features as implemented.
 
