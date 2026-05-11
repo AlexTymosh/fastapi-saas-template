@@ -8,15 +8,11 @@ from enum import StrEnum
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.audit.context import AuditContext
-from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
-from app.audit.services.audit_events import AuditEventService
-from app.core.db import get_session_factory
-from app.core.errors.exceptions import AppError, ConflictError, NotFoundError
-from app.platform.models.platform_staff import PlatformStaffRole, PlatformStaffStatus
-from app.platform.repositories.platform_staff import PlatformStaffRepository
-from app.users.models.user import UserStatus
-from app.users.repositories.users import UserRepository
+from app.core.errors.exceptions import AppError
+from app.platform.services.platform_bootstrap import (
+    PlatformAdminBootstrapService,
+    PlatformAdminBootstrapStatus,
+)
 
 
 class MakePlatformAdminStatus(StrEnum):
@@ -31,61 +27,26 @@ class MakePlatformAdminResult:
 
 
 async def make_platform_admin(
-    email: str, *, force: bool = False
+    email: str,
+    *,
+    force: bool = False,
+    reason: str = "bootstrap platform admin",
+    external_auth_id: str | None = None,
+    confirm_production: bool = False,
 ) -> MakePlatformAdminResult:
-    async with get_session_factory()() as session:
-        async with session.begin():
-            user = await UserRepository(session).get_by_email(email)
-            if user is None:
-                raise NotFoundError(detail=f"User with email {email} not found")
-            if user.status != UserStatus.ACTIVE:
-                raise ConflictError(detail="User is not active")
-
-            repo = PlatformStaffRepository(session)
-            existing = await repo.get_by_user_id(user.id)
-            audit_action = AuditAction.PLATFORM_STAFF_CREATED
-            audit_metadata: dict[str, object] | None = None
-            if existing is not None:
-                if (
-                    existing.role == PlatformStaffRole.PLATFORM_ADMIN.value
-                    and existing.status == PlatformStaffStatus.ACTIVE.value
-                ):
-                    return MakePlatformAdminResult(
-                        email=email,
-                        status=MakePlatformAdminStatus.ALREADY_ACTIVE,
-                    )
-                if not force:
-                    raise ConflictError(
-                        detail=(
-                            "Platform staff record exists; use --force to promote "
-                            "the existing record to platform_admin"
-                        )
-                    )
-                audit_action = AuditAction.PLATFORM_STAFF_ROLE_CHANGED
-                audit_metadata = {
-                    "old_role": existing.role,
-                    "new_role": PlatformStaffRole.PLATFORM_ADMIN.value,
-                }
-                staff = await repo.promote_to_active_platform_admin(staff=existing)
-            else:
-                staff = await repo.create_staff(
-                    user_id=user.id,
-                    role=PlatformStaffRole.PLATFORM_ADMIN.value,
-                )
-
-            await AuditEventService(session).record_event(
-                audit_context=AuditContext(actor_user_id=None),
-                category=AuditCategory.PLATFORM,
-                action=audit_action,
-                target_type=AuditTargetType.PLATFORM_STAFF,
-                target_id=staff.id,
-                reason="bootstrap platform admin",
-                metadata_json=audit_metadata,
-            )
-            return MakePlatformAdminResult(
-                email=email,
-                status=MakePlatformAdminStatus.GRANTED,
-            )
+    result = await PlatformAdminBootstrapService().bootstrap_platform_admin_by_email(
+        email=email,
+        reason=reason,
+        external_auth_id=external_auth_id,
+        confirm_production=confirm_production,
+        restore_suspended_staff=force,
+    )
+    status = (
+        MakePlatformAdminStatus.ALREADY_ACTIVE
+        if result.status == PlatformAdminBootstrapStatus.ALREADY_PLATFORM_ADMIN
+        else MakePlatformAdminStatus.GRANTED
+    )
+    return MakePlatformAdminResult(email=result.email, status=status)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,9 +55,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--email", required=True)
     parser.add_argument(
+        "--reason",
+        default="bootstrap platform admin",
+        help="Audit reason for the offline platform admin bootstrap.",
+    )
+    parser.add_argument(
+        "--external-auth-id",
+        help="Optional Keycloak subject for disambiguating duplicate local emails.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
-        help="Promote an existing platform_staff record to active platform_admin.",
+        help="Restore a suspended platform_staff record before promotion.",
+    )
+    parser.add_argument(
+        "--confirm-production",
+        action="store_true",
+        help="Required when APP__ENVIRONMENT=prod.",
     )
     return parser
 
@@ -104,7 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
 async def _amain(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        result = await make_platform_admin(args.email, force=args.force)
+        result = await make_platform_admin(
+            args.email,
+            force=args.force,
+            reason=args.reason,
+            external_auth_id=args.external_auth_id,
+            confirm_production=args.confirm_production,
+        )
     except AppError as exc:
         print(exc.detail or exc.title, file=sys.stderr)
         return 1

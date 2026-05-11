@@ -285,24 +285,52 @@ Ownerless organisation creation is a special bootstrap/operational case and must
 
 ## 12. Bootstrap first platform admin
 
-The first platform admin should be created by a management command, not by public API.
+The first or missing platform admin must be bootstrapped offline by an operator with shell access, not by a public HTTP endpoint. This keeps the unauthenticated bootstrap surface out of the web application, avoids local password authentication, and prevents JWT role claims from becoming a platform-authorisation source.
 
-Example command:
+The target admin must authenticate through the normal Keycloak/OIDC flow at least once before bootstrap. That login creates the local `users` projection that the command can safely find. The bootstrap command must not silently create users and must not change user profile fields.
+
+Preferred command:
 
 ```bash
-python -m app.commands.make_platform_admin --email admin@example.com
+python -m app.platform.cli.bootstrap_admin \
+  --email admin@example.com \
+  --reason "Initial platform admin bootstrap"
 ```
+
+If more than one local user matches the normalised email, disambiguate with the Keycloak subject stored in `users.external_auth_id`:
+
+```bash
+python -m app.platform.cli.bootstrap_admin \
+  --email admin@example.com \
+  --external-auth-id keycloak-subject \
+  --reason "Initial platform admin bootstrap"
+```
+
+Production requires an explicit confirmation guard:
+
+```bash
+APP__ENVIRONMENT=prod python -m app.platform.cli.bootstrap_admin \
+  --email admin@example.com \
+  --reason "Initial platform admin bootstrap" \
+  --confirm-production
+```
+
+Suspended local users and users with `email_verified=false` are refused by default. Suspended `platform_staff` rows are also refused by default; an operator may explicitly pass `--restore-suspended-staff` to restore the row and promote it to `platform_admin`.
 
 Expected behaviour:
 
 ```text
-1. Find an existing local user by email.
-2. Require that user to be active.
-3. Create an active `platform_staff` row with `role=platform_admin`, or exit successfully if it already exists.
-4. Write a bootstrap audit event when a new grant is made.
+1. Trim and lowercase --email.
+2. Find an existing local user by normalised email.
+3. Fail if no local user exists: the user must log in once first.
+4. Fail on duplicate matching emails unless --external-auth-id uniquely identifies one row.
+5. Create active platform_admin staff, promote an existing non-admin staff row, or return an idempotent already_platform_admin result.
+6. Write a platform_admin_bootstrapped audit event for successful bootstrap attempts.
 ```
 
-Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles or manual database edits.
+The audit event uses `category=platform`, `target_type=platform_staff`, `actor_user_id=None`, and `user_agent=platform-bootstrap-cli` because the command is executed by the system/operator rather than an authenticated platform actor. Its metadata is intentionally limited to safe operational fields such as result, target user id, normalised email, previous role/status, and new role/status.
+
+Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles, JWT claims, local password credentials, or manual database edits. Platform roles remain stored in local `platform_staff` records and are not taken from JWT claims.
 
 ## 13. Audit requirements
 
@@ -342,6 +370,7 @@ organisation_restored
 platform_staff_created
 platform_staff_removed
 platform_staff_suspended
+platform_admin_bootstrapped
 data_corrected
 gdpr_export_requested
 gdpr_erasure_requested

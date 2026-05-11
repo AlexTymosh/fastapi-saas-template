@@ -23,11 +23,21 @@ from tests.helpers.asyncio_runner import run_async
 pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.audit]
 
 
-def _seed_user(email: str, status: UserStatus = UserStatus.ACTIVE):
+def _seed_user(
+    email: str,
+    status: UserStatus = UserStatus.ACTIVE,
+    *,
+    email_verified: bool = True,
+):
     async def _run():
         async with get_session_factory()() as session:
             async with session.begin():
-                user = User(external_auth_id=f"kc-{email}", email=email, status=status)
+                user = User(
+                    external_auth_id=f"kc-{email}",
+                    email=email,
+                    status=status,
+                    email_verified=email_verified,
+                )
                 session.add(user)
             return user
 
@@ -82,7 +92,8 @@ def test_make_platform_admin_creates_platform_admin_for_existing_active_user(
             event = (
                 await session.execute(
                     select(AuditEvent).where(
-                        AuditEvent.action == AuditAction.PLATFORM_STAFF_CREATED.value,
+                        AuditEvent.action
+                        == AuditAction.PLATFORM_ADMIN_BOOTSTRAPPED.value,
                         AuditEvent.target_id == staff_rows[0].id,
                     )
                 )
@@ -124,18 +135,22 @@ def test_make_platform_admin_fails_when_user_is_suspended(
         run_async(make_platform_admin(user.email))
 
 
-def test_make_platform_admin_fails_on_conflicting_platform_staff_without_force(
+def test_make_platform_admin_promotes_existing_staff_without_force(
     monkeypatch, migrated_database_url
 ):
     monkeypatch.setenv("DATABASE__URL", migrated_database_url)
     user = _seed_user("bootstrap-support@example.com")
     _seed_staff(user.id, PlatformStaffRole.SUPPORT_AGENT, PlatformStaffStatus.ACTIVE)
 
-    with pytest.raises(ConflictError):
-        run_async(make_platform_admin(user.email))
+    result = run_async(make_platform_admin(user.email))
+
+    assert result.status == MakePlatformAdminStatus.GRANTED
+    staff_rows = _staff_rows_for_user(user.id)
+    assert len(staff_rows) == 1
+    assert staff_rows[0].role == PlatformStaffRole.PLATFORM_ADMIN.value
 
 
-def test_make_platform_admin_force_promotes_existing_staff_and_is_idempotent(
+def test_make_platform_admin_force_restores_existing_staff_and_is_idempotent(
     monkeypatch, migrated_database_url
 ):
     monkeypatch.setenv("DATABASE__URL", migrated_database_url)
@@ -143,7 +158,7 @@ def test_make_platform_admin_force_promotes_existing_staff_and_is_idempotent(
     _seed_staff(
         user.id,
         PlatformStaffRole.COMPLIANCE_OFFICER,
-        PlatformStaffStatus.ACTIVE,
+        PlatformStaffStatus.SUSPENDED,
     )
 
     result = run_async(make_platform_admin(user.email, force=True))

@@ -20,7 +20,7 @@ The following foundations are present in code and/or current documentation and s
 - Keycloak JWT validation hardened for OAuth2 Resource Server access tokens, including strict issuer/audience/`azp`/`iat`/`kid`/lifetime checks, startup OIDC metadata validation, and JWKS forced refresh cooldown/singleflight protection.
 - Local user projection with `external_auth_id`.
 - Organisations, memberships, and invites foundation.
-- Platform staff, permissions, current platform identity endpoint foundation, full platform list filters, and limited platform user/organisation/audit views for future admin frontend clients.
+- Platform staff, permissions, current platform identity endpoint foundation, offline platform admin bootstrap command, full platform list filters, and limited platform user/organisation/audit views for future admin frontend clients.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, layered invite anti-abuse flows, platform read/audit reads, fail-closed platform write policies, and versioned HMAC-SHA256 identifier bucket keys backed by a dedicated rate-limit secret.

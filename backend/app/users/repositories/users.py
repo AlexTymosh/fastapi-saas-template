@@ -29,6 +29,15 @@ class UserRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def list_by_normalized_email(self, normalized_email: str) -> list[User]:
+        stmt = (
+            select(User)
+            .where(func.lower(User.email) == normalized_email)
+            .order_by(User.created_at.asc(), User.id.asc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def list_paginated(
         self,
         *,
