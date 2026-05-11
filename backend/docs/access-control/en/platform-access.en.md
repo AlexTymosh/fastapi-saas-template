@@ -140,16 +140,29 @@ Platform endpoint dependency should check:
 3. user.status = active.
 4. Active platform_staff record exists.
 5. platform_staff.status = active.
-6. role has required permission.
+6. role has required permission, unless the endpoint only needs the active platform identity.
 ```
 
 If any check fails, return 403, except missing/invalid JWT which should return 401.
 
-## 6. Endpoint separation
+## 6. Platform identity endpoint
+
+`GET /api/v1/platform/me` exposes the safe platform identity for the currently authenticated actor. It is intended for a future admin frontend immediately after login so the frontend can decide whether platform access is available and which admin UI sections should be shown.
+
+The endpoint returns the local `user_id`, `staff_id`, platform `role`, `staff_status`, effective platform `permissions`, safe profile fields (`email`, `email_verified`, `first_name`, `last_name`), `user_status`, and relevant user/staff timestamps. It must not expose internal ORM objects, `external_auth_id`, suspension reasons, raw audit metadata, or credential/token data.
+
+The role and permissions in the response are resolved only from the local `platform_staff` row and backend role-to-permission mapping. JWT roles, `realm_access`, `resource_access`, direct `roles`, and similar IdP claims are not trusted for platform authorization.
+
+`GET /api/v1/platform/me` requires an authenticated principal, an existing local user projection, `user.status = active`, an existing `platform_staff` row, and `platform_staff.status = active`. It resolves an active platform actor without requiring an arbitrary business permission such as `users:read` or `audit:read`. Non-platform users, suspended local users, missing staff rows, and suspended staff rows receive the same generic `403` platform access denial. Missing or invalid authentication receives `401`.
+
+The endpoint is read-only and must be protected by the platform read rate-limit policy. It does not create users, does not create staff records, and does not grant access from JWT-provided roles.
+
+## 7. Endpoint separation
 
 Platform actors must use dedicated routes:
 
 ```text
+/api/v1/platform/me
 /api/v1/platform/users/*
 /api/v1/platform/organisations/*
 /api/v1/platform/staff/*
@@ -173,7 +186,7 @@ The same actor may use a dedicated platform endpoint:
 GET /api/v1/platform/organisations/{organisation_id}
 ```
 
-## 7. Platform-created organisations and initial owner assignment
+## 8. Platform-created organisations and initial owner assignment
 
 When a standalone tenant user creates an organisation, that creator becomes `owner`.
 
@@ -185,7 +198,7 @@ When a platform actor creates an organisation through a platform endpoint:
 
 Ownerless organisation creation is a special bootstrap/operational case and must not be the default path.
 
-## 8. Bootstrap first platform admin
+## 9. Bootstrap first platform admin
 
 The first platform admin should be created by a management command, not by public API.
 
@@ -206,7 +219,7 @@ Expected behaviour:
 
 Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles or manual database edits.
 
-## 9. Audit requirements
+## 10. Audit requirements
 
 All platform actions must write audit events.
 
@@ -249,7 +262,7 @@ gdpr_export_requested
 gdpr_erasure_requested
 ```
 
-## 10. Emergency owner correction
+## 11. Emergency owner correction
 
 Tenant API must not support ownership transfer.
 

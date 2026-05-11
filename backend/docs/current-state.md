@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-05-06
+2026-05-11
 
 ## Project Phase
 
@@ -20,7 +20,7 @@ The following foundations are present in code and/or current documentation and s
 - Keycloak JWT validation hardened for OAuth2 Resource Server access tokens, including strict issuer/audience/`azp`/`iat`/`kid`/lifetime checks, startup OIDC metadata validation, and JWKS forced refresh cooldown/singleflight protection.
 - Local user projection with `external_auth_id`.
 - Organisations, memberships, and invites foundation.
-- Platform staff and permissions foundation.
+- Platform staff, permissions, and current platform identity endpoint foundation.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, layered invite anti-abuse flows, platform read/audit reads, fail-closed platform write policies, and versioned HMAC-SHA256 identifier bucket keys backed by a dedicated rate-limit secret.
@@ -66,6 +66,7 @@ The following areas should not be presented as complete without code verificatio
 - `backend/docs/keycloak-identity-contract.md` contains the detailed identity contract.
 - `backend/docs/observability.md` contains observability details.
 - `backend/docs/testing-e2e.md` contains integration/e2e testing conventions.
+- `backend/docs/access-control/en` is the canonical access-control documentation source.
 - `SESSION_NOTES.md` contains short live handoff notes for AI-agent sessions.
 
 ## Testing Status
