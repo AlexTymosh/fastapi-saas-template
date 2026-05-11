@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.organisations.models.organisation import Organisation, OrganisationStatus
@@ -52,6 +52,43 @@ class OrganisationRepository:
         if not include_deleted:
             stmt = stmt.where(Organisation.deleted_at.is_(None))
             total_stmt = total_stmt.where(Organisation.deleted_at.is_(None))
+        stmt = (
+            stmt.order_by(Organisation.created_at.desc(), Organisation.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        total_result = await self.session.execute(total_stmt)
+        return list(result.scalars().all()), int(total_result.scalar_one())
+
+    async def list_limited_paginated(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: OrganisationStatus | None = None,
+        q: str | None = None,
+    ) -> tuple[list[Organisation], int]:
+        stmt = select(Organisation).where(Organisation.deleted_at.is_(None))
+        total_stmt = (
+            select(func.count())
+            .select_from(Organisation)
+            .where(Organisation.deleted_at.is_(None))
+        )
+        conditions = []
+        if status is not None:
+            conditions.append(Organisation.status == status)
+        if q:
+            pattern = f"%{q.lower()}%"
+            conditions.append(
+                or_(
+                    func.lower(Organisation.name).like(pattern),
+                    func.lower(Organisation.slug).like(pattern),
+                )
+            )
+        for condition in conditions:
+            stmt = stmt.where(condition)
+            total_stmt = total_stmt.where(condition)
         stmt = (
             stmt.order_by(Organisation.created_at.desc(), Organisation.id.desc())
             .offset(offset)

@@ -31,6 +31,15 @@ class PlatformUserResponse(BaseModel):
     updated_at: datetime
 
 
+class PlatformLimitedUserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    first_name: str | None
+    last_name: str | None
+    status: UserStatus
+    created_at: datetime
+
+
 class PlatformUsersMeta(BaseModel):
     total: int
     limit: int
@@ -39,5 +48,11 @@ class PlatformUsersMeta(BaseModel):
 
 class PlatformUsersCollectionResponse(BaseModel):
     data: list[PlatformUserResponse]
+    meta: PlatformUsersMeta
+    links: dict[str, str]
+
+
+class PlatformLimitedUsersCollectionResponse(BaseModel):
+    data: list[PlatformLimitedUserResponse]
     meta: PlatformUsersMeta
     links: dict[str, str]

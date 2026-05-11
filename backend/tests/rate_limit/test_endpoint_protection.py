@@ -106,8 +106,10 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
         ),
         ("GET", "/api/v1/platform/me", "platform_read"),
         ("GET", "/api/v1/platform/users", "platform_read"),
+        ("GET", "/api/v1/platform/users/limited", "platform_read"),
         ("GET", "/api/v1/platform/users/{user_id}", "platform_read"),
         ("GET", "/api/v1/platform/organisations", "platform_read"),
+        ("GET", "/api/v1/platform/organisations/limited", "platform_read"),
         (
             "GET",
             "/api/v1/platform/organisations/{organisation_id}",
@@ -117,6 +119,23 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
         ("GET", "/api/v1/platform/staff/{staff_id}", "platform_read"),
         ("GET", "/api/v1/platform/audit-events/limited", "audit_read"),
         ("GET", "/api/v1/platform/audit-events", "audit_read"),
+        ("POST", "/api/v1/platform/users/{user_id}/suspend", "platform_write"),
+        ("POST", "/api/v1/platform/users/{user_id}/restore", "platform_write"),
+        (
+            "POST",
+            "/api/v1/platform/organisations/{organisation_id}/suspend",
+            "platform_write",
+        ),
+        (
+            "POST",
+            "/api/v1/platform/organisations/{organisation_id}/restore",
+            "platform_write",
+        ),
+        ("PATCH", "/api/v1/platform/organisations/{organisation_id}", "platform_write"),
+        ("POST", "/api/v1/platform/staff", "platform_staff_write"),
+        ("PATCH", "/api/v1/platform/staff/{staff_id}/role", "platform_staff_write"),
+        ("POST", "/api/v1/platform/staff/{staff_id}/suspend", "platform_staff_write"),
+        ("POST", "/api/v1/platform/staff/{staff_id}/restore", "platform_staff_write"),
     ],
 )
 def test_sensitive_authenticated_endpoints_have_expected_rate_limit_policy(
