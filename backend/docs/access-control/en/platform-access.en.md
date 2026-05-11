@@ -382,3 +382,21 @@ internal operational path until a dedicated public API contract is introduced.
 - Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
 - Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
 - Last-platform-admin hardening is implemented for platform staff demotion and suspension flows.
+
+## 15. OpenAPI contract for generated admin clients
+
+Platform admin frontend clients should be generated from the backend OpenAPI schema instead of hand-written route metadata. The backend uses one app-level `generate_unique_id_function` so every OpenAPI `operationId` is generated from the FastAPI `APIRoute.name` value.
+
+Contract rules:
+
+- Route handler names are the generated-client method names and must remain globally unique across all schema-included routes.
+- Route handler names should be stable, descriptive, snake_case, and TypeScript-friendly. Prefer full words such as `organisation` over abbreviations such as `org`.
+- Platform routes must use only these tags: `platform-identity`, `platform-users`, `platform-organisations`, `platform-staff`, and `platform-audit`.
+- Platform routes must not use the generic `platform` tag.
+- Health routes must not use platform tags.
+- Platform routes that return a body must declare a strict Pydantic `response_model`; bare `dict`, untyped dictionaries, `Any`, and bare list response models are not allowed.
+- Platform collection responses should use the standard `{ "data": [], "meta": {}, "links": {} }` envelope so generated clients receive stable response shapes.
+- Limited platform views must not expose restricted operational fields. Limited audit responses intentionally expose boolean indicators such as `has_actor`, `has_metadata`, and `has_reason` instead of raw actor IDs, metadata, IP address, user-agent, or free-text reason.
+- Platform read and write routes must carry explicit route-level rate-limit dependency metadata so contract tests can verify the expected `platform_read`, `audit_read`, `platform_write`, or `platform_staff_write` policy.
+
+Future admin clients may rely on `operationId` values as stable method names, but any route rename is an API-contract change and must be reviewed with the same care as a path or schema change.

@@ -1,9 +1,21 @@
+from __future__ import annotations
+
+from typing import Any, get_origin
+
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
 
+OPENAPI_METHODS = {"get", "post", "patch", "delete", "put"}
+PLATFORM_TAGS = {
+    "platform-identity",
+    "platform-users",
+    "platform-organisations",
+    "platform-staff",
+    "platform-audit",
+}
 PLATFORM_PATHS = {
     "/api/v1/platform/me": {"get": "platform-identity"},
     "/api/v1/platform/users": {"get": "platform-users"},
@@ -119,6 +131,21 @@ def _openapi(monkeypatch):
     return response.json()
 
 
+def _schema_routes(app) -> list[APIRoute]:
+    return [
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.include_in_schema
+    ]
+
+
+def _openapi_operations(spec):
+    for path, path_item in spec["paths"].items():
+        for method, operation in path_item.items():
+            if method in OPENAPI_METHODS:
+                yield path, method, operation
+
+
 def _iter_dependant_calls(dependant):
     for dependency in dependant.dependencies:
         if dependency.call is not None:
@@ -146,16 +173,52 @@ def _route_has_policy(route: APIRoute, policy_name: str) -> bool:
     return False
 
 
+def _resolve_ref_schema(spec, ref: str):
+    schema_name = ref.split("/")[-1]
+    return spec["components"]["schemas"][schema_name]
+
+
+def _limited_collection_item_properties(spec, schema_name: str):
+    collection_schema = spec["components"]["schemas"][schema_name]
+    item_ref = collection_schema["properties"]["data"]["items"]["$ref"]
+    return _resolve_ref_schema(spec, item_ref)["properties"]
+
+
+def test_all_schema_routes_have_non_empty_openapi_operation_ids(monkeypatch) -> None:
+    spec = _openapi(monkeypatch)
+
+    for path, method, operation in _openapi_operations(spec):
+        assert operation.get("operationId"), (method, path)
+
+
 def test_openapi_operation_ids_are_unique(monkeypatch) -> None:
     spec = _openapi(monkeypatch)
     operation_ids = [
-        operation["operationId"]
-        for path_item in spec["paths"].values()
-        for method, operation in path_item.items()
-        if method in {"get", "post", "patch", "delete", "put"}
+        operation["operationId"] for _, _, operation in _openapi_operations(spec)
     ]
 
     assert len(operation_ids) == len(set(operation_ids))
+
+
+def test_schema_route_names_are_unique(monkeypatch) -> None:
+    app = _build_app(monkeypatch)
+    route_names = [route.name for route in _schema_routes(app)]
+
+    assert all(route_names)
+    assert len(route_names) == len(set(route_names))
+
+
+def test_openapi_operation_ids_match_route_names(monkeypatch) -> None:
+    app = _build_app(monkeypatch)
+    spec = app.openapi()
+
+    for route in _schema_routes(app):
+        for method in route.methods or set():
+            method_lower = method.lower()
+            if method_lower not in OPENAPI_METHODS:
+                continue
+            operation = spec["paths"][route.path][method_lower]
+            assert operation["operationId"] == route.name
 
 
 def test_platform_routes_are_documented_with_stable_operation_ids_and_tags(
@@ -171,9 +234,9 @@ def test_platform_routes_are_documented_with_stable_operation_ids_and_tags(
                 operation["operationId"]
                 == EXPECTED_PLATFORM_OPERATION_IDS[(method, path)]
             )
-            assert expected_tag in operation["tags"]
-
-    assert spec["paths"]["/api/v1/platform/me"]["get"]["tags"] == ["platform-identity"]
+            assert operation["tags"] == [expected_tag]
+            assert set(operation["tags"]).issubset(PLATFORM_TAGS)
+            assert "platform" not in operation["tags"]
 
 
 def test_health_endpoints_are_not_tagged_as_platform(monkeypatch) -> None:
@@ -184,19 +247,34 @@ def test_health_endpoints_are_not_tagged_as_platform(monkeypatch) -> None:
             assert not any(tag.startswith("platform") for tag in operation["tags"])
 
 
-def test_platform_routes_have_success_response_models(monkeypatch) -> None:
-    spec = _openapi(monkeypatch)
+def test_platform_routes_have_required_typed_success_response_models(
+    monkeypatch,
+) -> None:
+    app = _build_app(monkeypatch)
+    spec = app.openapi()
 
-    for path, methods in PLATFORM_PATHS.items():
-        for method in methods:
-            operation = spec["paths"][path][method]
-            success_status = (
-                "201" if (method, path) == ("post", "/api/v1/platform/staff") else "200"
-            )
-            success = operation["responses"][success_status]
+    for route in _schema_routes(app):
+        if not route.path.startswith("/api/v1/platform/"):
+            continue
+        if route.status_code == 204:
+            continue
+        assert route.response_model is not None, route.path
+        origin = get_origin(route.response_model)
+        assert route.response_model is not Any, route.path
+        assert route.response_model not in {dict, list}, route.path
+        assert origin not in {dict, list}, route.path
+
+        for method in route.methods or set():
+            method_lower = method.lower()
+            if method_lower not in OPENAPI_METHODS:
+                continue
+            success_status = str(route.status_code or 200)
+            success = spec["paths"][route.path][method_lower]["responses"][
+                success_status
+            ]
             assert "application/json" in success["content"]
             schema = success["content"]["application/json"]["schema"]
-            assert "$ref" in schema
+            assert "$ref" in schema, (method, route.path)
 
     assert spec["paths"]["/api/v1/platform/users/limited"]["get"]["responses"]["200"][
         "content"
@@ -208,6 +286,54 @@ def test_platform_routes_have_success_response_models(monkeypatch) -> None:
     ]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/PlatformLimitedOrganisationsCollectionResponse"
     )
+
+
+def test_limited_platform_openapi_schemas_omit_restricted_fields(monkeypatch) -> None:
+    spec = _openapi(monkeypatch)
+
+    limited_audit = _limited_collection_item_properties(
+        spec, "PlatformLimitedAuditEventsCollectionResponse"
+    )
+    assert not {
+        "metadata_json",
+        "ip_address",
+        "user_agent",
+        "reason",
+        "actor_user_id",
+    }.intersection(limited_audit)
+    assert {"has_actor", "has_metadata", "has_reason"}.issubset(limited_audit)
+
+    limited_users = _limited_collection_item_properties(
+        spec, "PlatformLimitedUsersCollectionResponse"
+    )
+    assert not {
+        "email",
+        "email_verified",
+        "suspended_at",
+        "suspended_reason",
+        "external_auth_id",
+        "token",
+        "access_token",
+        "refresh_token",
+        "platform_staff",
+        "staff_id",
+        "role",
+        "permissions",
+    }.intersection(limited_users)
+
+    limited_organisations = _limited_collection_item_properties(
+        spec, "PlatformLimitedOrganisationsCollectionResponse"
+    )
+    assert not {
+        "suspended_at",
+        "suspended_reason",
+        "deleted_at",
+        "deleted_by_user_id",
+        "created_by_user_id",
+        "updated_at",
+        "owner_user_id",
+        "membership_id",
+    }.intersection(limited_organisations)
 
 
 def test_platform_routes_declare_rate_limit_policies(monkeypatch) -> None:

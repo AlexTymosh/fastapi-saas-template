@@ -47,7 +47,6 @@ async def _list_audit_events(
     "/limited",
     response_model=PlatformLimitedAuditEventsCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="list_limited_platform_audit_events",
 )
 async def list_limited_platform_audit_events(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(AUDIT_READ_POLICY))],
@@ -83,7 +82,6 @@ async def list_limited_platform_audit_events(
     "",
     response_model=PlatformAuditEventsCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="list_platform_audit_events",
 )
 async def list_platform_audit_events(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(AUDIT_READ_POLICY))],

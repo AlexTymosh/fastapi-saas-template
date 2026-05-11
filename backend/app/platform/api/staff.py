@@ -44,7 +44,6 @@ router = APIRouter(prefix="/platform/staff", tags=["platform-staff"])
     "",
     response_model=PlatformStaffCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="list_platform_staff",
 )
 async def list_platform_staff(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
@@ -70,7 +69,6 @@ async def list_platform_staff(
     response_model=PlatformStaffResponse,
     status_code=status.HTTP_201_CREATED,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="create_platform_staff",
 )
 async def create_platform_staff(
     payload: CreatePlatformStaffRequest,
@@ -107,7 +105,6 @@ async def create_platform_staff(
     "/{staff_id}",
     response_model=PlatformStaffResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="get_platform_staff",
 )
 async def get_platform_staff(
     staff_id: UUID,
@@ -126,7 +123,6 @@ async def get_platform_staff(
     "/{staff_id}/role",
     response_model=PlatformStaffResponse,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="update_platform_staff_role",
 )
 async def update_platform_staff_role(
     staff_id: UUID,
@@ -161,7 +157,6 @@ async def update_platform_staff_role(
     response_model=PlatformStaffResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="suspend_platform_staff",
 )
 async def suspend_platform_staff(
     staff_id: UUID,
@@ -195,7 +190,6 @@ async def suspend_platform_staff(
     response_model=PlatformStaffResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="restore_platform_staff",
 )
 async def restore_platform_staff(
     staff_id: UUID,
