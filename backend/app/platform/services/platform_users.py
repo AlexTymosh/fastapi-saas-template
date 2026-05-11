@@ -46,12 +46,22 @@ class PlatformUsersService:
         offset: int,
         status: UserStatus | None = None,
         q: str | None = None,
+        exact_email: str | None = None,
     ) -> tuple[list[User], int]:
         normalised_q = q.strip() if q is not None else None
         if normalised_q == "":
             normalised_q = None
+        normalised_exact_email = (
+            str(exact_email).strip().lower() if exact_email is not None else None
+        )
+        if normalised_exact_email == "":
+            normalised_exact_email = None
         return await self.user_repository.list_limited_paginated(
-            limit=limit, offset=offset, status=status, q=normalised_q
+            limit=limit,
+            offset=offset,
+            status=status,
+            q=normalised_q,
+            exact_email=normalised_exact_email,
         )
 
     async def get_user(self, user_id: UUID) -> User:
