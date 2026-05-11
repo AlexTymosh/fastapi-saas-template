@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -18,6 +19,7 @@ from app.core.platform import (
     PlatformActor,
     PlatformPermission,
     PlatformWriteContext,
+    require_any_platform_permission,
     require_platform_permission,
     require_rate_limited_platform_write_context,
 )
@@ -46,22 +48,29 @@ async def list_limited_platform_users(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         PlatformActor,
-        Depends(require_platform_permission(PlatformPermission.USERS_READ_LIMITED)),
+        Depends(
+            require_any_platform_permission(
+                PlatformPermission.USERS_READ_LIMITED,
+                PlatformPermission.USERS_READ,
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     status: UserStatus | None = None,
     q: str | None = Query(default=None, min_length=1, max_length=255),
+    exact_email: Annotated[EmailStr | None, Query()] = None,
 ) -> PlatformLimitedUsersCollectionResponse:
     users, total = await PlatformUsersService(db_session).list_limited_users(
         limit=limit,
         offset=offset,
         status=status,
         q=q,
+        exact_email=exact_email,
     )
     return PlatformLimitedUsersCollectionResponse(
-        data=[PlatformLimitedUserResponse.model_validate(user) for user in users],
+        data=[PlatformLimitedUserResponse.from_user(user) for user in users],
         meta=PlatformUsersMeta(total=total, limit=limit, offset=offset),
         links={},
     )

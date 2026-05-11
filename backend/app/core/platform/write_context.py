@@ -61,8 +61,21 @@ async def resolve_platform_actor(
     session: AsyncSession,
     required_permission: PlatformPermission,
 ) -> PlatformActor:
+    return await resolve_platform_actor_with_any_permission(
+        identity=identity,
+        session=session,
+        required_permissions=(required_permission,),
+    )
+
+
+async def resolve_platform_actor_with_any_permission(
+    *,
+    identity: AuthenticatedPrincipal,
+    session: AsyncSession,
+    required_permissions: tuple[PlatformPermission, ...],
+) -> PlatformActor:
     actor = await resolve_active_platform_actor(identity=identity, session=session)
-    if required_permission not in actor.permissions:
+    if not any(permission in actor.permissions for permission in required_permissions):
         raise ForbiddenError(detail="Platform access denied")
     return actor
 

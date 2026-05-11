@@ -18,6 +18,7 @@ from app.core.platform import (
     PlatformActor,
     PlatformPermission,
     PlatformWriteContext,
+    require_any_platform_permission,
     require_platform_permission,
     require_rate_limited_platform_write_context,
 )
@@ -48,7 +49,10 @@ async def list_limited_platform_orgs(
     _: Annotated[
         PlatformActor,
         Depends(
-            require_platform_permission(PlatformPermission.ORGANISATIONS_READ_LIMITED)
+            require_any_platform_permission(
+                PlatformPermission.ORGANISATIONS_READ_LIMITED,
+                PlatformPermission.ORGANISATIONS_READ,
+            )
         ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],

@@ -83,7 +83,15 @@ def test_limited_user_response_omits_sensitive_and_internal_fields(
 
     assert response.status_code == 200
     row = response.json()["data"][0]
-    assert set(row) == {"id", "first_name", "last_name", "status", "created_at"}
+    assert set(row) == {
+        "id",
+        "masked_email",
+        "first_name",
+        "last_name",
+        "status",
+        "created_at",
+    }
+    assert row["masked_email"] == "s************r@example.com"
     assert "sensitive.user@example.com" not in response.text
     for forbidden in (
         "email",
@@ -149,3 +157,67 @@ def test_limited_audit_response_omits_sensitive_audit_fields(
     assert row["has_actor"] is True
     assert row["has_metadata"] is True
     assert row["has_reason"] is True
+
+
+def test_limited_user_email_masking_helper_is_deterministic() -> None:
+    from app.platform.schemas.platform_users import PlatformLimitedUserResponse
+
+    assert PlatformLimitedUserResponse.mask_email(None) is None
+    assert PlatformLimitedUserResponse.mask_email("a@example.com") == "*@example.com"
+    assert PlatformLimitedUserResponse.mask_email("ab@example.com") == "a*@example.com"
+    assert (
+        PlatformLimitedUserResponse.mask_email("john.doe@example.com")
+        == "j******e@example.com"
+    )
+
+
+def test_limited_user_exact_email_finds_user_without_exposing_full_email(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_sensitive_records(migrated_session_factory)
+    actor = _seed_actor(migrated_session_factory, role=PlatformRole.SUPPORT_AGENT)
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={"exact_email": "  SENSITIVE.USER@EXAMPLE.COM  "},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 1
+    row = payload["data"][0]
+    assert row["masked_email"] == "s************r@example.com"
+    assert "email" not in row
+    assert "sensitive.user@example.com" not in response.text
+
+
+def test_limited_user_q_does_not_search_email_or_domain(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_sensitive_records(migrated_session_factory)
+    actor = _seed_actor(migrated_session_factory, role=PlatformRole.SUPPORT_AGENT)
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    email_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "sensitive.user@example.com"}
+    )
+    domain_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "example.com"}
+    )
+    name_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "Sensitive"}
+    )
+
+    assert email_response.status_code == 200
+    assert email_response.json()["meta"]["total"] == 0
+    assert domain_response.status_code == 200
+    assert domain_response.json()["meta"]["total"] == 0
+    assert name_response.status_code == 200
+    assert name_response.json()["meta"]["total"] == 1

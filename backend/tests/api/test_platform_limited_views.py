@@ -71,7 +71,7 @@ def _seed_limited_view_data(session_factory):
     return run_async(_run())
 
 
-def test_limited_platform_users_support_agent_can_filter_without_full_email(
+def test_limited_platform_users_exact_email_hides_full_email(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
     _seed_limited_view_data(migrated_session_factory)
@@ -88,13 +88,14 @@ def test_limited_platform_users_support_agent_can_filter_without_full_email(
 
     response = bundle.client.get(
         "/api/v1/platform/users/limited",
-        params={"q": "alpha.full@example.com", "status": "active"},
+        params={"exact_email": "alpha.full@example.com", "status": "active"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["meta"]["total"] == 1
     assert payload["data"][0]["first_name"] == "Alpha"
+    assert payload["data"][0]["masked_email"] == "a********l@example.com"
     assert "email" not in payload["data"][0]
     assert "alpha.full@example.com" not in response.text
 
@@ -147,3 +148,60 @@ def test_limited_platform_organisations_status_and_search_filters(
     payload = response.json()
     assert payload["meta"]["total"] == 1
     assert payload["data"][0]["slug"] == "beta-org"
+
+
+def test_limited_platform_users_q_searches_names_not_email_domain(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_limited_view_data(migrated_session_factory)
+    actor = _seed_staff(
+        migrated_session_factory,
+        external_auth_id="kc-support-limited-users-q",
+        email="support-limited-users-q@example.com",
+        role=PlatformRole.SUPPORT_AGENT,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    email_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "alpha.full@example.com"}
+    )
+    domain_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "example.com"}
+    )
+    name_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "Alpha"}
+    )
+
+    assert email_response.status_code == 200
+    assert email_response.json()["meta"]["total"] == 0
+    assert domain_response.status_code == 200
+    assert domain_response.json()["meta"]["total"] == 0
+    assert name_response.status_code == 200
+    assert name_response.json()["meta"]["total"] == 1
+
+
+def test_full_platform_users_q_still_searches_email(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_limited_view_data(migrated_session_factory)
+    actor = _seed_staff(
+        migrated_session_factory,
+        external_auth_id="kc-admin-full-users-email-q",
+        email="admin-full-users-email-q@example.com",
+        role=PlatformRole.PLATFORM_ADMIN,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.get(
+        "/api/v1/platform/users", params={"q": "alpha.full@example.com"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["total"] == 1
+    assert response.json()["data"][0]["email"] == "alpha.full@example.com"
