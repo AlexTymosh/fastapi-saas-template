@@ -21,8 +21,17 @@ class PlatformStaffService:
         self.repository = PlatformStaffRepository(session)
         self.user_repository = UserRepository(session)
 
-    async def list_staff(self, *, limit: int, offset: int):
-        return await self.repository.list_staff(limit=limit, offset=offset)
+    async def list_staff(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: PlatformStaffStatus | None,
+        role: PlatformStaffRole | None,
+    ):
+        return await self.repository.list_staff(
+            limit=limit, offset=offset, status=status, role=role
+        )
 
     async def get_staff(self, staff_id: UUID):
         staff = await self.repository.get_by_id(staff_id)

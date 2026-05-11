@@ -117,6 +117,63 @@ def test_openapi_operation_ids_are_unique(monkeypatch) -> None:
     assert len(operation_ids) == len(set(operation_ids))
 
 
+def test_platform_operation_ids_are_frozen(monkeypatch) -> None:
+    spec = _openapi(monkeypatch)
+
+    expected_operation_ids = {
+        ("get", "/api/v1/platform/me"): "get_platform_identity",
+        ("get", "/api/v1/platform/users"): "list_platform_users",
+        ("get", "/api/v1/platform/users/limited"): "list_limited_platform_users",
+        ("get", "/api/v1/platform/users/{user_id}"): "get_platform_user",
+        ("post", "/api/v1/platform/users/{user_id}/suspend"): "suspend_platform_user",
+        ("post", "/api/v1/platform/users/{user_id}/restore"): "restore_platform_user",
+        ("get", "/api/v1/platform/organisations"): "list_platform_organisations",
+        (
+            "get",
+            "/api/v1/platform/organisations/limited",
+        ): "list_limited_platform_organisations",
+        (
+            "get",
+            "/api/v1/platform/organisations/{organisation_id}",
+        ): "get_platform_organisation",
+        (
+            "patch",
+            "/api/v1/platform/organisations/{organisation_id}",
+        ): "patch_platform_organisation",
+        (
+            "post",
+            "/api/v1/platform/organisations/{organisation_id}/suspend",
+        ): "suspend_platform_organisation",
+        (
+            "post",
+            "/api/v1/platform/organisations/{organisation_id}/restore",
+        ): "restore_platform_organisation",
+        ("get", "/api/v1/platform/audit-events"): "list_platform_audit_events",
+        (
+            "get",
+            "/api/v1/platform/audit-events/limited",
+        ): "list_limited_platform_audit_events",
+        ("get", "/api/v1/platform/staff"): "list_platform_staff",
+        ("post", "/api/v1/platform/staff"): "create_platform_staff",
+        ("get", "/api/v1/platform/staff/{staff_id}"): "get_platform_staff",
+        (
+            "patch",
+            "/api/v1/platform/staff/{staff_id}/role",
+        ): "update_platform_staff_role",
+        (
+            "post",
+            "/api/v1/platform/staff/{staff_id}/suspend",
+        ): "suspend_platform_staff",
+        (
+            "post",
+            "/api/v1/platform/staff/{staff_id}/restore",
+        ): "restore_platform_staff",
+    }
+
+    for (method, path), operation_id in expected_operation_ids.items():
+        assert spec["paths"][path][method]["operationId"] == operation_id
+
+
 def test_platform_routes_are_documented_with_stable_operation_ids_and_tags(
     monkeypatch,
 ) -> None:

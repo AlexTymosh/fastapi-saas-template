@@ -30,17 +30,29 @@ class PlatformStaffRepository:
         return result.scalar_one_or_none()
 
     async def list_staff(
-        self, *, limit: int, offset: int
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: PlatformStaffStatus | None = None,
+        role: PlatformStaffRole | None = None,
     ) -> tuple[list[PlatformStaff], int]:
+        stmt = select(PlatformStaff)
+        total_stmt = select(func.count()).select_from(PlatformStaff)
+        conditions = []
+        if status is not None:
+            conditions.append(PlatformStaff.status == status.value)
+        if role is not None:
+            conditions.append(PlatformStaff.role == role.value)
+        for condition in conditions:
+            stmt = stmt.where(condition)
+            total_stmt = total_stmt.where(condition)
         result = await self.session.execute(
-            select(PlatformStaff)
-            .order_by(PlatformStaff.created_at.desc(), PlatformStaff.id.desc())
+            stmt.order_by(PlatformStaff.created_at.desc(), PlatformStaff.id.desc())
             .offset(offset)
             .limit(limit)
         )
-        total = (
-            await self.session.execute(select(func.count()).select_from(PlatformStaff))
-        ).scalar_one()
+        total = (await self.session.execute(total_stmt)).scalar_one()
         return list(result.scalars().all()), int(total)
 
     async def create_staff(

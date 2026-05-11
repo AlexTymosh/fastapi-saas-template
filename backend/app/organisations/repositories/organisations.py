@@ -46,12 +46,27 @@ class OrganisationRepository:
         limit: int,
         offset: int,
         include_deleted: bool = False,
+        status: OrganisationStatus | None = None,
+        q: str | None = None,
     ) -> tuple[list[Organisation], int]:
         stmt = select(Organisation)
         total_stmt = select(func.count()).select_from(Organisation)
+        conditions = []
         if not include_deleted:
-            stmt = stmt.where(Organisation.deleted_at.is_(None))
-            total_stmt = total_stmt.where(Organisation.deleted_at.is_(None))
+            conditions.append(Organisation.deleted_at.is_(None))
+        if status is not None:
+            conditions.append(Organisation.status == status)
+        if q:
+            pattern = f"%{q.lower()}%"
+            conditions.append(
+                or_(
+                    func.lower(Organisation.name).like(pattern),
+                    func.lower(Organisation.slug).like(pattern),
+                )
+            )
+        for condition in conditions:
+            stmt = stmt.where(condition)
+            total_stmt = total_stmt.where(condition)
         stmt = (
             stmt.order_by(Organisation.created_at.desc(), Organisation.id.desc())
             .offset(offset)

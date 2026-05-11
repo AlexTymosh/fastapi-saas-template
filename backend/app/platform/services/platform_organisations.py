@@ -29,12 +29,22 @@ class PlatformOrganisationsService:
         self.audit_service = AuditEventService(session)
 
     async def list_organisations(
-        self, *, limit: int, offset: int
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: OrganisationStatus | None,
+        q: str | None,
     ) -> tuple[list[Organisation], int]:
+        normalised_q = q.strip() if q is not None else None
+        if normalised_q == "":
+            normalised_q = None
         return await self.organisation_repository.list_paginated(
             limit=limit,
             offset=offset,
             include_deleted=True,
+            status=status,
+            q=normalised_q,
         )
 
     async def list_limited_organisations(

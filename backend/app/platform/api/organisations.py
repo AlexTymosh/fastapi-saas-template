@@ -90,10 +90,12 @@ async def list_platform_orgs(
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    status: OrganisationStatus | None = None,
+    q: str | None = Query(default=None, min_length=1, max_length=255),
 ) -> PlatformOrganisationsCollectionResponse:
     organisations, total = await PlatformOrganisationsService(
         db_session
-    ).list_organisations(limit=limit, offset=offset)
+    ).list_organisations(limit=limit, offset=offset, status=status, q=q)
     return PlatformOrganisationsCollectionResponse(
         data=[
             PlatformOrganisationResponse.model_validate(org) for org in organisations

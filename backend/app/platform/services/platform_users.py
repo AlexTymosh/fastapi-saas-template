@@ -24,8 +24,20 @@ class PlatformUsersService:
         self.user_repository = UserRepository(session)
         self.audit_service = AuditEventService(session)
 
-    async def list_users(self, *, limit: int, offset: int) -> tuple[list[User], int]:
-        return await self.user_repository.list_paginated(limit=limit, offset=offset)
+    async def list_users(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: UserStatus | None,
+        q: str | None,
+    ) -> tuple[list[User], int]:
+        normalised_q = q.strip() if q is not None else None
+        if normalised_q == "":
+            normalised_q = None
+        return await self.user_repository.list_paginated(
+            limit=limit, offset=offset, status=status, q=normalised_q
+        )
 
     async def list_limited_users(
         self,
