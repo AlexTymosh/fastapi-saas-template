@@ -79,6 +79,7 @@ class UserRepository:
         offset: int,
         status: UserStatus | None = None,
         q: str | None = None,
+        exact_email: str | None = None,
     ) -> tuple[list[User], int]:
         stmt = select(User)
         total_stmt = select(func.count()).select_from(User)
@@ -91,9 +92,10 @@ class UserRepository:
                 or_(
                     func.lower(User.first_name).like(pattern),
                     func.lower(User.last_name).like(pattern),
-                    func.lower(User.email).like(pattern),
                 )
             )
+        if exact_email:
+            conditions.append(func.lower(User.email) == exact_email.lower())
         for condition in conditions:
             stmt = stmt.where(condition)
             total_stmt = total_stmt.where(condition)

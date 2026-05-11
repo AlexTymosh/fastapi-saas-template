@@ -191,7 +191,7 @@ GET /api/v1/platform/organisations/{organisation_id}
 
 Full platform list and detail views are reserved for `platform_admin` or actors with the corresponding full permissions from `ROLE_PERMISSIONS`, such as `users:read`, `organisations:read`, `platform_staff:manage`, or `audit:read`. Full views may expose operational fields required for privileged support, audit, compliance, or recovery workflows.
 
-Limited platform views are separate endpoints for `support_agent` and `compliance_officer` according to `ROLE_PERMISSIONS`. They intentionally expose reduced DTOs and must not be treated as aliases for full platform views. Current limited view endpoints are:
+Limited platform views are separate endpoints for `support_agent` and `compliance_officer` according to `ROLE_PERMISSIONS`. Actors with the corresponding full read permission are also allowed to call the limited endpoint, so `users:read` implies `users:read_limited` endpoint access, `organisations:read` implies `organisations:read_limited` endpoint access, and `audit:read` implies `audit:read_limited` endpoint access. Limited endpoints intentionally expose reduced DTOs and must not be treated as aliases for full platform views. Current limited view endpoints are:
 
 ```text
 GET /api/v1/platform/users/limited
@@ -203,13 +203,16 @@ The limited user DTO may contain only:
 
 ```text
 id
+masked_email
 first_name
 last_name
 status
 created_at
 ```
 
-The limited user DTO must not return `email`, `external_auth_id`, `email_verified`, `suspended_at`, `suspended_reason`, onboarding or other internal fields, token or credential data, or audit metadata. The endpoint may search by email internally when `q` is used, but the full email address must never be returned in the limited response.
+The limited user DTO must not return `email`, `external_auth_id`, `email_verified`, `suspended_at`, `suspended_reason`, onboarding or other internal fields, token or credential data, or audit metadata. It returns `masked_email` for safe support identification without exporting raw email addresses. Masking is deterministic in the response schema/presentation layer: `None` stays `None`, one-character local parts become `*@domain`, two-character local parts keep the first character, and longer local parts keep only the first and last local-part characters. Repositories still return full domain rows and must not implement masking.
+
+Limited user search separates safe broad search from exact email lookup. The `q` parameter searches only safe name fields (`first_name` and `last_name`) and must not search email addresses or domains, because broad email search enables address/domain enumeration. The `exact_email` parameter is available for support workflows that already have a user-provided address; it is trimmed, validated as an email address, matched case-insensitively, and used only as a filter. `exact_email` must never be returned in the limited response. Full platform user endpoints may keep their broader operational email search contract for actors with `users:read`.
 
 The limited organisation DTO may contain only:
 
@@ -230,6 +233,7 @@ limit
 offset
 status
 q
+exact_email for limited users only
 ```
 
 Ordering must be deterministic for both full and limited platform lists:

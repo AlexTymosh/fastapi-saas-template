@@ -1,5 +1,6 @@
 from app.core.platform.actors import PlatformActor
 from app.core.platform.dependencies import (
+    require_any_platform_permission,
     require_platform_actor,
     require_platform_permission,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "PlatformRole",
     "PlatformWriteContext",
     "PlatformStaffStatus",
+    "require_any_platform_permission",
     "require_platform_actor",
     "require_platform_permission",
     "require_platform_write_context",

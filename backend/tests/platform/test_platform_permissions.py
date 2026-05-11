@@ -245,3 +245,131 @@ def test_platform_admin_permissions_include_gdpr_erase():
 
     perms = ROLE_PERMISSIONS[PlatformRole.PLATFORM_ADMIN]
     assert PlatformPermission.GDPR_ERASE in perms
+
+
+def test_require_any_platform_permission_allows_limited_permission(
+    migrated_session_factory,
+) -> None:
+    from app.core.platform.dependencies import require_any_platform_permission
+
+    user = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-any-limited",
+        email="any-limited@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+    dependency = require_any_platform_permission(
+        PlatformPermission.USERS_READ_LIMITED,
+        PlatformPermission.USERS_READ,
+    )
+
+    async def _assert_allowed() -> None:
+        async with migrated_session_factory() as session:
+            actor = await dependency(
+                identity=identity_for(user.external_auth_id, user.email),
+                db_session=session,
+            )
+            assert PlatformPermission.USERS_READ_LIMITED in actor.permissions
+
+    run_async(_assert_allowed())
+
+
+def test_require_any_platform_permission_allows_full_permission(
+    migrated_session_factory,
+) -> None:
+    from app.core.platform.dependencies import require_any_platform_permission
+
+    user = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-any-full",
+        email="any-full@example.com",
+        role=PlatformRole.PLATFORM_ADMIN.value,
+    )
+    dependency = require_any_platform_permission(
+        PlatformPermission.USERS_READ_LIMITED,
+        PlatformPermission.USERS_READ,
+    )
+
+    async def _assert_allowed() -> None:
+        async with migrated_session_factory() as session:
+            actor = await dependency(
+                identity=identity_for(user.external_auth_id, user.email),
+                db_session=session,
+            )
+            assert PlatformPermission.USERS_READ in actor.permissions
+
+    run_async(_assert_allowed())
+
+
+@pytest.mark.parametrize(
+    "user_status,staff_status",
+    [
+        (UserStatus.ACTIVE, PlatformStaffStatus.ACTIVE),
+        (UserStatus.ACTIVE, PlatformStaffStatus.SUSPENDED),
+        (UserStatus.SUSPENDED, PlatformStaffStatus.ACTIVE),
+    ],
+)
+def test_require_any_platform_permission_denial_cases(
+    migrated_session_factory,
+    user_status: UserStatus,
+    staff_status: PlatformStaffStatus,
+) -> None:
+    from app.core.platform.dependencies import require_any_platform_permission
+
+    user = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id=f"kc-any-denied-{user_status.value}-{staff_status.value}",
+        email=f"any-denied-{user_status.value}-{staff_status.value}@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+        user_status=user_status,
+        staff_status=staff_status,
+    )
+    dependency = require_any_platform_permission(PlatformPermission.USERS_READ)
+
+    async def _assert_denied() -> None:
+        async with migrated_session_factory() as session:
+            try:
+                await dependency(
+                    identity=identity_for(user.external_auth_id, user.email),
+                    db_session=session,
+                )
+            except Exception as exc:  # noqa: BLE001
+                assert exc.__class__.__name__ == "ForbiddenError"
+                assert exc.detail == "Platform access denied"
+                return
+            raise AssertionError("Expected generic platform access denial")
+
+    run_async(_assert_denied())
+
+
+def test_require_any_platform_permission_allows_full_permission_without_limited(
+    migrated_session_factory, monkeypatch
+) -> None:
+    from app.core.platform.dependencies import require_any_platform_permission
+    from app.core.platform.permissions import ROLE_PERMISSIONS
+
+    user = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-any-full-only",
+        email="any-full-only@example.com",
+        role=PlatformRole.SUPPORT_AGENT.value,
+    )
+    monkeypatch.setitem(
+        ROLE_PERMISSIONS,
+        PlatformRole.SUPPORT_AGENT,
+        frozenset({PlatformPermission.USERS_READ}),
+    )
+    dependency = require_any_platform_permission(
+        PlatformPermission.USERS_READ_LIMITED,
+        PlatformPermission.USERS_READ,
+    )
+
+    async def _assert_allowed() -> None:
+        async with migrated_session_factory() as session:
+            actor = await dependency(
+                identity=identity_for(user.external_auth_id, user.email),
+                db_session=session,
+            )
+            assert actor.permissions == frozenset({PlatformPermission.USERS_READ})
+
+    run_async(_assert_allowed())

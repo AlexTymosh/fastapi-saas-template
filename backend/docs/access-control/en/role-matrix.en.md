@@ -123,13 +123,13 @@ Platform read access is intentionally split into full operational views and limi
 | Endpoint | Support agent | Compliance officer | Platform admin | Data scope |
 |---|---:|---:|---:|---|
 | `GET /api/v1/platform/users` | No | No | Yes | Full platform user DTO for operational administration. |
-| `GET /api/v1/platform/users/limited` | Yes | Yes | Yes | Limited user DTO with `id`, name fields, `status`, and `created_at`; full email, external identity IDs, suspension details, onboarding state, and identity-provider internals are omitted. |
+| `GET /api/v1/platform/users/limited` | Yes | Yes | Yes | Limited user DTO with `id`, `masked_email`, name fields, `status`, and `created_at`; full email, external identity IDs, suspension details, onboarding state, and identity-provider internals are omitted. |
 | `GET /api/v1/platform/organisations` | No | No | Yes | Full platform organisation DTO for operational administration; existing admin include-deleted visibility is preserved. |
 | `GET /api/v1/platform/organisations/limited` | Yes | Yes | Yes | Limited organisation DTO with `id`, `name`, `slug`, `status`, and `created_at`; deleted organisations, suspension reasons, owner internals, membership internals, and audit metadata are omitted. |
 | `GET /api/v1/platform/audit-events` | No | Yes | Yes | Full audit view according to platform permissions. |
 | `GET /api/v1/platform/audit-events/limited` | Yes | Yes | Yes | Redacted audit view; raw metadata, IP address, user-agent, free-text reason, and direct actor identifiers are omitted. |
 
-Limited endpoints support `limit`, `offset`, optional `status`, and optional `q` query parameters. User search may use email internally, but the limited response must not expose full email. Organisation limited search covers safe `name` and `slug` fields and excludes soft-deleted organisations by default.
+Limited endpoints support `limit`, `offset`, optional `status`, and optional `q` query parameters. Full read permissions imply access to the corresponding limited endpoint. Limited user responses expose deterministic `masked_email`, but never full `email`; repositories return full domain rows and masking happens in response schemas/presentation. Limited user `q` searches only `first_name` and `last_name` to avoid email/domain enumeration, while `exact_email` is a trimmed, valid, case-insensitive exact-match filter for workflows where support already has the address. Full user search may retain its broader operational email search contract for actors with `users:read`. Organisation limited search covers safe `name` and `slug` fields and excludes soft-deleted organisations by default.
 
 The limited DTOs are designed for future admin frontend screens where support or compliance users need safe discovery workflows without receiving operationally sensitive fields.
 

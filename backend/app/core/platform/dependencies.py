@@ -13,6 +13,7 @@ from app.core.platform.permissions import PlatformPermission
 from app.core.platform.write_context import (
     resolve_active_platform_actor,
     resolve_platform_actor,
+    resolve_platform_actor_with_any_permission,
 )
 
 
@@ -44,6 +45,27 @@ def require_platform_permission(
             identity=identity,
             session=db_session,
             required_permission=permission,
+        )
+
+    return dependency
+
+
+def require_any_platform_permission(
+    *permissions: PlatformPermission,
+) -> Callable[..., PlatformActor]:
+    if not permissions:
+        raise ValueError("At least one platform permission is required")
+
+    async def dependency(
+        identity: Annotated[
+            AuthenticatedPrincipal, Depends(require_authenticated_principal)
+        ],
+        db_session: Annotated[AsyncSession, Depends(get_db_session)],
+    ) -> PlatformActor:
+        return await resolve_platform_actor_with_any_permission(
+            identity=identity,
+            session=db_session,
+            required_permissions=permissions,
         )
 
     return dependency
