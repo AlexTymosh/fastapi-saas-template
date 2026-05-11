@@ -104,6 +104,7 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
             "/api/v1/organisations/{organisation_id}/invites/{invite_id}/resend",
             "invite_resend_organisation_daily",
         ),
+        ("GET", "/api/v1/platform/me", "platform_read"),
         ("GET", "/api/v1/platform/users", "platform_read"),
         ("GET", "/api/v1/platform/users/{user_id}", "platform_read"),
         ("GET", "/api/v1/platform/organisations", "platform_read"),
