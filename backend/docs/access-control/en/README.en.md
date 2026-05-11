@@ -8,7 +8,7 @@ The documentation covers:
 
 - user onboarding and organisation creation;
 - tenant-level roles and permissions;
-- platform-level staff roles and permissions;
+- platform-level staff roles, identity, and permissions;
 - invite and membership rules;
 - completed removal of legacy global-administrator bypass logic;
 - audit expectations for sensitive actions.
@@ -30,7 +30,7 @@ Authorization is DB-driven: tenant authorization is resolved from local membersh
 
 ```text
 Tenant endpoints:   /api/v1/organisations/*
-Platform endpoints: /api/v1/platform/*
+Platform endpoints: /api/v1/platform/*, including /api/v1/platform/me for safe platform identity
 ```
 
 A `platform_admin` who is not a member of organisation X must receive `403` from:

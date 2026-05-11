@@ -34,11 +34,10 @@ class PlatformWriteContext:
     actor: PlatformActor
 
 
-async def resolve_platform_actor(
+async def resolve_active_platform_actor(
     *,
     identity: AuthenticatedPrincipal,
     session: AsyncSession,
-    required_permission: PlatformPermission,
 ) -> PlatformActor:
     user = await UserService(session).get_current_user_by_external_auth_id(identity)
     if user is None:
@@ -53,9 +52,27 @@ async def resolve_platform_actor(
     except ValueError:
         raise ForbiddenError(detail="Platform access denied") from None
     role_permissions = ROLE_PERMISSIONS.get(role, frozenset())
-    if required_permission not in role_permissions:
-        raise ForbiddenError(detail="Platform access denied")
     return PlatformActor(user=user, staff=staff, permissions=role_permissions)
+
+
+def ensure_platform_permission(
+    *, actor: PlatformActor, required_permission: PlatformPermission
+) -> PlatformActor:
+    if required_permission not in actor.permissions:
+        raise ForbiddenError(detail="Platform access denied")
+    return actor
+
+
+async def resolve_platform_actor(
+    *,
+    identity: AuthenticatedPrincipal,
+    session: AsyncSession,
+    required_permission: PlatformPermission,
+) -> PlatformActor:
+    actor = await resolve_active_platform_actor(identity=identity, session=session)
+    return ensure_platform_permission(
+        actor=actor, required_permission=required_permission
+    )
 
 
 def require_platform_write_context(

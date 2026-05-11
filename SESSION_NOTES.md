@@ -297,9 +297,7 @@ Implemented backend-enforced limited platform audit view instead of deleting `AU
 - `backend/tests/api/test_openapi_contract.py`
 - `backend/docs/comprehensive_security_review_ru.md`
 - `backend/docs/access-control/en/platform-access.en.md`
-- `backend/docs/access-control/ru/platform-access.ru.md`
 - `backend/docs/access-control/en/implementation-plan.en.md`
-- `backend/docs/access-control/ru/implementation-plan.ru.md`
 - `README.md`
 - `AGENTS.md`
 

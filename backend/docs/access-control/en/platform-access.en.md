@@ -132,7 +132,7 @@ compliance_officer:
 
 ## 5. Platform actor resolution
 
-Platform endpoint dependency should check:
+Platform endpoint dependencies resolve platform actors in two layers:
 
 ```text
 1. JWT is valid.
@@ -140,16 +140,20 @@ Platform endpoint dependency should check:
 3. user.status = active.
 4. Active platform_staff record exists.
 5. platform_staff.status = active.
-6. role has required permission.
+6. The platform_staff role is mapped to backend permissions.
+7. Endpoints that perform a business action check the required permission.
 ```
 
-If any check fails, return 403, except missing/invalid JWT which should return 401.
+If any actor-resolution check fails, return 403 with a generic platform access denial, except missing/invalid JWT which should return 401. This keeps non-platform users, suspended users, missing staff rows, and suspended staff rows indistinguishable to callers.
+
+`GET /api/v1/platform/me` uses the active-actor layer only. It intentionally does not require an arbitrary business permission such as `users:read` or `audit:read`, because its purpose is to describe the already authenticated platform actor.
 
 ## 6. Endpoint separation
 
 Platform actors must use dedicated routes:
 
 ```text
+/api/v1/platform/me
 /api/v1/platform/users/*
 /api/v1/platform/organisations/*
 /api/v1/platform/staff/*
@@ -173,7 +177,37 @@ The same actor may use a dedicated platform endpoint:
 GET /api/v1/platform/organisations/{organisation_id}
 ```
 
-## 7. Platform-created organisations and initial owner assignment
+
+## 7. Platform identity endpoint
+
+`GET /api/v1/platform/me` is the safe platform/admin identity endpoint for the future admin frontend. After login, the frontend can call this endpoint to determine whether the current authenticated user has platform access, which platform role they have, which backend-derived permissions are available, and which administrative UI sections may be shown.
+
+The endpoint returns safe identity and profile fields from the local backend projection and `platform_staff` row, including:
+
+```text
+user_id
+staff_id
+role
+staff_status
+permissions
+email
+email_verified
+first_name
+last_name
+user_status
+user_created_at
+user_updated_at
+staff_created_at
+staff_updated_at
+```
+
+The `role` value is the local `platform_staff.role`. The `permissions` list is derived from the backend role-to-permission mapping for that local role. JWT-provided roles and permissions are not trusted and must not be used to grant platform access at request time.
+
+Denied access behaviour is deliberately generic: missing local user projection, suspended local user, missing platform staff row, suspended platform staff row, invalid platform staff role, or insufficient platform access all return `403` through the common Problem Details error handlers. Missing or invalid authentication returns `401`. The endpoint must not create local users or platform staff rows.
+
+The endpoint is protected by the `PLATFORM_READ_POLICY` rate-limit policy.
+
+## 8. Platform-created organisations and initial owner assignment
 
 When a standalone tenant user creates an organisation, that creator becomes `owner`.
 
@@ -185,7 +219,7 @@ When a platform actor creates an organisation through a platform endpoint:
 
 Ownerless organisation creation is a special bootstrap/operational case and must not be the default path.
 
-## 8. Bootstrap first platform admin
+## 9. Bootstrap first platform admin
 
 The first platform admin should be created by a management command, not by public API.
 
@@ -206,7 +240,7 @@ Expected behaviour:
 
 Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles or manual database edits.
 
-## 9. Audit requirements
+## 10. Audit requirements
 
 All platform actions must write audit events.
 
@@ -249,7 +283,7 @@ gdpr_export_requested
 gdpr_erasure_requested
 ```
 
-## 10. Emergency owner correction
+## 11. Emergency owner correction
 
 Tenant API must not support ownership transfer.
 
@@ -277,7 +311,7 @@ internal operational path until a dedicated public API contract is introduced.
 
 ## Implementation status update (2026-04-30)
 - Added backend-managed `platform_staff` foundation.
-- Added `/api/v1/platform/*` endpoints for users, organisations, and audit-events.
+- Added `/api/v1/platform/*` endpoints for identity, users, organisations, and audit-events.
 - Added `require_platform_permission()` DB-backed authorization; JWT roles must not grant request-time permissions.
 
 - Platform access is DB-backed via `platform_staff`; JWT roles must never grant request-time backend permissions and may only become future controlled JIT provisioning input for local DB records.
