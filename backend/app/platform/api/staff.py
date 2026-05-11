@@ -26,7 +26,7 @@ from app.core.rate_limit import (
     PLATFORM_STAFF_WRITE_POLICY,
     rate_limit_dependency,
 )
-from app.platform.models.platform_staff import PlatformStaffRole, PlatformStaffStatus
+from app.platform.schemas.platform_query import PlatformStaffListQuery
 from app.platform.schemas.platform_staff import (
     CreatePlatformStaffRequest,
     PlatformStaffCollectionResponse,
@@ -53,17 +53,14 @@ async def list_platform_staff(
         Depends(require_platform_permission(PlatformPermission.PLATFORM_STAFF_MANAGE)),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    status: PlatformStaffStatus | None = None,
-    role: PlatformStaffRole | None = None,
+    query: Annotated[PlatformStaffListQuery, Query()],
 ) -> PlatformStaffCollectionResponse:
     staff_rows, total = await PlatformStaffService(db_session).list_staff(
-        limit=limit, offset=offset, status=status, role=role
+        limit=query.limit, offset=query.offset, status=query.status, role=query.role
     )
     return PlatformStaffCollectionResponse(
         data=[PlatformStaffResponse.model_validate(staff) for staff in staff_rows],
-        meta=PlatformStaffMeta(total=total, limit=limit, offset=offset),
+        meta=PlatformStaffMeta(total=total, limit=query.limit, offset=query.offset),
         links={},
     )
 
