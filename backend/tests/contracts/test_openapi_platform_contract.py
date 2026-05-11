@@ -184,6 +184,42 @@ def test_health_endpoints_are_not_tagged_as_platform(monkeypatch) -> None:
             assert not any(tag.startswith("platform") for tag in operation["tags"])
 
 
+def test_platform_list_query_parameters_are_documented_with_validation(
+    monkeypatch,
+) -> None:
+    spec = _openapi(monkeypatch)
+
+    users_params = {
+        parameter["name"]: parameter
+        for parameter in spec["paths"]["/api/v1/platform/users"]["get"]["parameters"]
+    }
+    limited_users_params = {
+        parameter["name"]: parameter
+        for parameter in spec["paths"]["/api/v1/platform/users/limited"]["get"][
+            "parameters"
+        ]
+    }
+    staff_params = {
+        parameter["name"]: parameter
+        for parameter in spec["paths"]["/api/v1/platform/staff"]["get"]["parameters"]
+    }
+
+    assert users_params["limit"]["schema"]["maximum"] == 100
+    assert users_params["limit"]["schema"]["minimum"] == 1
+    assert users_params["offset"]["schema"]["minimum"] == 0
+    users_q_schema = users_params["q"]["schema"]["anyOf"][0]
+    assert users_q_schema["maxLength"] == 255
+    assert users_q_schema["minLength"] == 1
+    assert "exact_email" not in users_params
+
+    exact_email_schema = limited_users_params["exact_email"]["schema"]
+    assert {schema.get("format") for schema in exact_email_schema["anyOf"]} >= {"email"}
+    limited_users_q_schema = limited_users_params["q"]["schema"]["anyOf"][0]
+    assert limited_users_q_schema["maxLength"] == 255
+    assert staff_params["limit"]["schema"]["maximum"] == 100
+    assert "role" in staff_params
+
+
 def test_platform_routes_have_success_response_models(monkeypatch) -> None:
     spec = _openapi(monkeypatch)
 

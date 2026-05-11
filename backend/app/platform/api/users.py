@@ -4,7 +4,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -24,6 +23,10 @@ from app.core.platform import (
     require_rate_limited_platform_write_context,
 )
 from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
+from app.platform.schemas.platform_query import (
+    PlatformFullUserListQuery,
+    PlatformLimitedUserListQuery,
+)
 from app.platform.schemas.platform_users import (
     PlatformLimitedUserResponse,
     PlatformLimitedUsersCollectionResponse,
@@ -33,7 +36,6 @@ from app.platform.schemas.platform_users import (
     ReasonRequest,
 )
 from app.platform.services.platform_users import PlatformUsersService
-from app.users.models.user import UserStatus
 
 router = APIRouter(prefix="/platform/users", tags=["platform-users"])
 
@@ -56,22 +58,18 @@ async def list_limited_platform_users(
         ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    status: UserStatus | None = None,
-    q: str | None = Query(default=None, min_length=1, max_length=255),
-    exact_email: Annotated[EmailStr | None, Query()] = None,
+    query: Annotated[PlatformLimitedUserListQuery, Query()],
 ) -> PlatformLimitedUsersCollectionResponse:
     users, total = await PlatformUsersService(db_session).list_limited_users(
-        limit=limit,
-        offset=offset,
-        status=status,
-        q=q,
-        exact_email=exact_email,
+        limit=query.limit,
+        offset=query.offset,
+        status=query.status,
+        q=query.q,
+        exact_email=query.exact_email,
     )
     return PlatformLimitedUsersCollectionResponse(
         data=[PlatformLimitedUserResponse.from_user(user) for user in users],
-        meta=PlatformUsersMeta(total=total, limit=limit, offset=offset),
+        meta=PlatformUsersMeta(total=total, limit=query.limit, offset=query.offset),
         links={},
     )
 
@@ -89,17 +87,14 @@ async def list_platform_users(
         Depends(require_platform_permission(PlatformPermission.USERS_READ)),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    status: UserStatus | None = None,
-    q: str | None = Query(default=None, min_length=1, max_length=255),
+    query: Annotated[PlatformFullUserListQuery, Query()],
 ) -> PlatformUsersCollectionResponse:
     users, total = await PlatformUsersService(db_session).list_users(
-        limit=limit, offset=offset, status=status, q=q
+        limit=query.limit, offset=query.offset, status=query.status, q=query.q
     )
     return PlatformUsersCollectionResponse(
         data=[PlatformUserResponse.model_validate(user) for user in users],
-        meta=PlatformUsersMeta(total=total, limit=limit, offset=offset),
+        meta=PlatformUsersMeta(total=total, limit=query.limit, offset=query.offset),
         links={},
     )
 

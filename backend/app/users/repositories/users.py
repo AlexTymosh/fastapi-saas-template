@@ -52,12 +52,12 @@ class UserRepository:
         if status is not None:
             conditions.append(User.status == status)
         if q:
-            pattern = f"%{q.lower()}%"
+            pattern = f"%{q}%"
             conditions.append(
                 or_(
-                    func.lower(User.email).like(pattern),
-                    func.lower(User.first_name).like(pattern),
-                    func.lower(User.last_name).like(pattern),
+                    User.email.ilike(pattern),
+                    User.first_name.ilike(pattern),
+                    User.last_name.ilike(pattern),
                 )
             )
         for condition in conditions:
@@ -87,11 +87,11 @@ class UserRepository:
         if status is not None:
             conditions.append(User.status == status)
         if q:
-            pattern = f"%{q.lower()}%"
+            pattern = f"%{q}%"
             conditions.append(
                 or_(
-                    func.lower(User.first_name).like(pattern),
-                    func.lower(User.last_name).like(pattern),
+                    User.first_name.ilike(pattern),
+                    User.last_name.ilike(pattern),
                 )
             )
         if exact_email:

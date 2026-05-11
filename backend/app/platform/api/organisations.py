@@ -23,7 +23,6 @@ from app.core.platform import (
     require_rate_limited_platform_write_context,
 )
 from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
-from app.organisations.models.organisation import OrganisationStatus
 from app.platform.schemas.platform_organisations import (
     PlatformLimitedOrganisationResponse,
     PlatformLimitedOrganisationsCollectionResponse,
@@ -31,6 +30,10 @@ from app.platform.schemas.platform_organisations import (
     PlatformOrganisationResponse,
     PlatformOrganisationsCollectionResponse,
     PlatformOrganisationsMeta,
+)
+from app.platform.schemas.platform_query import (
+    PlatformLimitedOrganisationListQuery,
+    PlatformOrganisationListQuery,
 )
 from app.platform.schemas.platform_users import ReasonRequest
 from app.platform.services.platform_organisations import PlatformOrganisationsService
@@ -56,25 +59,24 @@ async def list_limited_platform_orgs(
         ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    status: OrganisationStatus | None = None,
-    q: str | None = Query(default=None, min_length=1, max_length=255),
+    query: Annotated[PlatformLimitedOrganisationListQuery, Query()],
 ) -> PlatformLimitedOrganisationsCollectionResponse:
     organisations, total = await PlatformOrganisationsService(
         db_session
     ).list_limited_organisations(
-        limit=limit,
-        offset=offset,
-        status=status,
-        q=q,
+        limit=query.limit,
+        offset=query.offset,
+        status=query.status,
+        q=query.q,
     )
     return PlatformLimitedOrganisationsCollectionResponse(
         data=[
             PlatformLimitedOrganisationResponse.model_validate(org)
             for org in organisations
         ],
-        meta=PlatformOrganisationsMeta(total=total, limit=limit, offset=offset),
+        meta=PlatformOrganisationsMeta(
+            total=total, limit=query.limit, offset=query.offset
+        ),
         links={},
     )
 
@@ -92,19 +94,20 @@ async def list_platform_orgs(
         Depends(require_platform_permission(PlatformPermission.ORGANISATIONS_READ)),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    status: OrganisationStatus | None = None,
-    q: str | None = Query(default=None, min_length=1, max_length=255),
+    query: Annotated[PlatformOrganisationListQuery, Query()],
 ) -> PlatformOrganisationsCollectionResponse:
     organisations, total = await PlatformOrganisationsService(
         db_session
-    ).list_organisations(limit=limit, offset=offset, status=status, q=q)
+    ).list_organisations(
+        limit=query.limit, offset=query.offset, status=query.status, q=query.q
+    )
     return PlatformOrganisationsCollectionResponse(
         data=[
             PlatformOrganisationResponse.model_validate(org) for org in organisations
         ],
-        meta=PlatformOrganisationsMeta(total=total, limit=limit, offset=offset),
+        meta=PlatformOrganisationsMeta(
+            total=total, limit=query.limit, offset=query.offset
+        ),
         links={},
     )
 

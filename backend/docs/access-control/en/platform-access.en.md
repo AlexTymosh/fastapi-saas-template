@@ -212,7 +212,7 @@ created_at
 
 The limited user DTO must not return `email`, `external_auth_id`, `email_verified`, `suspended_at`, `suspended_reason`, onboarding or other internal fields, token or credential data, or audit metadata. It returns `masked_email` for safe support identification without exporting raw email addresses. Masking is deterministic in the response schema/presentation layer: `None` stays `None`, one-character local parts become `*@domain`, two-character local parts keep the first character, and longer local parts keep only the first and last local-part characters. Repositories still return full domain rows and must not implement masking.
 
-Limited user search separates safe broad search from exact email lookup. The `q` parameter searches only safe name fields (`first_name` and `last_name`) and must not search email addresses or domains, because broad email search enables address/domain enumeration. The `exact_email` parameter is available for support workflows that already have a user-provided address; it is trimmed, validated as an email address, matched case-insensitively, and used only as a filter. `exact_email` must never be returned in the limited response. Full platform user endpoints may keep their broader operational email search contract for actors with `users:read`.
+Limited user search separates safe broad search from exact email lookup. The `q` parameter searches only safe name fields (`first_name` and `last_name`) and must not search email addresses or domains, because broad email search enables address/domain enumeration. The `exact_email` parameter is available for support workflows that already have a user-provided address; it is trimmed, validated as an email address, matched case-insensitively, and used only as a filter. `exact_email` must never be returned in the limited response. Full platform user endpoints may keep their broader operational email search contract for actors with `users:read`; their `q` parameter searches email, `first_name`, and `last_name`.
 
 The limited organisation DTO may contain only:
 
@@ -226,7 +226,7 @@ created_at
 
 The limited organisation DTO must not return `suspended_at`, `suspended_reason`, `deleted_at`, owner internals, membership internals, or audit metadata. Deleted organisations are excluded from limited views by default. Full platform organisation endpoints may have broader operational visibility, including intentional visibility of soft-deleted organisations where required for support, audit, compliance, or recovery workflows.
 
-Limited list endpoints support these query parameters unless a route-specific contract says otherwise:
+Full and limited platform list endpoints cap `limit` at 100 items and reject negative `offset` values. Limited list endpoints support these query parameters unless a route-specific contract says otherwise:
 
 ```text
 limit

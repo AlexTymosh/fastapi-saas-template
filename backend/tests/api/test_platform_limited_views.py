@@ -88,7 +88,7 @@ def test_limited_platform_users_exact_email_hides_full_email(
 
     response = bundle.client.get(
         "/api/v1/platform/users/limited",
-        params={"exact_email": "alpha.full@example.com", "status": "active"},
+        params={"exact_email": "ALPHA.FULL@EXAMPLE.COM", "status": "active"},
     )
 
     assert response.status_code == 200
@@ -97,6 +97,8 @@ def test_limited_platform_users_exact_email_hides_full_email(
     assert payload["data"][0]["first_name"] == "Alpha"
     assert payload["data"][0]["masked_email"] == "a********l@example.com"
     assert "email" not in payload["data"][0]
+    assert "email_verified" not in payload["data"][0]
+    assert "suspended_reason" not in payload["data"][0]
     assert "alpha.full@example.com" not in response.text
 
 
@@ -148,6 +150,10 @@ def test_limited_platform_organisations_status_and_search_filters(
     payload = response.json()
     assert payload["meta"]["total"] == 1
     assert payload["data"][0]["slug"] == "beta-org"
+    assert "deleted_at" not in payload["data"][0]
+    assert "suspended_at" not in payload["data"][0]
+    assert "suspended_reason" not in payload["data"][0]
+    assert "updated_at" not in payload["data"][0]
 
 
 def test_limited_platform_users_q_searches_names_not_email_domain(
@@ -168,19 +174,45 @@ def test_limited_platform_users_q_searches_names_not_email_domain(
     email_response = bundle.client.get(
         "/api/v1/platform/users/limited", params={"q": "alpha.full@example.com"}
     )
+    partial_email_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "alpha.full"}
+    )
     domain_response = bundle.client.get(
         "/api/v1/platform/users/limited", params={"q": "example.com"}
     )
-    name_response = bundle.client.get(
-        "/api/v1/platform/users/limited", params={"q": "Alpha"}
+    first_name_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "alpha"}
+    )
+    last_name_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "VISIBLE"}
+    )
+    combined_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={
+            "q": "alpha",
+            "status": "active",
+            "exact_email": "alpha.full@example.com",
+        },
+    )
+    partial_exact_email_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={"exact_email": "alpha.full@example.co"},
     )
 
     assert email_response.status_code == 200
     assert email_response.json()["meta"]["total"] == 0
+    assert partial_email_response.status_code == 200
+    assert partial_email_response.json()["meta"]["total"] == 0
     assert domain_response.status_code == 200
     assert domain_response.json()["meta"]["total"] == 0
-    assert name_response.status_code == 200
-    assert name_response.json()["meta"]["total"] == 1
+    assert first_name_response.status_code == 200
+    assert first_name_response.json()["meta"]["total"] == 1
+    assert last_name_response.status_code == 200
+    assert last_name_response.json()["meta"]["total"] == 1
+    assert combined_response.status_code == 200
+    assert combined_response.json()["meta"]["total"] == 1
+    assert partial_exact_email_response.status_code == 200
+    assert partial_exact_email_response.json()["meta"]["total"] == 0
 
 
 def test_full_platform_users_q_still_searches_email(

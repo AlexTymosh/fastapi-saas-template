@@ -145,7 +145,7 @@ def test_full_users_list_filters_by_status_and_keeps_pagination_metadata(
     assert payload["data"][0]["status"] == "active"
 
 
-def test_full_users_list_searches_by_email_and_name(
+def test_full_users_list_searches_by_email_first_name_and_last_name_case_insensitively(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
     ids = _seed_full_list_data(migrated_session_factory)
@@ -153,18 +153,28 @@ def test_full_users_list_searches_by_email_and_name(
         authenticated_client_factory, migrated_database_url, migrated_session_factory
     )
 
-    response = bundle.client.get(
-        "/api/v1/platform/users", params={"q": "needle", "limit": 10}
+    email_response = bundle.client.get(
+        "/api/v1/platform/users", params={"q": "ALPHA.NEEDLE", "limit": 10}
+    )
+    first_name_response = bundle.client.get(
+        "/api/v1/platform/users", params={"q": "alphaneedle", "limit": 10}
+    )
+    last_name_response = bundle.client.get(
+        "/api/v1/platform/users", params={"q": "needlesurname", "limit": 10}
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    returned_ids = [row["id"] for row in payload["data"]]
-    assert payload["meta"]["total"] == 2
-    assert returned_ids == sorted(
-        [ids["alpha_user_id"], ids["beta_user_id"]], reverse=True
-    )
-    assert ids["gamma_user_id"] not in returned_ids
+    assert email_response.status_code == 200
+    assert [row["id"] for row in email_response.json()["data"]] == [
+        ids["alpha_user_id"]
+    ]
+    assert first_name_response.status_code == 200
+    assert [row["id"] for row in first_name_response.json()["data"]] == [
+        ids["alpha_user_id"]
+    ]
+    assert last_name_response.status_code == 200
+    assert [row["id"] for row in last_name_response.json()["data"]] == [
+        ids["beta_user_id"]
+    ]
 
 
 def test_full_organisations_list_filters_by_status_and_keeps_deleted_visibility(
@@ -189,7 +199,7 @@ def test_full_organisations_list_filters_by_status_and_keeps_deleted_visibility(
     assert ids["suspended_org_id"] not in returned_ids
 
 
-def test_full_organisations_list_searches_by_name_and_slug(
+def test_full_organisations_list_searches_by_name_and_slug_case_insensitively(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
     ids = _seed_full_list_data(migrated_session_factory)
@@ -197,17 +207,20 @@ def test_full_organisations_list_searches_by_name_and_slug(
         authenticated_client_factory, migrated_database_url, migrated_session_factory
     )
 
-    response = bundle.client.get(
-        "/api/v1/platform/organisations", params={"q": "needle", "limit": 10}
+    name_response = bundle.client.get(
+        "/api/v1/platform/organisations",
+        params={"q": "NEEDLE ALPHA", "limit": 10},
+    )
+    slug_response = bundle.client.get(
+        "/api/v1/platform/organisations", params={"q": "NEEDLE-BETA", "limit": 10}
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    returned_ids = [row["id"] for row in payload["data"]]
-    assert payload["meta"]["total"] == 3
-    assert ids["active_org_id"] in returned_ids
-    assert ids["suspended_org_id"] in returned_ids
-    assert ids["deleted_org_id"] in returned_ids
+    assert name_response.status_code == 200
+    assert [row["id"] for row in name_response.json()["data"]] == [ids["active_org_id"]]
+    assert slug_response.status_code == 200
+    assert [row["id"] for row in slug_response.json()["data"]] == [
+        ids["suspended_org_id"]
+    ]
 
 
 def test_full_platform_staff_list_filters_by_status_and_role(
@@ -249,6 +262,10 @@ def test_full_platform_staff_list_filters_by_status_and_role(
     role_response = bundle.client.get(
         "/api/v1/platform/staff", params={"role": "support_agent", "limit": 10}
     )
+    combined_response = bundle.client.get(
+        "/api/v1/platform/staff",
+        params={"status": "active", "role": "support_agent", "limit": 10},
+    )
 
     assert status_response.status_code == 200
     status_payload = status_response.json()
@@ -262,6 +279,33 @@ def test_full_platform_staff_list_filters_by_status_and_role(
         str(active_support.id),
         str(suspended_support.id),
     }
+
+    assert combined_response.status_code == 200
+    combined_payload = combined_response.json()
+    assert combined_payload["meta"]["total"] == 1
+    assert combined_payload["data"][0]["user_id"] == str(active_support.id)
+
+
+def test_platform_list_query_validation_rejects_unsafe_pagination(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    bundle = _admin_bundle(
+        authenticated_client_factory, migrated_database_url, migrated_session_factory
+    )
+
+    users_limit_response = bundle.client.get(
+        "/api/v1/platform/users", params={"limit": 101}
+    )
+    users_offset_response = bundle.client.get(
+        "/api/v1/platform/users", params={"offset": -1}
+    )
+    staff_limit_response = bundle.client.get(
+        "/api/v1/platform/staff", params={"limit": 101}
+    )
+
+    assert users_limit_response.status_code == 422
+    assert users_offset_response.status_code == 422
+    assert staff_limit_response.status_code == 422
 
 
 def test_full_list_filters_do_not_grant_access_to_limited_platform_roles(
