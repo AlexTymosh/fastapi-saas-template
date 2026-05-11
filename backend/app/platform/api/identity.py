@@ -16,7 +16,6 @@ router = APIRouter(prefix="/platform", tags=["platform-identity"])
     "/me",
     response_model=PlatformIdentityResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="get_platform_identity",
 )
 async def get_platform_identity(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],

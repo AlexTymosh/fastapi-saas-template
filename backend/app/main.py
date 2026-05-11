@@ -15,6 +15,7 @@ from app.core.middleware.access_log import AccessLogMiddleware
 from app.core.middleware.request_context import RequestContextMiddleware
 from app.core.observability import init_observability, shutdown_observability
 from app.core.observability.middleware import HttpMetricsMiddleware
+from app.core.openapi import generate_route_name_operation_id
 from app.core.rate_limit import init_rate_limiter, shutdown_rate_limiter
 from app.core.redis import close_redis
 
@@ -67,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else None
         ),
         lifespan=lifespan,
+        generate_unique_id_function=generate_route_name_operation_id,
     )
     app.state.settings = resolved_settings
 

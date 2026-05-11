@@ -43,7 +43,6 @@ router = APIRouter(prefix="/platform/users", tags=["platform-users"])
     "/limited",
     response_model=PlatformLimitedUsersCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="list_limited_platform_users",
 )
 async def list_limited_platform_users(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
@@ -72,7 +71,6 @@ async def list_limited_platform_users(
     "",
     response_model=PlatformUsersCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="list_platform_users",
 )
 async def list_platform_users(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
@@ -97,7 +95,6 @@ async def list_platform_users(
     "/{user_id}",
     response_model=PlatformUserResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="get_platform_user",
 )
 async def get_platform_user(
     user_id: UUID,
@@ -117,7 +114,6 @@ async def get_platform_user(
     response_model=PlatformUserResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="suspend_platform_user",
 )
 async def suspend_platform_user(
     user_id: UUID,
@@ -150,7 +146,6 @@ async def suspend_platform_user(
     response_model=PlatformUserResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="restore_platform_user",
 )
 async def restore_platform_user(
     user_id: UUID,

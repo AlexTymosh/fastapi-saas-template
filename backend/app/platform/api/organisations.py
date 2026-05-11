@@ -44,9 +44,8 @@ router = APIRouter(prefix="/platform/organisations", tags=["platform-organisatio
     "/limited",
     response_model=PlatformLimitedOrganisationsCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="list_limited_platform_organisations",
 )
-async def list_limited_platform_orgs(
+async def list_limited_platform_organisations(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         PlatformActor,
@@ -81,9 +80,8 @@ async def list_limited_platform_orgs(
     "",
     response_model=PlatformOrganisationsCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="list_platform_organisations",
 )
-async def list_platform_orgs(
+async def list_platform_organisations(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         PlatformActor,
@@ -112,9 +110,8 @@ async def list_platform_orgs(
     "/{organisation_id}",
     response_model=PlatformOrganisationResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="get_platform_organisation",
 )
-async def get_platform_org(
+async def get_platform_organisation(
     organisation_id: UUID,
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
@@ -134,9 +131,8 @@ async def get_platform_org(
     response_model=PlatformOrganisationResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="suspend_platform_organisation",
 )
-async def suspend_platform_org(
+async def suspend_platform_organisation(
     organisation_id: UUID,
     payload: ReasonRequest,
     write_context: Annotated[
@@ -169,9 +165,8 @@ async def suspend_platform_org(
     response_model=PlatformOrganisationResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="restore_platform_organisation",
 )
-async def restore_platform_org(
+async def restore_platform_organisation(
     organisation_id: UUID,
     payload: ReasonRequest,
     write_context: Annotated[
@@ -203,9 +198,8 @@ async def restore_platform_org(
     "/{organisation_id}",
     response_model=PlatformOrganisationResponse,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
-    operation_id="patch_platform_organisation",
 )
-async def patch_platform_org(
+async def patch_platform_organisation(
     organisation_id: UUID,
     payload: PlatformOrganisationPatchRequest,
     write_context: Annotated[
