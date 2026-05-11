@@ -167,6 +167,21 @@ def test_full_users_list_searches_by_email_and_name(
     assert ids["gamma_user_id"] not in returned_ids
 
 
+def test_full_users_list_validates_pagination_bounds(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_full_list_data(migrated_session_factory)
+    bundle = _admin_bundle(
+        authenticated_client_factory, migrated_database_url, migrated_session_factory
+    )
+
+    too_large_limit = bundle.client.get("/api/v1/platform/users", params={"limit": 101})
+    negative_offset = bundle.client.get("/api/v1/platform/users", params={"offset": -1})
+
+    assert too_large_limit.status_code == 422
+    assert negative_offset.status_code == 422
+
+
 def test_full_organisations_list_filters_by_status_and_keeps_deleted_visibility(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -262,6 +277,46 @@ def test_full_platform_staff_list_filters_by_status_and_role(
         str(active_support.id),
         str(suspended_support.id),
     }
+
+
+def test_full_platform_staff_list_filters_by_combined_status_and_role(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    admin, _ = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-staff-filter-combined-admin",
+        email="staff-filter-combined-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN,
+    )
+    _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-staff-filter-combined-active",
+        email="staff-filter-combined-active@example.com",
+        role=PlatformRole.SUPPORT_AGENT,
+    )
+    suspended_support, _ = _seed_platform_staff(
+        migrated_session_factory,
+        external_auth_id="kc-staff-filter-combined-suspended",
+        email="staff-filter-combined-suspended@example.com",
+        role=PlatformRole.SUPPORT_AGENT,
+        status=PlatformStaffStatus.SUSPENDED,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(admin.external_auth_id, admin.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.get(
+        "/api/v1/platform/staff",
+        params={"status": "suspended", "role": "support_agent"},
+    )
+    too_large_limit = bundle.client.get("/api/v1/platform/staff", params={"limit": 101})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 1
+    assert payload["data"][0]["user_id"] == str(suspended_support.id)
+    assert too_large_limit.status_code == 422
 
 
 def test_full_list_filters_do_not_grant_access_to_limited_platform_roles(

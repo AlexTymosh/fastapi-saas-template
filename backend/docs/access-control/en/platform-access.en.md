@@ -209,7 +209,7 @@ status
 created_at
 ```
 
-The limited user DTO must not return `email`, `external_auth_id`, `email_verified`, `suspended_at`, `suspended_reason`, onboarding or other internal fields, token or credential data, or audit metadata. The endpoint may search by email internally when `q` is used, but the full email address must never be returned in the limited response.
+The limited user DTO must not return `email`, `external_auth_id`, `email_verified`, `suspended_at`, `suspended_reason`, onboarding or other internal fields, token or credential data, or audit metadata. Its `q` parameter searches only `first_name` and `last_name` so hidden email addresses cannot be inferred through partial search. The optional `exact_email` parameter exists for support discovery workflows, uses exact email-match semantics after normalisation, and still must not expose email in the limited response.
 
 The limited organisation DTO may contain only:
 
@@ -223,13 +223,19 @@ created_at
 
 The limited organisation DTO must not return `suspended_at`, `suspended_reason`, `deleted_at`, owner internals, membership internals, or audit metadata. Deleted organisations are excluded from limited views by default. Full platform organisation endpoints may have broader operational visibility, including intentional visibility of soft-deleted organisations where required for support, audit, compliance, or recovery workflows.
 
-Limited list endpoints support these query parameters unless a route-specific contract says otherwise:
+Limited list endpoints support these query parameters unless a route-specific contract says otherwise. `limit` is capped at `100`, and `offset` must be non-negative:
 
 ```text
 limit
 offset
 status
 q
+```
+
+`GET /api/v1/platform/users/limited` also supports:
+
+```text
+exact_email
 ```
 
 Ordering must be deterministic for both full and limited platform lists:

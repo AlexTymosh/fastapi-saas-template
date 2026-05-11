@@ -71,7 +71,7 @@ def _seed_limited_view_data(session_factory):
     return run_async(_run())
 
 
-def test_limited_platform_users_support_agent_can_filter_without_full_email(
+def test_limited_platform_users_support_agent_can_filter_by_name_without_full_email(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
     _seed_limited_view_data(migrated_session_factory)
@@ -88,7 +88,7 @@ def test_limited_platform_users_support_agent_can_filter_without_full_email(
 
     response = bundle.client.get(
         "/api/v1/platform/users/limited",
-        params={"q": "alpha.full@example.com", "status": "active"},
+        params={"q": "visible", "status": "active"},
     )
 
     assert response.status_code == 200
@@ -96,7 +96,85 @@ def test_limited_platform_users_support_agent_can_filter_without_full_email(
     assert payload["meta"]["total"] == 1
     assert payload["data"][0]["first_name"] == "Alpha"
     assert "email" not in payload["data"][0]
+    assert "email_verified" not in payload["data"][0]
+    assert "suspended_reason" not in payload["data"][0]
     assert "alpha.full@example.com" not in response.text
+
+
+def test_limited_platform_users_q_does_not_match_hidden_email(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_limited_view_data(migrated_session_factory)
+    actor = _seed_staff(
+        migrated_session_factory,
+        external_auth_id="kc-support-limited-email-q",
+        email="support-limited-email-q@example.com",
+        role=PlatformRole.SUPPORT_AGENT,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={"q": "alpha.full@example.com", "status": "active"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 0
+    assert payload["data"] == []
+    assert "alpha.full@example.com" not in response.text
+
+
+def test_limited_platform_users_exact_email_uses_exact_lookup_without_exposure(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_limited_view_data(migrated_session_factory)
+    actor = _seed_staff(
+        migrated_session_factory,
+        external_auth_id="kc-support-limited-exact-email",
+        email="support-limited-exact-email@example.com",
+        role=PlatformRole.SUPPORT_AGENT,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    partial_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={"exact_email": "alpha.full@example.net"},
+    )
+    exact_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={"exact_email": "ALPHA.FULL@EXAMPLE.COM"},
+    )
+    combined_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={
+            "status": "active",
+            "q": "visible",
+            "exact_email": "alpha.full@example.com",
+        },
+    )
+
+    assert partial_response.status_code == 200
+    partial_payload = partial_response.json()
+    assert partial_payload["meta"]["total"] == 0
+    assert partial_payload["data"] == []
+    assert exact_response.status_code == 200
+    exact_payload = exact_response.json()
+    assert exact_payload["meta"]["total"] == 1
+    assert exact_payload["data"][0]["first_name"] == "Alpha"
+    assert "email" not in exact_payload["data"][0]
+    assert "alpha.full@example.com" not in exact_response.text
+
+    assert combined_response.status_code == 200
+    combined_payload = combined_response.json()
+    assert combined_payload["meta"]["total"] == 1
+    assert combined_payload["data"][0]["first_name"] == "Alpha"
 
 
 def test_limited_platform_organisations_support_agent_excludes_deleted_orgs(

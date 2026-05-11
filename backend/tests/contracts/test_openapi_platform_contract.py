@@ -234,3 +234,35 @@ def test_no_platform_route_is_undocumented_by_accident(monkeypatch) -> None:
                 if method in {"HEAD", "OPTIONS"}:
                     continue
                 assert (method, route.path) in documented
+
+
+def test_platform_list_query_parameters_are_documented(monkeypatch) -> None:
+    spec = _openapi(monkeypatch)
+
+    limited_user_params = {
+        parameter["name"]: parameter
+        for parameter in spec["paths"]["/api/v1/platform/users/limited"]["get"][
+            "parameters"
+        ]
+    }
+    assert {"limit", "offset", "status", "q", "exact_email"}.issubset(
+        limited_user_params
+    )
+    assert limited_user_params["limit"]["schema"]["maximum"] == 100
+    assert limited_user_params["limit"]["schema"]["minimum"] == 1
+    assert limited_user_params["offset"]["schema"]["minimum"] == 0
+    q_schema = limited_user_params["q"]["schema"]["anyOf"][0]
+    exact_email_schema = limited_user_params["exact_email"]["schema"]["anyOf"][0]
+    assert q_schema["maxLength"] == 255
+    assert exact_email_schema["format"] == "email"
+
+    full_user_params = {
+        parameter["name"]
+        for parameter in spec["paths"]["/api/v1/platform/users"]["get"]["parameters"]
+    }
+    staff_params = {
+        parameter["name"]
+        for parameter in spec["paths"]["/api/v1/platform/staff"]["get"]["parameters"]
+    }
+    assert {"limit", "offset", "status", "q"}.issubset(full_user_params)
+    assert {"limit", "offset", "status", "role"}.issubset(staff_params)

@@ -129,7 +129,7 @@ Platform read access is intentionally split into full operational views and limi
 | `GET /api/v1/platform/audit-events` | No | Yes | Yes | Full audit view according to platform permissions. |
 | `GET /api/v1/platform/audit-events/limited` | Yes | Yes | Yes | Redacted audit view; raw metadata, IP address, user-agent, free-text reason, and direct actor identifiers are omitted. |
 
-Limited endpoints support `limit`, `offset`, optional `status`, and optional `q` query parameters. User search may use email internally, but the limited response must not expose full email. Organisation limited search covers safe `name` and `slug` fields and excludes soft-deleted organisations by default.
+Limited endpoints support `limit`, `offset`, optional `status`, and optional `q` query parameters, with `limit` capped at `100` for admin list pages. Full user `q` searches email and name fields. Limited user `q` searches only `first_name` and `last_name`; `exact_email` is available only as an exact-match limited support lookup and does not expose email in the response. Organisation limited search covers safe `name` and `slug` fields and excludes soft-deleted organisations by default.
 
 The limited DTOs are designed for future admin frontend screens where support or compliance users need safe discovery workflows without receiving operationally sensitive fields.
 
