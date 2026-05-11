@@ -20,7 +20,7 @@ The following foundations are present in code and/or current documentation and s
 - Keycloak JWT validation hardened for OAuth2 Resource Server access tokens, including strict issuer/audience/`azp`/`iat`/`kid`/lifetime checks, startup OIDC metadata validation, and JWKS forced refresh cooldown/singleflight protection.
 - Local user projection with `external_auth_id`.
 - Organisations, memberships, and invites foundation.
-- Platform staff, permissions, and current platform identity endpoint foundation.
+- Platform staff, permissions, current platform identity endpoint foundation, and limited platform user/organisation views for safe admin frontend baselines.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, layered invite anti-abuse flows, platform read/audit reads, fail-closed platform write policies, and versioned HMAC-SHA256 identifier bucket keys backed by a dedicated rate-limit secret.
@@ -35,7 +35,7 @@ The following foundations are present in code and/or current documentation and s
 - Organisation soft deletion preserves the original slug, while database-level active-only uniqueness allows slug reuse after deletion without allowing duplicate active slugs.
 - Invite delivery pipeline.
 - Observability integration.
-- Full contract/security test coverage.
+- Full contract/security test coverage beyond the current platform OpenAPI contract and permission matrix baselines.
 
 ## Not Implemented / Planned
 
@@ -44,9 +44,20 @@ The following areas should not be presented as complete without code verificatio
 - Production-grade deployment hardening.
 - Complete GDPR export/erasure workflows for every data area.
 - Complete platform operations workflows.
-- Full BOLA/BFLA security test matrix.
+- Full BOLA/BFLA security test matrix beyond the current platform endpoint permission matrix baseline.
 - Prometheus/Grafana stack or `/metrics` endpoint, unless added later.
 - Frontend application.
+
+
+## Platform Admin Contract Baseline
+
+The backend now exposes limited platform views for future admin frontend roles:
+
+- `GET /api/v1/platform/users/limited` for `users:read_limited`;
+- `GET /api/v1/platform/organisations/limited` for `organisations:read_limited`;
+- `GET /api/v1/platform/audit-events/limited` for `audit:read_limited`.
+
+Limited DTOs intentionally omit sensitive operational fields such as full email, external identity identifiers, suspension reasons, deleted timestamps, raw audit metadata, IP address, user agent, free-text audit reasons, and direct actor identifiers. OpenAPI contract tests now cover platform operation IDs, tags, documented response models, and route-level rate-limit metadata. Security tests cover the platform permission matrix and limited field-level authorization baseline.
 
 ## Known Risks
 
@@ -55,7 +66,7 @@ The following areas should not be presented as complete without code verificatio
 - Production Docker/runtime hardening is not complete.
 - CORS policy is implemented as an explicit environment-driven allowlist and is disabled by default.
 - CI status must be verified.
-- Access-control tests need continuous expansion.
+- Access-control tests include platform OpenAPI contract, permission matrix, and limited field-authorization baselines; coverage still needs continuous expansion.
 - Deleted or renamed docs must not leave broken links.
 - Documentation must not claim planned features as implemented.
 

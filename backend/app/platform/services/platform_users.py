@@ -27,6 +27,21 @@ class PlatformUsersService:
     async def list_users(self, *, limit: int, offset: int) -> tuple[list[User], int]:
         return await self.user_repository.list_paginated(limit=limit, offset=offset)
 
+    async def list_limited_users(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: UserStatus | None = None,
+        q: str | None = None,
+    ) -> tuple[list[User], int]:
+        return await self.user_repository.list_limited_paginated(
+            limit=limit,
+            offset=offset,
+            status=status,
+            q=q,
+        )
+
     async def get_user(self, user_id: UUID) -> User:
         user = await self.user_repository.get_by_id(user_id)
         if user is None:

@@ -115,3 +115,22 @@ GET /api/v1/platform/organisations/{organisation_id}
 - Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
 - Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
 - Last-platform-admin hardening is deferred to future platform staff-management stage.
+
+## 9. Platform endpoint view matrix
+
+| Endpoint | Support agent | Compliance officer | Platform admin |
+|---|---:|---:|---:|
+| `GET /api/v1/platform/me` | Yes | Yes | Yes |
+| `GET /api/v1/platform/users/limited` | Yes | Yes | Yes |
+| `GET /api/v1/platform/users` | No | No | Yes |
+| `GET /api/v1/platform/users/{user_id}` | No | No | Yes |
+| `GET /api/v1/platform/organisations/limited` | Yes | Yes | Yes |
+| `GET /api/v1/platform/organisations` | No | No | Yes |
+| `GET /api/v1/platform/organisations/{organisation_id}` | No | No | Yes |
+| `GET /api/v1/platform/audit-events/limited` | Yes | Yes | Yes |
+| `GET /api/v1/platform/audit-events` | No | Yes | Yes |
+| Platform user writes | No | No | Yes |
+| Platform organisation writes | No | No | Yes |
+| Platform staff management | No | No | Yes |
+
+Limited user and organisation DTOs intentionally omit sensitive operational fields so support and compliance workflows can use safe baseline views without receiving full admin records.

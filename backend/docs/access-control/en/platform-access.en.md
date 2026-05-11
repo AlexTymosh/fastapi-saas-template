@@ -297,3 +297,49 @@ internal operational path until a dedicated public API contract is introduced.
 - Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
 - Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
 - Last-platform-admin hardening is deferred to future platform staff-management stage.
+
+## 11. Limited platform views
+
+Limited platform views provide safe read-only records for future admin frontend roles that should not receive full operational DTOs.
+
+Current limited endpoints:
+
+```text
+GET /api/v1/platform/users/limited
+GET /api/v1/platform/organisations/limited
+GET /api/v1/platform/audit-events/limited
+```
+
+Access requirements:
+
+- `GET /api/v1/platform/users/limited` requires `users:read_limited`.
+- `GET /api/v1/platform/organisations/limited` requires `organisations:read_limited`.
+- `GET /api/v1/platform/audit-events/limited` requires `audit:read_limited`.
+- All limited views are read-only and must be covered by the appropriate platform read or audit read rate-limit policy.
+
+Limited user records intentionally expose only `id`, `first_name`, `last_name`, `status`, and `created_at`. They do not expose full email, `external_auth_id`, `email_verified`, onboarding state, suspension reason, suspension timestamp, audit metadata, or credential/token data. Backend search may use email internally, but the limited response must not return the full email address.
+
+Limited organisation records intentionally expose only `id`, `name`, `slug`, `status`, and `created_at`. They do not expose `suspended_reason`, `deleted_at`, owner internals, membership internals, or audit metadata. Deleted organisations are excluded from the limited organisation endpoint by default.
+
+The full platform user and organisation endpoints remain restricted to `users:read` and `organisations:read` respectively. `platform_admin` can access both full and limited views. `support_agent` can access limited user, organisation, and audit views only. `compliance_officer` can access limited user and organisation views and audit views according to the backend role-to-permission mapping.
+
+## 12. Admin frontend contract tests
+
+The platform backend contract is locked down with OpenAPI and authorization tests before any admin frontend is generated from the schema.
+
+Contract expectations:
+
+- OpenAPI operation IDs are unique.
+- Platform routes use stable operation IDs.
+- Platform routes use clear platform tags such as `platform-identity`, `platform-users`, `platform-organisations`, `platform-staff`, and `platform-audit`.
+- Platform routes have documented success response schemas.
+- Platform read and write routes declare the expected rate-limit policy metadata.
+- Health endpoints are not tagged as platform endpoints.
+
+Security expectations:
+
+- Unauthenticated requests receive `401`.
+- Authenticated non-platform users, missing local user projections, suspended local users, and suspended platform staff receive generic platform access denial.
+- Limited platform roles cannot access full platform views or write endpoints.
+- Denied platform writes must not create audit events.
+- Field-level authorization tests verify that limited DTOs keep sensitive fields out of API responses.

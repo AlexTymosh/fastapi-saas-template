@@ -22,7 +22,10 @@ from app.core.platform import (
     require_rate_limited_platform_write_context,
 )
 from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
+from app.organisations.models.organisation import OrganisationStatus
 from app.platform.schemas.platform_organisations import (
+    PlatformLimitedOrganisationResponse,
+    PlatformLimitedOrganisationsCollectionResponse,
     PlatformOrganisationPatchRequest,
     PlatformOrganisationResponse,
     PlatformOrganisationsCollectionResponse,
@@ -31,13 +34,14 @@ from app.platform.schemas.platform_organisations import (
 from app.platform.schemas.platform_users import ReasonRequest
 from app.platform.services.platform_organisations import PlatformOrganisationsService
 
-router = APIRouter(prefix="/platform/organisations", tags=["platform"])
+router = APIRouter(prefix="/platform/organisations", tags=["platform-organisations"])
 
 
 @router.get(
     "",
     response_model=PlatformOrganisationsCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="list_platform_organisations",
 )
 async def list_platform_orgs(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
@@ -62,9 +66,43 @@ async def list_platform_orgs(
 
 
 @router.get(
+    "/limited",
+    response_model=PlatformLimitedOrganisationsCollectionResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="list_limited_platform_organisations",
+)
+async def list_limited_platform_orgs(
+    _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
+    _: Annotated[
+        PlatformActor,
+        Depends(
+            require_platform_permission(PlatformPermission.ORGANISATIONS_READ_LIMITED)
+        ),
+    ],
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: OrganisationStatus | None = None,
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+) -> PlatformLimitedOrganisationsCollectionResponse:
+    organisations, total = await PlatformOrganisationsService(
+        db_session
+    ).list_limited_organisations(limit=limit, offset=offset, status=status, q=q)
+    return PlatformLimitedOrganisationsCollectionResponse(
+        data=[
+            PlatformLimitedOrganisationResponse.model_validate(org)
+            for org in organisations
+        ],
+        meta=PlatformOrganisationsMeta(total=total, limit=limit, offset=offset),
+        links={},
+    )
+
+
+@router.get(
     "/{organisation_id}",
     response_model=PlatformOrganisationResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="get_platform_organisation",
 )
 async def get_platform_org(
     organisation_id: UUID,
@@ -86,6 +124,7 @@ async def get_platform_org(
     response_model=PlatformOrganisationResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="suspend_platform_organisation",
 )
 async def suspend_platform_org(
     organisation_id: UUID,
@@ -120,6 +159,7 @@ async def suspend_platform_org(
     response_model=PlatformOrganisationResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="restore_platform_organisation",
 )
 async def restore_platform_org(
     organisation_id: UUID,
@@ -153,6 +193,7 @@ async def restore_platform_org(
     "/{organisation_id}",
     response_model=PlatformOrganisationResponse,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="patch_platform_organisation",
 )
 async def patch_platform_org(
     organisation_id: UUID,

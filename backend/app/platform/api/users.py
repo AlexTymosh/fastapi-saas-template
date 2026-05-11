@@ -23,20 +23,24 @@ from app.core.platform import (
 )
 from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
 from app.platform.schemas.platform_users import (
+    PlatformLimitedUserResponse,
+    PlatformLimitedUsersCollectionResponse,
     PlatformUserResponse,
     PlatformUsersCollectionResponse,
     PlatformUsersMeta,
     ReasonRequest,
 )
 from app.platform.services.platform_users import PlatformUsersService
+from app.users.models.user import UserStatus
 
-router = APIRouter(prefix="/platform/users", tags=["platform"])
+router = APIRouter(prefix="/platform/users", tags=["platform-users"])
 
 
 @router.get(
     "",
     response_model=PlatformUsersCollectionResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="list_platform_users",
 )
 async def list_platform_users(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
@@ -59,9 +63,38 @@ async def list_platform_users(
 
 
 @router.get(
+    "/limited",
+    response_model=PlatformLimitedUsersCollectionResponse,
+    responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="list_limited_platform_users",
+)
+async def list_limited_platform_users(
+    _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
+    _: Annotated[
+        PlatformActor,
+        Depends(require_platform_permission(PlatformPermission.USERS_READ_LIMITED)),
+    ],
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: UserStatus | None = None,
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+) -> PlatformLimitedUsersCollectionResponse:
+    users, total = await PlatformUsersService(db_session).list_limited_users(
+        limit=limit, offset=offset, status=status, q=q
+    )
+    return PlatformLimitedUsersCollectionResponse(
+        data=[PlatformLimitedUserResponse.model_validate(user) for user in users],
+        meta=PlatformUsersMeta(total=total, limit=limit, offset=offset),
+        links={},
+    )
+
+
+@router.get(
     "/{user_id}",
     response_model=PlatformUserResponse,
     responses={**COMMON_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="get_platform_user",
 )
 async def get_platform_user(
     user_id: UUID,
@@ -81,6 +114,7 @@ async def get_platform_user(
     response_model=PlatformUserResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="suspend_platform_user",
 )
 async def suspend_platform_user(
     user_id: UUID,
@@ -113,6 +147,7 @@ async def suspend_platform_user(
     response_model=PlatformUserResponse,
     status_code=status.HTTP_200_OK,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+    operation_id="restore_platform_user",
 )
 async def restore_platform_user(
     user_id: UUID,

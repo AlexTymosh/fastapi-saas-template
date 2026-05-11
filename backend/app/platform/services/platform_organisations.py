@@ -37,6 +37,21 @@ class PlatformOrganisationsService:
             include_deleted=True,
         )
 
+    async def list_limited_organisations(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: OrganisationStatus | None = None,
+        q: str | None = None,
+    ) -> tuple[list[Organisation], int]:
+        return await self.organisation_repository.list_limited_paginated(
+            limit=limit,
+            offset=offset,
+            status=status,
+            q=q,
+        )
+
     async def get_organisation(self, organisation_id: UUID) -> Organisation:
         org = await self.organisation_repository.get_by_id(
             organisation_id,

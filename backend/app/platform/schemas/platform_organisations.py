@@ -19,6 +19,15 @@ class PlatformOrganisationResponse(BaseModel):
     updated_at: datetime
 
 
+class PlatformLimitedOrganisationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    name: str
+    slug: str
+    status: OrganisationStatus
+    created_at: datetime
+
+
 class PlatformOrganisationPatchRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
@@ -64,5 +73,11 @@ class PlatformOrganisationsMeta(BaseModel):
 
 class PlatformOrganisationsCollectionResponse(BaseModel):
     data: list[PlatformOrganisationResponse]
+    meta: PlatformOrganisationsMeta
+    links: dict[str, str]
+
+
+class PlatformLimitedOrganisationsCollectionResponse(BaseModel):
+    data: list[PlatformLimitedOrganisationResponse]
     meta: PlatformOrganisationsMeta
     links: dict[str, str]

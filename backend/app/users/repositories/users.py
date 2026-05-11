@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from pydantic import EmailStr
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.users.models.user import User, UserStatus
@@ -43,6 +43,40 @@ class UserRepository:
         )
         result = await self.session.execute(stmt)
         total_stmt = select(func.count()).select_from(User)
+        total_result = await self.session.execute(total_stmt)
+        return list(result.scalars().all()), int(total_result.scalar_one())
+
+    async def list_limited_paginated(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: UserStatus | None = None,
+        q: str | None = None,
+    ) -> tuple[list[User], int]:
+        stmt = select(User)
+        total_stmt = select(func.count()).select_from(User)
+        conditions = []
+        if status is not None:
+            conditions.append(User.status == status)
+        if q:
+            pattern = f"%{q.strip()}%"
+            conditions.append(
+                or_(
+                    User.first_name.ilike(pattern),
+                    User.last_name.ilike(pattern),
+                    User.email.ilike(pattern),
+                )
+            )
+        if conditions:
+            stmt = stmt.where(*conditions)
+            total_stmt = total_stmt.where(*conditions)
+        stmt = (
+            stmt.order_by(User.created_at.desc(), User.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
         total_result = await self.session.execute(total_stmt)
         return list(result.scalars().all()), int(total_result.scalar_one())
 
