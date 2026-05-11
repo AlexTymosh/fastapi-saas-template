@@ -13,6 +13,7 @@ from app.platform.models.platform_staff import (
     PlatformStaffRole,
     PlatformStaffStatus,
 )
+from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.platform.services.platform_bootstrap import (
     LOCAL_USER_NOT_FOUND_MESSAGE,
     PlatformAdminBootstrapService,
@@ -315,6 +316,11 @@ def test_bootstrap_promotes_existing_non_admin_staff(migrated_session_factory) -
     assert result.status == PlatformAdminBootstrapStatus.PROMOTED_STAFF
     assert result.previous_role == PlatformStaffRole.SUPPORT_AGENT.value
 
+    event = _get_bootstrap_audit_event(migrated_session_factory)
+    assert event is not None
+    assert event.metadata_json["previous_role"] == PlatformStaffRole.SUPPORT_AGENT.value
+    assert event.metadata_json["previous_status"] == PlatformStaffStatus.ACTIVE.value
+
 
 def test_bootstrap_refuses_suspended_staff_by_default(migrated_session_factory) -> None:
     user = _seed_user(
@@ -403,9 +409,7 @@ def test_bootstrap_writes_safe_system_audit_event(migrated_session_factory) -> N
         "bootstrap_result": "created_staff",
         "target_user_id": str(user.id),
         "target_email": "admin@example.com",
-        "previous_role": None,
         "new_role": "platform_admin",
-        "previous_status": None,
         "new_status": "active",
     }
 
@@ -446,12 +450,35 @@ def test_bootstrap_allows_prod_with_confirmation(migrated_session_factory) -> No
     assert result.status == PlatformAdminBootstrapStatus.CREATED_STAFF
 
 
-def test_bootstrap_service_owns_transaction_boundary() -> None:
-    import inspect
-
-    from app.platform.services import platform_bootstrap
-
-    source = inspect.getsource(
-        platform_bootstrap.PlatformAdminBootstrapService.bootstrap_platform_admin_by_email
+def test_bootstrap_staff_creation_runs_inside_active_transaction(
+    migrated_session_factory, monkeypatch
+) -> None:
+    _seed_user(
+        migrated_session_factory,
+        email="admin@example.com",
+        external_auth_id="kc-admin",
     )
-    assert "async with session.begin():" in source
+    service = _bootstrap_service(migrated_session_factory)
+    original_create_staff = PlatformStaffRepository.create_staff
+    observed_in_transaction = False
+
+    async def observing_create_staff(self, *args, **kwargs):
+        nonlocal observed_in_transaction
+        observed_in_transaction = self.session.in_transaction()
+        return await original_create_staff(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        PlatformStaffRepository,
+        "create_staff",
+        observing_create_staff,
+    )
+
+    result = run_async(
+        service.bootstrap_platform_admin_by_email(
+            email="admin@example.com",
+            reason=BOOTSTRAP_REASON,
+        )
+    )
+
+    assert result.status == PlatformAdminBootstrapStatus.CREATED_STAFF
+    assert observed_in_transaction is True

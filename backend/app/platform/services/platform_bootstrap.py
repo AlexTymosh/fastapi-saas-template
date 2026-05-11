@@ -114,6 +114,20 @@ class PlatformAdminBootstrapService:
                     )
                     result_status = PlatformAdminBootstrapStatus.PROMOTED_STAFF
 
+                audit_metadata = {
+                    "actor_type": "system",
+                    "command": "platform_admin_bootstrap",
+                    "bootstrap_result": result_status.value,
+                    "target_user_id": str(user.id),
+                    "target_email": normalised_email,
+                    "new_role": staff.role,
+                    "new_status": staff.status,
+                }
+                if previous_role is not None:
+                    audit_metadata["previous_role"] = previous_role
+                if previous_status is not None:
+                    audit_metadata["previous_status"] = previous_status
+
                 await AuditEventService(session).record_event(
                     audit_context=AuditContext(
                         actor_user_id=None,
@@ -125,17 +139,7 @@ class PlatformAdminBootstrapService:
                     target_type=AuditTargetType.PLATFORM_STAFF,
                     target_id=staff.id,
                     reason=normalised_reason,
-                    metadata_json={
-                        "actor_type": "system",
-                        "command": "platform_admin_bootstrap",
-                        "bootstrap_result": result_status.value,
-                        "target_user_id": str(user.id),
-                        "target_email": normalised_email,
-                        "previous_role": previous_role,
-                        "new_role": staff.role,
-                        "previous_status": previous_status,
-                        "new_status": staff.status,
-                    },
+                    metadata_json=audit_metadata,
                 )
                 return PlatformAdminBootstrapResult(
                     target_user_id=user.id,

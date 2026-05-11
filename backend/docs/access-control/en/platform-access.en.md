@@ -289,13 +289,15 @@ The first or missing platform admin must be bootstrapped offline by an operator 
 
 The target admin must authenticate through the normal Keycloak/OIDC flow at least once before bootstrap. That login creates the local `users` projection that the command can safely find. The bootstrap command must not silently create users and must not change user profile fields.
 
-Preferred command:
+Preferred command for new operational use:
 
 ```bash
 python -m app.platform.cli.bootstrap_admin \
   --email admin@example.com \
   --reason "Initial platform admin bootstrap"
 ```
+
+The preferred CLI requires an explicit `--reason` so every successful bootstrap has an operator-supplied audit reason. The older `python -m app.commands.make_platform_admin` entry point and `create_platform_admin_by_email` helper remain available only as legacy compatibility paths for existing automation; do not use them for new operational runbooks.
 
 If more than one local user matches the normalised email, disambiguate with the Keycloak subject stored in `users.external_auth_id`:
 
@@ -328,7 +330,7 @@ Expected behaviour:
 6. Write a platform_admin_bootstrapped audit event for successful bootstrap attempts.
 ```
 
-The audit event uses `category=platform`, `target_type=platform_staff`, `actor_user_id=None`, and `user_agent=platform-bootstrap-cli` because the command is executed by the system/operator rather than an authenticated platform actor. Its metadata is intentionally limited to safe operational fields such as result, target user id, normalised email, previous role/status, and new role/status.
+The audit event uses `category=platform`, `target_type=platform_staff`, `actor_user_id=None`, and `user_agent=platform-bootstrap-cli` because the command is executed by the system/operator rather than an authenticated platform actor. Its metadata is intentionally limited to safe operational fields such as result, target user id, normalised email, new role/status, and previous role/status only when previous values exist.
 
 Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles, JWT claims, local password credentials, or manual database edits. Platform roles remain stored in local `platform_staff` records and are not taken from JWT claims.
 
