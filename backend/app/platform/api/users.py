@@ -82,9 +82,11 @@ async def list_platform_users(
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    status: UserStatus | None = None,
+    q: str | None = Query(default=None, min_length=1, max_length=255),
 ) -> PlatformUsersCollectionResponse:
     users, total = await PlatformUsersService(db_session).list_users(
-        limit=limit, offset=offset
+        limit=limit, offset=offset, status=status, q=q
     )
     return PlatformUsersCollectionResponse(
         data=[PlatformUserResponse.model_validate(user) for user in users],

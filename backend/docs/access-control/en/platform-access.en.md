@@ -186,7 +186,92 @@ The same actor may use a dedicated platform endpoint:
 GET /api/v1/platform/organisations/{organisation_id}
 ```
 
-## 8. Platform-created organisations and initial owner assignment
+
+## 8. Full and limited platform views
+
+Full platform list and detail views are reserved for `platform_admin` or actors with the corresponding full permissions from `ROLE_PERMISSIONS`, such as `users:read`, `organisations:read`, `platform_staff:manage`, or `audit:read`. Full views may expose operational fields required for privileged support, audit, compliance, or recovery workflows.
+
+Limited platform views are separate endpoints for `support_agent` and `compliance_officer` according to `ROLE_PERMISSIONS`. They intentionally expose reduced DTOs and must not be treated as aliases for full platform views. Current limited view endpoints are:
+
+```text
+GET /api/v1/platform/users/limited
+GET /api/v1/platform/organisations/limited
+GET /api/v1/platform/audit-events/limited
+```
+
+The limited user DTO may contain only:
+
+```text
+id
+first_name
+last_name
+status
+created_at
+```
+
+The limited user DTO must not return `email`, `external_auth_id`, `email_verified`, `suspended_at`, `suspended_reason`, onboarding or other internal fields, token or credential data, or audit metadata. The endpoint may search by email internally when `q` is used, but the full email address must never be returned in the limited response.
+
+The limited organisation DTO may contain only:
+
+```text
+id
+name
+slug
+status
+created_at
+```
+
+The limited organisation DTO must not return `suspended_at`, `suspended_reason`, `deleted_at`, owner internals, membership internals, or audit metadata. Deleted organisations are excluded from limited views by default. Full platform organisation endpoints may have broader operational visibility, including intentional visibility of soft-deleted organisations where required for support, audit, compliance, or recovery workflows.
+
+Limited list endpoints support these query parameters unless a route-specific contract says otherwise:
+
+```text
+limit
+offset
+status
+q
+```
+
+Ordering must be deterministic for both full and limited platform lists:
+
+```text
+created_at desc
+id desc
+```
+
+## 9. Future admin frontend and OpenAPI contract
+
+`GET /api/v1/platform/me` is the first endpoint a future admin frontend should call after login. The frontend should use it to determine whether platform access is available and which sections may be shown for the resolved local platform role and permissions.
+
+Generated frontend clients should rely on stable platform paths, tags, response models, and operation IDs. Platform OpenAPI tags are grouped by platform area:
+
+```text
+platform-identity
+platform-users
+platform-organisations
+platform-staff
+platform-audit
+```
+
+Backend contract tests must freeze exact operation IDs for platform routes and must fail if a platform route is accidentally undocumented, untagged, missing a response model, or missing its expected rate-limit policy.
+
+## 10. Permission matrix testing
+
+Backend tests must prove broken function-level authorization protection across platform endpoints for:
+
+```text
+unauthenticated users
+authenticated non-platform users
+suspended local users
+suspended platform staff
+support_agent
+compliance_officer
+platform_admin
+```
+
+The matrix must also prove that limited DTOs do not expose forbidden fields, denied platform writes do not create audit events, and platform permissions are resolved from local `platform_staff` records rather than JWT roles.
+
+## 11. Platform-created organisations and initial owner assignment
 
 When a standalone tenant user creates an organisation, that creator becomes `owner`.
 
@@ -198,7 +283,7 @@ When a platform actor creates an organisation through a platform endpoint:
 
 Ownerless organisation creation is a special bootstrap/operational case and must not be the default path.
 
-## 9. Bootstrap first platform admin
+## 12. Bootstrap first platform admin
 
 The first platform admin should be created by a management command, not by public API.
 
@@ -219,7 +304,7 @@ Expected behaviour:
 
 Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles or manual database edits.
 
-## 10. Audit requirements
+## 13. Audit requirements
 
 All platform actions must write audit events.
 
@@ -262,7 +347,7 @@ gdpr_export_requested
 gdpr_erasure_requested
 ```
 
-## 11. Emergency owner correction
+## 14. Emergency owner correction
 
 Tenant API must not support ownership transfer.
 
@@ -290,10 +375,10 @@ internal operational path until a dedicated public API contract is introduced.
 
 ## Implementation status update (2026-04-30)
 - Added backend-managed `platform_staff` foundation.
-- Added `/api/v1/platform/*` endpoints for users, organisations, and audit-events.
+- Added `/api/v1/platform/*` endpoints for identity, users, organisations, staff, and audit-events.
 - Added `require_platform_permission()` DB-backed authorization; JWT roles must not grant request-time permissions.
 
 - Platform access is DB-backed via `platform_staff`; JWT roles must never grant request-time backend permissions and may only become future controlled JIT provisioning input for local DB records.
 - Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
 - Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
-- Last-platform-admin hardening is deferred to future platform staff-management stage.
+- Last-platform-admin hardening is implemented for platform staff demotion and suspension flows.
