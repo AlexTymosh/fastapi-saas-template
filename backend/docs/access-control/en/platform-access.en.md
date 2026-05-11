@@ -285,22 +285,51 @@ Ownerless organisation creation is a special bootstrap/operational case and must
 
 ## 12. Bootstrap first platform admin
 
-The first platform admin should be created by a management command, not by public API.
+The first platform admin is bootstrapped by an offline CLI command, not by a public HTTP endpoint. Keeping this flow offline avoids unauthenticated or self-service privilege escalation paths during first deployment and preserves the normal API rule that platform authorization is resolved only from local database state.
 
-Example command:
+Preferred command:
 
 ```bash
-python -m app.commands.make_platform_admin --email admin@example.com
+python -m app.platform.cli.bootstrap_admin \
+  --email admin@example.com \
+  --reason "Initial platform admin bootstrap"
+```
+
+Production requires an explicit confirmation flag:
+
+```bash
+APP__ENVIRONMENT=prod python -m app.platform.cli.bootstrap_admin \
+  --email admin@example.com \
+  --reason "Initial platform admin bootstrap" \
+  --confirm-production
+```
+
+If more than one local user projection matches the normalised email, provide the Keycloak subject/external identity to disambiguate the already-existing local user:
+
+```bash
+python -m app.platform.cli.bootstrap_admin \
+  --email admin@example.com \
+  --external-auth-id keycloak-subject \
+  --reason "Initial platform admin bootstrap"
 ```
 
 Expected behaviour:
 
 ```text
-1. Find an existing local user by email.
-2. Require that user to be active.
-3. Create an active `platform_staff` row with `role=platform_admin`, or exit successfully if it already exists.
-4. Write a bootstrap audit event when a new grant is made.
+1. Trim and lowercase the supplied email.
+2. Find an existing local user projection by normalised email.
+3. Fail if no local user exists. The target admin must log in once through Keycloak/OIDC before bootstrap so the backend has a local user projection with verified identity data.
+4. Fail on ambiguous email matches unless `--external-auth-id` uniquely identifies one matching user.
+5. Refuse suspended local users and users with `email_verified=false`.
+6. Create an active `platform_staff` row with `role=platform_admin` when no staff row exists.
+7. Return an idempotent success when the user is already an active platform admin.
+8. Promote an existing active non-admin staff row to active `platform_admin`.
+9. Refuse suspended staff rows by default. Use `--restore-suspended-staff` only for an explicit recovery workflow.
 ```
+
+The command does not create local users, does not update user profile fields, does not add tenant memberships, and does not read roles or permissions from JWT claims. Platform roles remain stored in the backend `platform_staff` table.
+
+Each bootstrap attempt that reaches a selected target staff row writes a platform audit event with action `platform_admin_bootstrapped`, category `platform`, target type `platform_staff`, and `actor_user_id=None`. The audit actor is intentionally empty because the command is executed by a system/operator outside an authenticated platform API request. The audit context uses `user_agent=platform-bootstrap-cli`, `ip_address=None`, the CLI `--reason`, and backend-controlled safe metadata such as result, target user ID, normalised target email, previous role/status, and new role/status.
 
 Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles or manual database edits.
 
@@ -340,6 +369,7 @@ user_restored
 organisation_suspended
 organisation_restored
 platform_staff_created
+platform_admin_bootstrapped
 platform_staff_removed
 platform_staff_suspended
 data_corrected
