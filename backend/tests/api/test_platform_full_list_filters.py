@@ -210,6 +210,29 @@ def test_full_organisations_list_searches_by_name_and_slug(
     assert ids["deleted_org_id"] in returned_ids
 
 
+def test_full_organisations_list_pagination_is_deterministic(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_full_list_data(migrated_session_factory)
+    bundle = _admin_bundle(
+        authenticated_client_factory, migrated_database_url, migrated_session_factory
+    )
+
+    first_response = bundle.client.get(
+        "/api/v1/platform/organisations",
+        params={"q": "needle", "limit": 2, "offset": 1},
+    )
+    second_response = bundle.client.get(
+        "/api/v1/platform/organisations",
+        params={"q": "needle", "limit": 2, "offset": 1},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json()["meta"] == {"total": 3, "limit": 2, "offset": 1}
+    assert second_response.json() == first_response.json()
+
+
 def test_full_platform_staff_list_filters_by_status_and_role(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -249,6 +272,10 @@ def test_full_platform_staff_list_filters_by_status_and_role(
     role_response = bundle.client.get(
         "/api/v1/platform/staff", params={"role": "support_agent", "limit": 10}
     )
+    combined_response = bundle.client.get(
+        "/api/v1/platform/staff",
+        params={"status": "active", "role": "support_agent", "limit": 10},
+    )
 
     assert status_response.status_code == 200
     status_payload = status_response.json()
@@ -262,6 +289,11 @@ def test_full_platform_staff_list_filters_by_status_and_role(
         str(active_support.id),
         str(suspended_support.id),
     }
+
+    assert combined_response.status_code == 200
+    combined_payload = combined_response.json()
+    assert combined_payload["meta"]["total"] == 1
+    assert combined_payload["data"][0]["user_id"] == str(active_support.id)
 
 
 def test_full_list_filters_do_not_grant_access_to_limited_platform_roles(
@@ -310,3 +342,25 @@ def test_full_list_filters_do_not_grant_access_to_limited_platform_roles(
             ).status_code
             == 403
         )
+
+
+def test_full_list_query_validation_rejects_invalid_pagination(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    bundle = _admin_bundle(
+        authenticated_client_factory, migrated_database_url, migrated_session_factory
+    )
+
+    users_limit_response = bundle.client.get(
+        "/api/v1/platform/users", params={"limit": 101}
+    )
+    users_offset_response = bundle.client.get(
+        "/api/v1/platform/users", params={"offset": -1}
+    )
+    staff_limit_response = bundle.client.get(
+        "/api/v1/platform/staff", params={"limit": 101}
+    )
+
+    assert users_limit_response.status_code == 422
+    assert users_offset_response.status_code == 422
+    assert staff_limit_response.status_code == 422

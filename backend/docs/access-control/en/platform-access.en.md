@@ -189,7 +189,7 @@ GET /api/v1/platform/organisations/{organisation_id}
 
 ## 8. Full and limited platform views
 
-Full platform list and detail views are reserved for `platform_admin` or actors with the corresponding full permissions from `ROLE_PERMISSIONS`, such as `users:read`, `organisations:read`, `platform_staff:manage`, or `audit:read`. Full views may expose operational fields required for privileged support, audit, compliance, or recovery workflows.
+Full platform list and detail views are reserved for `platform_admin` or actors with the corresponding full permissions from `ROLE_PERMISSIONS`, such as `users:read`, `organisations:read`, `platform_staff:manage`, or `audit:read`. Full views may expose operational fields required for privileged support, audit, compliance, or recovery workflows. Full user list `q` searches email, first name, and last name for actors with `users:read`; full organisation list `q` searches organisation name and slug while preserving the intentional include-deleted platform-admin visibility contract.
 
 Limited platform views are separate endpoints for `support_agent` and `compliance_officer` according to `ROLE_PERMISSIONS`. Actors with the corresponding full read permission are also allowed to call the limited endpoint, so `users:read` implies `users:read_limited` endpoint access, `organisations:read` implies `organisations:read_limited` endpoint access, and `audit:read` implies `audit:read_limited` endpoint access. Limited endpoints intentionally expose reduced DTOs and must not be treated as aliases for full platform views. Current limited view endpoints are:
 
@@ -226,14 +226,15 @@ created_at
 
 The limited organisation DTO must not return `suspended_at`, `suspended_reason`, `deleted_at`, owner internals, membership internals, or audit metadata. Deleted organisations are excluded from limited views by default. Full platform organisation endpoints may have broader operational visibility, including intentional visibility of soft-deleted organisations where required for support, audit, compliance, or recovery workflows.
 
-Limited list endpoints support these query parameters unless a route-specific contract says otherwise:
+Limited list endpoints support these query parameters unless a route-specific contract says otherwise. Full user, organisation, and staff list endpoints use the same pagination cap so future admin frontend list pages cannot request unbounded result sets:
 
 ```text
-limit
-offset
+limit (default 50, minimum 1, maximum 100)
+offset (default 0, minimum 0)
 status
 q
 exact_email for limited users only
+role for platform staff only
 ```
 
 Ordering must be deterministic for both full and limited platform lists:

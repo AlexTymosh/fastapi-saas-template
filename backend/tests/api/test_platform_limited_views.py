@@ -205,3 +205,87 @@ def test_full_platform_users_q_still_searches_email(
     assert response.status_code == 200
     assert response.json()["meta"]["total"] == 1
     assert response.json()["data"][0]["email"] == "alpha.full@example.com"
+
+
+def test_limited_platform_users_email_filters_are_exact_and_non_enumerable(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_limited_view_data(migrated_session_factory)
+    actor = _seed_staff(
+        migrated_session_factory,
+        external_auth_id="kc-support-limited-users-email-regression",
+        email="support-limited-users-email-regression@example.com",
+        role=PlatformRole.SUPPORT_AGENT,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    partial_q_response = bundle.client.get(
+        "/api/v1/platform/users/limited", params={"q": "alpha.full"}
+    )
+    exact_case_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={"exact_email": "ALPHA.FULL@example.com"},
+    )
+    partial_exact_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={"exact_email": "alpha.full@example.co"},
+    )
+    combined_response = bundle.client.get(
+        "/api/v1/platform/users/limited",
+        params={
+            "status": "active",
+            "q": "alpha",
+            "exact_email": "alpha.full@example.com",
+        },
+    )
+
+    assert partial_q_response.status_code == 200
+    assert partial_q_response.json()["meta"]["total"] == 0
+
+    assert exact_case_response.status_code == 200
+    exact_payload = exact_case_response.json()
+    assert exact_payload["meta"]["total"] == 1
+    assert exact_payload["data"][0]["first_name"] == "Alpha"
+    assert "email" not in exact_payload["data"][0]
+    assert "email_verified" not in exact_payload["data"][0]
+    assert "suspended_reason" not in exact_payload["data"][0]
+    assert "alpha.full@example.com" not in exact_case_response.text
+
+    assert partial_exact_response.status_code == 200
+    assert partial_exact_response.json()["meta"]["total"] == 0
+
+    assert combined_response.status_code == 200
+    combined_payload = combined_response.json()
+    assert combined_payload["meta"]["total"] == 1
+    assert combined_payload["data"][0]["first_name"] == "Alpha"
+
+
+def test_limited_platform_organisations_response_omits_full_view_fields(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    _seed_limited_view_data(migrated_session_factory)
+    actor = _seed_staff(
+        migrated_session_factory,
+        external_auth_id="kc-support-limited-org-fields",
+        email="support-limited-org-fields@example.com",
+        role=PlatformRole.SUPPORT_AGENT,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(actor.external_auth_id, actor.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.get(
+        "/api/v1/platform/organisations/limited", params={"q": "beta"}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 1
+    assert payload["data"][0]["slug"] == "beta-org"
+    assert "deleted_at" not in payload["data"][0]
+    assert "suspended_at" not in payload["data"][0]
+    assert "suspended_reason" not in payload["data"][0]

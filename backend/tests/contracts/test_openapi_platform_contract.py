@@ -234,3 +234,36 @@ def test_no_platform_route_is_undocumented_by_accident(monkeypatch) -> None:
                 if method in {"HEAD", "OPTIONS"}:
                     continue
                 assert (method, route.path) in documented
+
+
+def test_platform_list_query_parameters_are_documented(monkeypatch) -> None:
+    spec = _openapi(monkeypatch)
+
+    expected_params = {
+        ("/api/v1/platform/users", "get"): {"limit", "offset", "status", "q"},
+        ("/api/v1/platform/users/limited", "get"): {
+            "limit",
+            "offset",
+            "status",
+            "q",
+            "exact_email",
+        },
+        ("/api/v1/platform/organisations", "get"): {
+            "limit",
+            "offset",
+            "status",
+            "q",
+        },
+        ("/api/v1/platform/organisations/limited", "get"): {
+            "limit",
+            "offset",
+            "status",
+            "q",
+        },
+        ("/api/v1/platform/staff", "get"): {"limit", "offset", "status", "role"},
+    }
+
+    for (path, method), param_names in expected_params.items():
+        operation = spec["paths"][path][method]
+        documented = {parameter["name"] for parameter in operation["parameters"]}
+        assert param_names <= documented

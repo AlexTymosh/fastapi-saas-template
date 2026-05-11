@@ -57,11 +57,11 @@ class OrganisationRepository:
         if status is not None:
             conditions.append(Organisation.status == status)
         if q:
-            pattern = f"%{q.lower()}%"
+            pattern = f"%{q}%"
             conditions.append(
                 or_(
-                    func.lower(Organisation.name).like(pattern),
-                    func.lower(Organisation.slug).like(pattern),
+                    Organisation.name.ilike(pattern),
+                    Organisation.slug.ilike(pattern),
                 )
             )
         for condition in conditions:
@@ -94,11 +94,11 @@ class OrganisationRepository:
         if status is not None:
             conditions.append(Organisation.status == status)
         if q:
-            pattern = f"%{q.lower()}%"
+            pattern = f"%{q}%"
             conditions.append(
                 or_(
-                    func.lower(Organisation.name).like(pattern),
-                    func.lower(Organisation.slug).like(pattern),
+                    Organisation.name.ilike(pattern),
+                    Organisation.slug.ilike(pattern),
                 )
             )
         for condition in conditions:
