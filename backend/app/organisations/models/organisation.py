@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, String
+from sqlalchemy import CheckConstraint, DateTime, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base
@@ -26,10 +26,17 @@ class Organisation(UUIDMixin, TimestampMixin, Base):
             "status IN ('active', 'suspended')",
             name="ck_organisations_status_valid",
         ),
+        Index(
+            "uq_organisations_slug_active",
+            "slug",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

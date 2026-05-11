@@ -243,8 +243,7 @@ class OrganisationService:
             target_id=deleted.id,
             reason=reason,
             metadata_json={
-                "previous_slug": previous_slug,
-                "deleted_slug": deleted.slug,
+                "slug": previous_slug,
                 "soft_delete": True,
             },
         )
