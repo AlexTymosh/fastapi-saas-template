@@ -349,8 +349,10 @@ Suggested commit:
 ### Add
 
 ```text
-python -m app.commands.make_platform_admin --email <email>
+python -m app.platform.cli.bootstrap_admin --email <email> --reason <reason>
 ```
+
+`python -m app.commands.make_platform_admin` and `create_platform_admin_by_email` are legacy compatibility paths for existing automation. New operational runbooks should use `python -m app.platform.cli.bootstrap_admin`, which requires an explicit audit reason.
 
 ### Rules
 
