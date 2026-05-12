@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, get_origin
+from types import UnionType
+from typing import Any, get_args, get_origin
 
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -184,6 +185,140 @@ def _limited_collection_item_properties(spec, schema_name: str):
     return _resolve_ref_schema(spec, item_ref)["properties"]
 
 
+def _is_pydantic_model(annotation: object) -> bool:
+    return isinstance(annotation, type) and hasattr(annotation, "model_fields")
+
+
+def _annotation_name(annotation: object) -> str:
+    if hasattr(annotation, "__name__"):
+        return annotation.__name__
+    return repr(annotation)
+
+
+def _assert_no_broad_response_annotations(
+    annotation: object,
+    *,
+    path: str,
+    field_path: str,
+    seen: set[object] | None = None,
+) -> None:
+    """
+    Recursively reject broad response annotations that degrade generated clients.
+
+    Allowed:
+    - Pydantic models
+    - typed lists/sets/tuples
+    - typed dicts with non-broad key/value types
+    - Optional/Union wrappers around valid types
+
+    Rejected:
+    - Any
+    - object
+    - bare dict/list/set/tuple
+    - dict/list/set/tuple without type arguments
+    - nested Any/object inside containers
+
+    Exception:
+    - PlatformAuditEventResponse.metadata_json is intentionally broad because
+      audit metadata is heterogeneous. Limited audit views must still hide it.
+    """
+    if seen is None:
+        seen = set()
+
+    allowed_broad_fields = {
+        "PlatformAuditEventResponse.metadata_json",
+    }
+
+    if field_path in allowed_broad_fields:
+        return
+
+    if annotation in {Any, object}:
+        raise AssertionError(
+            f"{path}: {field_path} uses broad annotation {_annotation_name(annotation)}"
+        )
+
+    if annotation in {dict, list, set, tuple}:
+        raise AssertionError(
+            f"{path}: {field_path} uses bare container annotation "
+            f"{_annotation_name(annotation)}"
+        )
+
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+
+    if origin in {dict, list, set, tuple} and not args:
+        raise AssertionError(
+            f"{path}: {field_path} uses untyped container annotation "
+            f"{_annotation_name(annotation)}"
+        )
+
+    if origin is dict:
+        key_type, value_type = args
+        _assert_no_broad_response_annotations(
+            key_type,
+            path=path,
+            field_path=f"{field_path}.<key>",
+            seen=seen,
+        )
+        _assert_no_broad_response_annotations(
+            value_type,
+            path=path,
+            field_path=f"{field_path}.<value>",
+            seen=seen,
+        )
+        return
+
+    if origin in {list, set, tuple}:
+        for index, item_type in enumerate(args):
+            if item_type is Ellipsis:
+                continue
+            _assert_no_broad_response_annotations(
+                item_type,
+                path=path,
+                field_path=f"{field_path}[{index}]",
+                seen=seen,
+            )
+        return
+
+    if origin in {UnionType, __import__("typing").Union}:
+        for option in args:
+            if option is type(None):
+                continue
+            _assert_no_broad_response_annotations(
+                option,
+                path=path,
+                field_path=field_path,
+                seen=seen,
+            )
+        return
+
+    if args:
+        for index, arg in enumerate(args):
+            if arg is type(None):
+                continue
+            _assert_no_broad_response_annotations(
+                arg,
+                path=path,
+                field_path=f"{field_path}[{index}]",
+                seen=seen,
+            )
+
+    if not _is_pydantic_model(annotation):
+        return
+
+    if annotation in seen:
+        return
+    seen.add(annotation)
+
+    for name, field in annotation.model_fields.items():
+        _assert_no_broad_response_annotations(
+            field.annotation,
+            path=path,
+            field_path=f"{annotation.__name__}.{name}",
+            seen=seen,
+        )
+
+
 def test_all_schema_routes_have_non_empty_openapi_operation_ids(monkeypatch) -> None:
     spec = _openapi(monkeypatch)
 
@@ -286,6 +421,25 @@ def test_platform_routes_have_required_typed_success_response_models(
     ]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/PlatformLimitedOrganisationsCollectionResponse"
     )
+
+
+def test_platform_response_models_do_not_use_nested_broad_annotations(
+    monkeypatch,
+) -> None:
+    app = _build_app(monkeypatch)
+
+    for route in _schema_routes(app):
+        if not route.path.startswith("/api/v1/platform/"):
+            continue
+        if route.status_code == 204:
+            continue
+
+        assert route.response_model is not None, route.path
+        _assert_no_broad_response_annotations(
+            route.response_model,
+            path=route.path,
+            field_path=route.response_model.__name__,
+        )
 
 
 def test_limited_platform_openapi_schemas_omit_restricted_fields(monkeypatch) -> None:
