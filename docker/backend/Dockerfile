@@ -1,24 +1,31 @@
+# syntax=docker/dockerfile:1.7
+
 FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.7.22 /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/backend
+ENV PYTHONPATH=/app
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
+ENV UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=1
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    build-essential \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
-RUN python -m pip install --upgrade pip \
-    && python -m pip install --no-cache-dir -r /app/requirements.txt
+COPY pyproject.toml uv.lock README.md alembic.ini /app/
 
-COPY pyproject.toml /app/pyproject.toml
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --no-install-project
+
 COPY app /app/app
-COPY tests /app/tests
+COPY migrations /app/migrations
 
-RUN python -m pip install --no-cache-dir --no-deps -e .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable
 
 WORKDIR /app
