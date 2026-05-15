@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import app.core.db.models  # noqa: F401
 from app.core.tasks import configure_broker
 
 

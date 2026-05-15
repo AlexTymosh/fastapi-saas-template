@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+import app.core.db.models  # noqa: F401
 from app.core.config.settings import get_settings
 from app.core.db import get_session_factory
 from app.core.logging import get_logger
