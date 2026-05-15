@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -12,6 +13,7 @@ import pytest
 import sqlalchemy as sa
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_EXTERNAL_DB_CONNECT_TIMEOUT_SECONDS = 2
 
 
 def _run_alembic(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -67,11 +69,36 @@ def _is_safe_test_database_url(database_url: str) -> bool:
     return blocked_tokens.isdisjoint(db_name_tokens)
 
 
+def _can_open_tcp_connection(
+    *,
+    host: str,
+    port: int,
+    timeout_seconds: int = DEFAULT_EXTERNAL_DB_CONNECT_TIMEOUT_SECONDS,
+) -> bool:
+    try:
+        with socket.create_connection(
+            (host, port),
+            timeout=timeout_seconds,
+        ):
+            return True
+    except OSError:
+        return False
+
+
 def _is_external_database_reachable(database_url: str) -> bool:
     parsed = urlparse(database_url)
+
+    if parsed.scheme.startswith("postgresql"):
+        host = parsed.hostname
+        port = parsed.port or 5432
+        if not host or not _can_open_tcp_connection(host=host, port=port):
+            return False
+
     connect_args: dict[str, int] = {}
     if parsed.scheme.startswith("postgresql") and "psycopg" in parsed.scheme:
-        connect_args = {"connect_timeout": 2}
+        connect_args = {
+            "connect_timeout": DEFAULT_EXTERNAL_DB_CONNECT_TIMEOUT_SECONDS,
+        }
 
     engine = sa.create_engine(database_url, connect_args=connect_args)
     try:
@@ -183,9 +210,14 @@ def test_is_safe_test_database_url(database_url: str, expected: bool) -> None:
 
 
 @pytest.mark.unit
-def test_is_external_database_reachable_returns_false_fast_for_unreachable_port() -> (
-    None
-):
+def test_is_external_database_reachable_returns_false_fast_for_unreachable_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_timeout(*args: object, **kwargs: object) -> None:
+        raise TimeoutError("simulated connection timeout")
+
+    monkeypatch.setattr(socket, "create_connection", raise_timeout)
+
     start = time.monotonic()
     reachable = _is_external_database_reachable(
         "postgresql+psycopg://postgres:postgres@127.0.0.1:1/app_test"
@@ -193,7 +225,7 @@ def test_is_external_database_reachable_returns_false_fast_for_unreachable_port(
     elapsed = time.monotonic() - start
 
     assert reachable is False
-    assert elapsed < 5
+    assert elapsed < 1
 
 
 @pytest.mark.unit

@@ -3,19 +3,31 @@ repos:
     hooks:
       - id: ruff-check
         name: ruff check
-        entry: python -m ruff check --fix
+        entry: uv
+        args: ["run", "--project", "backend", "ruff", "check", "--fix", "."]
         language: system
-        types_or: [python, pyi]
+        pass_filenames: false
 
       - id: ruff-format
         name: ruff format
-        entry: python -m ruff format
+        entry: uv
+        args: ["run", "--project", "backend", "ruff", "format", "."]
         language: system
-        types_or: [python, pyi]
+        pass_filenames: false
 
       - id: pytest-unit
         name: pytest unit
-        entry: python -m pytest -q -m "not integration and not e2e and not external_db"
+        entry: uv
+        args:
+          [
+            "run",
+            "--project",
+            "backend",
+            "pytest",
+            "-q",
+            "-m",
+            "not integration and not e2e and not external_db",
+          ]
         language: system
         pass_filenames: false
         always_run: true
