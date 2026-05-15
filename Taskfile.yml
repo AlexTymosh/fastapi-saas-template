@@ -1,83 +1,73 @@
-version: '3'
+version: "3"
 
 tasks:
-  install:
-    desc: Install backend dependencies for local development.
+  sync:
+    desc: Install backend dependencies for local development with uv.
     dir: backend
     cmds:
-      - python -m pip install --upgrade pip
-      - python -m pip install -e ".[dev]"
+      - uv sync --group dev
+
+  deps:check:
+    desc: Verify that uv.lock is up to date with backend/pyproject.toml.
+    dir: backend
+    cmds:
+      - uv lock --check
 
   lint:
     desc: Run backend lint and formatting checks.
     dir: backend
     cmds:
-      - python -m ruff check .
-      - python -m ruff format --check .
+      - uv run --locked ruff check .
+      - uv run --locked ruff format --check .
 
   format:
     desc: Format backend code and apply safe lint fixes.
     dir: backend
     cmds:
-      - python -m ruff format .
-      - python -m ruff check . --fix
+      - uv run --locked ruff format .
+      - uv run --locked ruff check . --fix
 
   test:unit:
     desc: Run fast unit-style tests without integration, e2e, or external DB tests.
     dir: backend
     cmds:
-      - python -m pytest -q -m "not integration and not e2e and not external_db"
+      - uv run --locked pytest -q -m "not integration and not e2e and not external_db"
 
   test:integration:
     desc: Run integration tests except external DB tests.
     dir: backend
     cmds:
-      - python -m pytest -q -m "integration and not external_db" -rs
+      - uv run --locked pytest -q -m "integration and not external_db" -rs
 
   test:e2e:
     desc: Run e2e tests except external DB tests.
     dir: backend
     cmds:
-      - python -m pytest -q -m "e2e and not external_db" -rs
+      - uv run --locked pytest -q -m "e2e and not external_db" -rs
 
   test:safe:
     desc: Run the broad safe backend test suite.
     dir: backend
     cmds:
-      - python -m pytest -q -m "not external_db"
+      - uv run --locked pytest -q -m "not external_db"
 
   test:security:
     desc: Run security regression tests except external DB tests.
     dir: backend
     cmds:
-      - python -m pytest -q -m "security and not external_db"
+      - uv run --locked pytest -q -m "security and not external_db"
 
   test:contracts:
     desc: Run backend contract tests.
     dir: backend
     cmds:
-      - python -m pytest -q tests/contracts
+      - uv run --locked pytest -q tests/contracts
 
   test:external-db:
     desc: Run opt-in external DB tests.
     dir: backend
     cmds:
-      - python -m pytest -q -m external_db --run-external-db -rs
-
-  deps:compile:
-    desc: Regenerate legacy pip-tools requirements files.
-    dir: backend
-    cmds:
-      - python -m piptools compile --output-file=requirements.txt pyproject.toml
-      - python -m piptools compile --extra=dev --output-file=requirements-dev.txt pyproject.toml
-
-  deps:check:
-    desc: Verify legacy pip-tools requirements files are up to date.
-    dir: backend
-    cmds:
-      - python -m piptools compile --quiet --output-file=requirements.txt pyproject.toml
-      - python -m piptools compile --quiet --extra=dev --output-file=requirements-dev.txt pyproject.toml
-      - git diff --exit-code -- requirements.txt requirements-dev.txt
+      - uv run --locked pytest -q -m external_db --run-external-db -rs
 
   pre-push:
     desc: Run local checks before pushing.
@@ -91,6 +81,7 @@ tasks:
   ci:
     desc: Run the local equivalent of the GitHub backend quality gate.
     cmds:
+      - task: deps:check
       - task: lint
       - task: test:safe
       - task: test:security

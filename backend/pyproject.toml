@@ -31,7 +31,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http==1.28.2",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=9.0,<10.0",
     "testcontainers>=4.14.2,<5.0",
@@ -39,7 +39,6 @@ dev = [
     "pre-commit>=4.5,<5.0",
     "httpx>=0.28,<1.0",
     "aiosqlite>=0.21,<1.0",
-    "pip-tools>=7.5,<8.0",
 ]
 
 [tool.setuptools.packages.find]
