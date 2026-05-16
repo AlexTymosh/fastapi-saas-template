@@ -18,7 +18,6 @@ class UserMeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    external_auth_id: str
     email: EmailStr | None
     email_verified: bool
     first_name: str | None

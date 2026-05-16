@@ -128,14 +128,14 @@ def test_limited_platform_users_q_does_not_search_hidden_email(
     assert "alpha.full@example.com" not in response.text
 
 
-def test_limited_platform_users_exact_email_is_exact_lookup_without_email_exposure(
+def test_limited_platform_users_rejects_exact_email_lookup(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
     _seed_limited_view_data(migrated_session_factory)
     actor = _seed_staff(
         migrated_session_factory,
-        external_auth_id="kc-support-limited-users-exact-email",
-        email="support-limited-users-exact-email@example.com",
+        external_auth_id="kc-support-limited-users-exact-email-rejected",
+        email="support-limited-users-exact-email-rejected@example.com",
         role=PlatformRole.SUPPORT_AGENT,
     )
     bundle = authenticated_client_factory(
@@ -145,35 +145,11 @@ def test_limited_platform_users_exact_email_is_exact_lookup_without_email_exposu
 
     response = bundle.client.get(
         "/api/v1/platform/users/limited",
-        params={"exact_email": "ALPHA.FULL@example.com", "status": "active"},
-    )
-    partial_response = bundle.client.get(
-        "/api/v1/platform/users/limited",
-        params={"exact_email": "alpha.full@example.co"},
-    )
-    combined_response = bundle.client.get(
-        "/api/v1/platform/users/limited",
-        params={
-            "exact_email": "alpha.full@example.com",
-            "q": "visible",
-            "status": "active",
-        },
+        params={"exact_email": "alpha.full@example.com"},
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["meta"]["total"] == 1
-    assert payload["data"][0]["first_name"] == "Alpha"
-    assert "email" not in payload["data"][0]
-    assert "email_verified" not in payload["data"][0]
-    assert "suspended_reason" not in payload["data"][0]
+    assert response.status_code == 422
     assert "alpha.full@example.com" not in response.text
-
-    assert partial_response.status_code == 200
-    assert partial_response.json()["meta"]["total"] == 0
-
-    assert combined_response.status_code == 200
-    assert combined_response.json()["meta"]["total"] == 1
 
 
 def test_limited_platform_organisations_support_agent_excludes_deleted_orgs(

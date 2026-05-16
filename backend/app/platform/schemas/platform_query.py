@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.organisations.models.organisation import OrganisationStatus
 from app.platform.models.platform_staff import PlatformStaffRole, PlatformStaffStatus
@@ -18,9 +18,10 @@ class PlatformFullUserListQuery(PlatformPaginationQuery):
 
 
 class PlatformLimitedUserListQuery(PlatformPaginationQuery):
+    model_config = ConfigDict(extra="forbid")
+
     status: UserStatus | None = None
     q: str | None = Field(default=None, min_length=1, max_length=255)
-    exact_email: EmailStr | None = None
 
 
 class PlatformOrganisationListQuery(PlatformPaginationQuery):

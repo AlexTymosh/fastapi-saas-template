@@ -534,19 +534,14 @@ def test_platform_list_query_parameters_are_documented(monkeypatch) -> None:
         for parameter in spec["paths"]["/api/v1/platform/staff"]["get"]["parameters"]
     }
 
-    assert {"limit", "offset", "status", "q", "exact_email"}.issubset(
-        limited_users_params
-    )
+    assert {"limit", "offset", "status", "q"}.issubset(limited_users_params)
+    assert "exact_email" not in limited_users_params
     assert limited_users_params["limit"]["schema"]["maximum"] == 100
     assert limited_users_params["limit"]["schema"]["minimum"] == 1
     assert limited_users_params["offset"]["schema"]["minimum"] == 0
     q_string_schema = limited_users_params["q"]["schema"]["anyOf"][0]
-    exact_email_string_schema = limited_users_params["exact_email"]["schema"]["anyOf"][
-        0
-    ]
     assert q_string_schema["maxLength"] == 255
     assert q_string_schema["minLength"] == 1
-    assert exact_email_string_schema["format"] == "email"
 
     assert {"limit", "offset", "status", "q"}.issubset(full_users_params)
     assert "exact_email" not in full_users_params
