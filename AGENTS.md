@@ -79,7 +79,6 @@ Expected flow:
 - Use FastAPI dependency injection with `Depends`; avoid hidden globals.
 - Use async only for database/external I/O; pure CPU logic should be sync.
 
-
 ## Persistence ownership
 
 - Domain repositories own persistence for their aggregate tables.
@@ -130,6 +129,21 @@ Expected flow:
 - Do not trust client-provided identifiers, roles, or permissions.
 - Do not implement local password login unless explicitly requested.
 
+## Dependency management
+
+- Python dependency management uses `uv`.
+- The repository pins the local Python version in `.python-version`.
+- Runtime dependencies live in `backend/pyproject.toml` under `[project.dependencies]`.
+- Development dependencies live in `backend/pyproject.toml` under `[dependency-groups].dev`.
+- `backend/uv.lock` is the only dependency lock source.
+- Do not use Poetry.
+- Do not use `pip-tools`.
+- Do not recreate `requirements.txt` or `requirements-dev.txt`.
+- Use Taskfile commands or `uv run` for local checks.
+- Use `uv lock --check` to verify the lockfile is in sync.
+- Use `uv sync --group dev` for local development dependencies.
+- Use `uv sync --frozen --no-dev --no-editable` for production/runtime Docker installs.
+
 ## Logging
 
 - Use structured JSON logging when configured.
@@ -150,22 +164,75 @@ Expected flow:
 - Test business logic in services.
 - Mock external dependencies in unit tests.
 - Cover API behaviour with integration/e2e tests.
-- Before running pytest in a fresh environment, install dev dependencies from `backend/`:
-  `python -m pip install -e ".[dev]"`.
-- If editable install is unavailable, use:
-  `python -m pip install -r requirements-dev.txt`.
-- Recommended test bootstrap:
+
+Before running pytest in a fresh local environment, install development dependencies from the lockfile:
 
 ```bash
 cd backend
-python -m pip install -e ".[dev]"
-pytest -q -m "not external_db"
+uv sync --group dev
 ```
 
-- Prefer `pytest -q -m "not external_db"` for broad safe checks.
-- Security regression checks can be selected with `pytest -q -m "security and not external_db"`; focused slices include `bola`, `rate_limit`, `audit`, `cors`, `logging_security`, `auth`, `authz`, and `secrets`.
-- Use `pytest -q -m "security and not external_db" --collect-only` as a lightweight marker-registration sanity check when updating security markers.
-- Documentation-only changes should run grep/link sanity checks.
+Preferred repository-root commands:
+
+```bash
+task lint
+task test:unit
+task test:safe
+task test:security
+task test:contracts
+task ci
+```
+
+Direct backend commands must use `uv run`:
+
+```bash
+cd backend
+uv run pytest -q -m "not external_db"
+uv run pytest -q -m "security and not external_db"
+uv run pytest -q tests/contracts
+uv run ruff check .
+uv run ruff format --check .
+```
+
+Prefer `task test:safe` or `uv run pytest -q -m "not external_db"` for broad safe checks.
+
+Security regression checks can be selected with `task test:security` or:
+
+```bash
+uv run pytest -q -m "security and not external_db"
+```
+
+Focused security slices include `bola`, `rate_limit`, `audit`, `cors`, `logging_security`, `auth`, `authz`, and `secrets`.
+
+Use this command as a lightweight marker-registration sanity check when updating security markers:
+
+```bash
+uv run pytest -q -m "security and not external_db" --collect-only
+```
+
+Documentation-only changes should run grep/link sanity checks and at least:
+
+```bash
+task lint
+```
+
+## CI
+
+GitHub Actions runs the backend quality gate on pull requests and pushes to `main`.
+
+The CI workflow must use:
+
+- `.python-version`;
+- `uv lock --check`;
+- `uv sync --frozen --group dev`;
+- Ruff format and lint checks;
+- safe, security, and contract pytest suites.
+
+Local equivalent:
+
+```bash
+task ci
+```
 
 ## Change rules
 
@@ -187,6 +254,7 @@ pytest -q -m "not external_db"
 - Catch-all `utils`/`helpers` modules without narrow scope.
 - Exposing ORM models directly as API responses.
 - Unjustified try/except blocks around imports. Optional dependency/version compatibility fallbacks are allowed only when documented and tested.
+- Reintroducing `pip-tools`, Poetry, `requirements.txt`, or `requirements-dev.txt` as dependency sources.
 
 ## Source of truth
 

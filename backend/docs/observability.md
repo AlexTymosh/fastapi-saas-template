@@ -127,6 +127,15 @@ Rate-limit metrics:
 
 Route labels use route templates from FastAPI routes, not raw paths.
 
+## Local setup for manual verification
+
+Install backend development dependencies first:
+
+```bash
+cd backend
+uv sync --group dev
+```
+
 ## Manual OTLP metrics verification
 
 1. Start collector profile:
@@ -140,10 +149,11 @@ docker compose --profile observability up otel-collector
 Host app example:
 
 ```bash
+cd backend
 OBSERVABILITY__METRICS_ENABLED=true \
 OBSERVABILITY__EXPORTER=otlp \
 OBSERVABILITY__OTLP_ENDPOINT=http://localhost:4318/v1/metrics \
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 ```
 
 Docker app example (`compose.yaml` environment):
@@ -173,8 +183,7 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
 
 ## Automated OTLP verification
 
-- An integration/e2e test starts an ephemeral OpenTelemetry Collector via
-  Testcontainers.
+- An integration/e2e test starts an ephemeral OpenTelemetry Collector via Testcontainers.
 - The test verifies export through the collector debug exporter logs for:
   - HTTP metrics (`http.server.request.duration`, `http.server.requests.total`);
   - rate-limit decision metrics (`rate_limit.requests.total`) with `allowed`, `blocked`, `backend_error`, `fail_open`, and `runtime_unavailable` outcomes;
@@ -187,7 +196,8 @@ Rate-limit verification requires existing protected/rate-limited routes and vali
 Run:
 
 ```bash
-pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
+cd backend
+uv run pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
 ```
 
 ## Troubleshooting
@@ -205,16 +215,11 @@ pytest tests/observability/test_otlp_export_integration.py -q -m "integration an
 
 OpenTelemetry Python treats the global meter provider as process-wide and set-once.
 
-This project uses a local `_initialized_provider` guard to avoid repeated initialisation
-inside the app lifecycle, but the underlying global provider cannot be reset cleanly
-inside the same Python process.
+This project uses a local `_initialized_provider` guard to avoid repeated initialisation inside the app lifecycle, but the underlying global provider cannot be reset cleanly inside the same Python process.
 
 ### Testing strategy
 
-- Unit tests should monkeypatch `opentelemetry.metrics.set_meter_provider` instead of
-  repeatedly installing real global providers.
+- Unit tests should monkeypatch `opentelemetry.metrics.set_meter_provider` instead of repeatedly installing real global providers.
 - Tests that require real OTLP export should keep SDK initialisation isolated.
-- E2E OTLP export verification should run as a single controlled scenario per test
-  process, or in separate processes when multiple real SDK initialisations are needed.
-- Do not write tests that rely on resetting the global OpenTelemetry meter provider
-  after shutdown.
+- E2E OTLP export verification should run as a single controlled scenario per test process, or in separate processes when multiple real SDK initialisations are needed.
+- Do not write tests that rely on resetting the global OpenTelemetry meter provider after shutdown.

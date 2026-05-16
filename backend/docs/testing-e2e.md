@@ -11,7 +11,7 @@
 
 ### Integration
 
-- Tests combining 2–3 components.
+- Tests combining 2-3 components.
 - May use Testcontainers.
 - Examples: repository + PostgreSQL, Redis client, rate limiter + Redis.
 
@@ -29,6 +29,36 @@
 - Must never run by default.
 - Requires both `--run-external-db` and `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`.
 - Intended only for debugging persistent local test DBs.
+
+## Dependency setup
+
+Backend dependency management uses `uv`.
+
+Install development dependencies from the lockfile:
+
+```bash
+cd backend
+uv sync --group dev
+```
+
+Do not use `pip install -e ".[dev]"`, `requirements-dev.txt`, or `pip-tools`.
+`backend/uv.lock` is the only dependency lock source.
+
+## Taskfile commands
+
+Preferred commands from the repository root:
+
+```bash
+task test:unit
+task test:safe
+task test:security
+task test:contracts
+task test:integration
+task test:e2e
+task ci
+```
+
+The Taskfile wraps `uv run` so developers and agents do not need to type it manually for common checks.
 
 ## Markers
 
@@ -52,66 +82,64 @@ Security-sensitive tests also use a base `@pytest.mark.security` marker plus sta
 
 ## Safe commands
 
-Before running tests in a fresh environment, install dev dependencies:
+Fast unit-style suite:
 
 ```bash
 cd backend
-python -m pip install -e ".[dev]"
-```
-
-This installs test-only dependencies such as httpx, which is required by Starlette/FastAPI TestClient.
-
-If editable install is unavailable, use:
-
-```bash
-cd backend
-python -m pip install -r requirements-dev.txt
-```
-
-Fast safe suite:
-
-```bash
-pytest -q -m "not integration and not e2e and not external_db"
+uv run pytest -q -m "not integration and not e2e and not external_db"
 ```
 
 Pre-push safe suite:
 
 ```bash
-pytest -q -m "not external_db"
+cd backend
+uv run pytest -q -m "not external_db"
 ```
 
 Security marker collection sanity check:
 
 ```bash
-pytest -q -m "security and not external_db" --collect-only
+cd backend
+uv run pytest -q -m "security and not external_db" --collect-only
 ```
 
 Security regressions only:
 
 ```bash
-pytest -q -m "security and not external_db"
+cd backend
+uv run pytest -q -m "security and not external_db"
 ```
 
 Focused security slices:
 
 ```bash
-pytest -q -m bola
-pytest -q -m rate_limit
-pytest -q -m audit
-pytest -q -m cors
-pytest -q -m logging_security
+cd backend
+uv run pytest -q -m bola
+uv run pytest -q -m rate_limit
+uv run pytest -q -m audit
+uv run pytest -q -m cors
+uv run pytest -q -m logging_security
+```
+
+Contract tests:
+
+```bash
+cd backend
+uv run pytest -q tests/contracts
 ```
 
 Integration + E2E only:
 
 ```bash
-pytest -q -m "integration or e2e" -rs
+cd backend
+uv run pytest -q -m "integration or e2e" -rs
 ```
 
 External DB only:
 
 ```bash
-pytest -q -m external_db --run-external-db -rs
+cd backend
+uv run pytest -q -m external_db --run-external-db -rs
 ```
 
 Important safety notes:
@@ -119,6 +147,28 @@ Important safety notes:
 - `external_db` tests require explicit `--run-external-db`.
 - `external_db` tests also require `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`.
 - Do not set `ENABLE_EXTERNAL_MIGRATION_DB_TEST` globally in your shell profile.
+
+## Quality gate
+
+Local equivalent of GitHub CI:
+
+```bash
+task ci
+```
+
+Direct equivalent from `backend/`:
+
+```bash
+uv lock --check
+uv sync --frozen --group dev
+uv run --frozen ruff format --check .
+uv run --frozen ruff check .
+uv run --frozen pytest -q -m "not external_db"
+uv run --frozen pytest -q -m "security and not external_db"
+uv run --frozen pytest -q tests/contracts
+```
+
+Use `--frozen` in CI and other strict environments so dependency resolution cannot silently update the lockfile.
 
 ## Testcontainers rules
 
@@ -143,10 +193,13 @@ Important safety notes:
 - Avoid brittle timing assertions.
 - Use eventual polling for async exports.
 - Include last logs/output in timeout failures.
-- OTLP Collector export tests should use an ephemeral OpenTelemetry Collector via
-  Testcontainers.
+- OTLP Collector export tests should use an ephemeral OpenTelemetry Collector via Testcontainers.
 - For OTLP integration/e2e verification run:
-  `pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs`.
+
+```bash
+cd backend
+uv run pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
+```
 
 ## When to ask the user
 

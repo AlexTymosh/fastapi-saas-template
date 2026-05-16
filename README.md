@@ -37,8 +37,13 @@ Current project state is tracked in `backend/docs/current-state.md`.
 
 - Docker Desktop / Docker Engine with Docker Compose v2.
 - Git.
+- Python 3.12 for local backend development.
+- `uv` for Python dependency management.
+- Task for the project command runner.
 
-### Run locally
+The repository pins the local Python version in `.python-version`.
+
+### Run locally with Docker Compose
 
 ```bash
 cp .env.example .env
@@ -57,6 +62,37 @@ docker compose exec app python -m alembic upgrade head
 curl http://localhost:8000/api/v1/health/live
 curl http://localhost:8000/api/v1/health/ready
 ```
+
+## Local Backend Development
+
+Install backend development dependencies from the lockfile:
+
+```bash
+cd backend
+uv sync --group dev
+```
+
+Use Taskfile commands from the repository root for normal development:
+
+```bash
+task lint
+task test:safe
+task test:security
+task test:contracts
+task ci
+```
+
+Direct backend commands should use `uv run` from `backend/`:
+
+```bash
+cd backend
+uv run pytest -q -m "not external_db"
+uv run ruff check .
+uv run ruff format --check .
+```
+
+Do not use `pip-tools`, `requirements.txt`, or `requirements-dev.txt`.
+`backend/uv.lock` is the single dependency lock source.
 
 ## Local Services
 
@@ -81,7 +117,6 @@ Keycloak is the identity provider and JWT issuer.
 - Limited platform audit access uses a backend redacted endpoint that omits raw metadata, IP address, user-agent, free-text reason, and direct actor identifiers.
 - The detailed identity contract is in `backend/docs/keycloak-identity-contract.md`.
 
-
 ## Browser CORS
 
 CORS is disabled by default. For a local browser frontend, enable it explicitly in `.env` and keep allowed origins as a concrete allowlist, for example:
@@ -95,30 +130,60 @@ Do not combine wildcard origins with credentials. Production deployments must us
 
 ## Testing
 
-From `backend/`:
+Preferred local commands from the repository root:
 
 ```bash
-pip install -e ".[dev]"
-pytest -q
+task test:unit
+task test:safe
+task test:security
+task test:contracts
+task ci
 ```
 
-Safe broad suite:
+Equivalent direct commands from `backend/`:
 
 ```bash
-pytest -q -m "not external_db"
+uv run pytest -q -m "not integration and not e2e and not external_db"
+uv run pytest -q -m "not external_db"
+uv run pytest -q -m "security and not external_db"
+uv run pytest -q tests/contracts
 ```
 
 Security regression suites are explicitly marked and can be collected or run independently:
 
 ```bash
-pytest -q -m "security and not external_db" --collect-only
-pytest -q -m "security and not external_db"
-pytest -q -m "security and integration"
-pytest -q -m bola
-pytest -q -m rate_limit
+uv run pytest -q -m "security and not external_db" --collect-only
+uv run pytest -q -m "security and not external_db"
+uv run pytest -q -m "security and integration"
+uv run pytest -q -m bola
+uv run pytest -q -m rate_limit
 ```
 
-External DB tests are opt-in. See `backend/docs/testing-e2e.md` for integration/e2e conventions.
+External DB tests are opt-in:
+
+```bash
+uv run pytest -q -m external_db --run-external-db -rs
+```
+
+External DB tests also require the documented environment flags. See `backend/docs/testing-e2e.md` for integration/e2e conventions.
+
+## CI
+
+GitHub Actions runs the backend quality gate on pull requests and pushes to `main`.
+
+The workflow uses:
+
+- `.python-version` for Python 3.12;
+- `uv lock --check`;
+- `uv sync --frozen --group dev`;
+- Ruff formatting and lint checks;
+- safe, security, and contract pytest suites.
+
+Local equivalent:
+
+```bash
+task ci
+```
 
 ## Documentation
 
@@ -138,4 +203,5 @@ Start here:
 - Repositories are the only database access layer.
 - Router registration is centralised in `backend/app/api/master_router.py`.
 - Use environment-driven configuration; never commit secrets.
+- Use `uv` and Taskfile commands for backend dependency, lint, and test workflows.
 - Read `AGENTS.md` before AI-agent or Codex work.
