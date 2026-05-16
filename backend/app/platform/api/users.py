@@ -58,7 +58,6 @@ async def list_limited_platform_users(
         offset=query.offset,
         status=query.status,
         q=query.q,
-        exact_email=str(query.exact_email) if query.exact_email is not None else None,
     )
     return PlatformLimitedUsersCollectionResponse(
         data=[PlatformLimitedUserResponse.model_validate(user) for user in users],

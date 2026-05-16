@@ -56,6 +56,21 @@ def test_openapi_contains_problem_details_schema(monkeypatch) -> None:
     assert "request_id" in properties
 
 
+def test_openapi_user_me_response_does_not_expose_external_auth_id(
+    monkeypatch,
+) -> None:
+    app = _build_app(monkeypatch, docs_enabled="true")
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    spec = response.json()
+    schema = spec["components"]["schemas"]["UserMeResponse"]
+
+    assert "external_auth_id" not in schema["properties"]
+
+
 def test_openapi_health_ready_documents_503_problem_response(monkeypatch) -> None:
     app = _build_app(monkeypatch, docs_enabled="true")
     client = TestClient(app)

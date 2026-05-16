@@ -63,5 +63,5 @@ def test_users_me_accepts_validated_jwt_with_api_audience_and_web_resource_roles
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["external_auth_id"] == "kc-e2e-user-1"
+    assert "external_auth_id" not in payload
     assert payload["email"] == "jwt-path@example.com"

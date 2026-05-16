@@ -179,10 +179,10 @@ def _is_sensitive_string_value(value: str) -> bool:
 
 
 def _mask_email(value: str) -> str:
-    match = _EMAIL_RE.fullmatch(value.strip())
-    if not match:
-        return value
+    return _EMAIL_RE.sub(_mask_email_match, value)
 
+
+def _mask_email_match(match: re.Match[str]) -> str:
     name = match.group("name")
     domain = match.group("domain")
 

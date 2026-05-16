@@ -221,6 +221,31 @@ def test_redact_sensitive_fields_masks_email() -> None:
     assert result["email"].endswith(MASKED_EMAIL_DOMAIN)
 
 
+def test_redact_sensitive_fields_masks_embedded_email() -> None:
+    event = {
+        "message": f"Invite already exists for {FAKE_EMAIL}",
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert FAKE_EMAIL not in result["message"]
+    assert MASKED_EMAIL_DOMAIN in result["message"]
+    assert result["message"].startswith("Invite already exists for ")
+
+
+def test_redact_sensitive_fields_masks_multiple_embedded_emails() -> None:
+    second_email = "beta@example.invalid"
+    event = {
+        "message": f"{FAKE_EMAIL} invited {second_email}",
+    }
+
+    result = redact_sensitive_fields(None, "info", copy.deepcopy(event))
+
+    assert FAKE_EMAIL not in result["message"]
+    assert second_email not in result["message"]
+    assert result["message"].count(MASKED_EMAIL_DOMAIN) == 2
+
+
 def test_redact_sensitive_fields_redacts_sensitive_key_with_email_value() -> None:
     event = {
         "inviteToken": FAKE_EMAIL,

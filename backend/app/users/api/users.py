@@ -40,7 +40,6 @@ async def get_me(
 
     return UserMeResponse(
         id=user.id,
-        external_auth_id=user.external_auth_id,
         email=user.email,
         email_verified=user.email_verified,
         first_name=user.first_name,

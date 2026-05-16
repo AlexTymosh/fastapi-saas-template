@@ -122,7 +122,7 @@ def test_authenticated_client_uses_explicit_test_auth_provider(
     with test_client as client:
         response = client.get("/api/v1/users/me")
         assert response.status_code == 200
-        assert response.json()["external_auth_id"] == "kc-explicit-auth-user"
+        assert "external_auth_id" not in response.json()
 
 
 def test_users_me_persists_projection_across_request_boundaries(
@@ -162,7 +162,8 @@ def test_users_me_persists_projection_across_request_boundaries(
 
     persisted_after_second = run_async(_fetch_user())
 
-    assert first_payload["external_auth_id"] == "kc-user-1"
+    assert "external_auth_id" not in first_payload
+    assert "external_auth_id" not in second_payload
     assert second_payload["id"] == first_payload["id"]
     assert persisted_after_first.id == persisted_after_second.id
     assert persisted_after_second.external_auth_id == "kc-user-1"
@@ -368,12 +369,13 @@ def test_users_me_keeps_provisioning_new_users(tmp_path) -> None:
 
     persisted_user = run_async(_fetch_user())
 
-    assert payload["external_auth_id"] == "kc-new-users-me"
+    assert "external_auth_id" not in payload
     assert payload["email"] == "new-users-me@example.com"
     assert payload["first_name"] == "New"
     assert payload["last_name"] == "Provisioned"
     assert payload["status"] == UserStatus.ACTIVE.value
     assert persisted_user.id == UUID(payload["id"])
+    assert persisted_user.external_auth_id == "kc-new-users-me"
     assert persisted_user.status == UserStatus.ACTIVE
     run_async(engine.dispose())
 

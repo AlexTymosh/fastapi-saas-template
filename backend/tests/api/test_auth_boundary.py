@@ -45,7 +45,9 @@ def test_authenticated_provider_override_resolves_principal(
         response = client.get("/api/v1/users/me")
 
     assert response.status_code == 200
-    assert response.json()["external_auth_id"] == "kc-auth-boundary-user"
+    payload = response.json()
+    assert "external_auth_id" not in payload
+    assert payload["email"] == "boundary@example.com"
 
 
 def test_endpoint_depends_on_auth_boundary_dependency(
@@ -71,4 +73,6 @@ def test_endpoint_depends_on_auth_boundary_dependency(
         response = client.get("/api/v1/users/me")
 
     assert response.status_code == 200
-    assert response.json()["external_auth_id"] == "kc-auth-boundary-user"
+    payload = response.json()
+    assert "external_auth_id" not in payload
+    assert payload["email"] == "boundary@example.com"
