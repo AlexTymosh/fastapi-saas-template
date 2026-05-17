@@ -9,8 +9,8 @@ from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation
 from app.users.models.user import User
-from tests.api.test_users_organisations import _identity_for
 from tests.helpers.asyncio_runner import run_async
+from tests.organisations.test_users_organisations_api import _identity_for
 
 pytestmark = [pytest.mark.security, pytest.mark.authz]
 
