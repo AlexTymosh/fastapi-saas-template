@@ -14,8 +14,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - ".github/workflows/**"
+              - ".python-version"
+              - ".pre-commit-config.yaml"
+              - "Taskfile.yml"
+              - "backend/**"
+              - "!backend/docs/**"
+              - "!backend/**/*.md"
+
   backend-quality-gate:
     name: Backend quality gate
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     defaults:
@@ -49,11 +75,35 @@ jobs:
       - name: Lint
         run: uv run --frozen ruff check .
 
-      - name: Run safe tests
+      - name: Run non-external-db tests
         run: uv run --frozen pytest -q -m "not external_db"
 
-      - name: Run security tests
-        run: uv run --frozen pytest -q -m "security and not external_db"
+  ci-status:
+    name: CI status
+    needs:
+      - changes
+      - backend-quality-gate
+    if: always()
+    runs-on: ubuntu-latest
 
-      - name: Run contract tests
-        run: uv run --frozen pytest -q tests/contracts
+    steps:
+      - name: Evaluate required checks
+        run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "The changes detection job did not succeed."
+            exit 1
+          fi
+
+          case "${{ needs.backend-quality-gate.result }}" in
+            success|skipped)
+              echo "Backend quality gate result is acceptable: ${{ needs.backend-quality-gate.result }}."
+              ;;
+            failure|cancelled)
+              echo "Backend quality gate did not pass: ${{ needs.backend-quality-gate.result }}."
+              exit 1
+              ;;
+            *)
+              echo "Unexpected backend quality gate result: ${{ needs.backend-quality-gate.result }}."
+              exit 1
+              ;;
+          esac

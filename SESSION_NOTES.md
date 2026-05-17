@@ -15,7 +15,7 @@ Current dependency/tooling sources of truth:
 - `backend/uv.lock` is the only dependency lock source.
 - `Taskfile.yml` provides the stable developer/agent command interface.
 - `.pre-commit-config.yaml` runs local hooks through `uv`.
-- `.github/workflows/ci.yml` runs the backend quality gate through `uv`.
+- `.github/workflows/ci.yml` runs a path-filtered backend quality gate through `uv` and exposes an aggregate `CI status` job.
 - `docker/backend/Dockerfile` installs runtime dependencies through `uv sync --frozen --no-dev --no-editable`.
 
 Legacy dependency workflow is removed:
@@ -52,13 +52,13 @@ uv lock --check
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest -q -m "not external_db"
-uv run pytest -q -m "security and not external_db"
-uv run pytest -q tests/contracts
 ```
+
+Focused security and contract commands remain available for local/manual diagnosis.
 
 ## CI Commands
 
-GitHub Actions should run the strict backend quality gate:
+GitHub Actions should run the strict backend quality gate once for backend/tooling/CI-relevant changes:
 
 ```bash
 cd backend
@@ -67,8 +67,6 @@ uv sync --frozen --group dev
 uv run --frozen ruff format --check .
 uv run --frozen ruff check .
 uv run --frozen pytest -q -m "not external_db"
-uv run --frozen pytest -q -m "security and not external_db"
-uv run --frozen pytest -q tests/contracts
 ```
 
 ## Recently Completed

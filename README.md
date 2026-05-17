@@ -140,16 +140,13 @@ task test:contracts
 task ci
 ```
 
-Equivalent direct commands from `backend/`:
+Equivalent broad safe command from `backend/`:
 
 ```bash
-uv run pytest -q -m "not integration and not e2e and not external_db"
 uv run pytest -q -m "not external_db"
-uv run pytest -q -m "security and not external_db"
-uv run pytest -q tests/contracts
 ```
 
-Security regression suites are explicitly marked and can be collected or run independently:
+Focused marker or folder selections are available for local diagnosis, but they are not mandatory duplicate CI gates. Security regression suites are explicitly marked and can be collected or run independently:
 
 ```bash
 uv run pytest -q -m "security and not external_db" --collect-only
@@ -177,7 +174,8 @@ The workflow uses:
 - `uv lock --check`;
 - `uv sync --frozen --group dev`;
 - Ruff formatting and lint checks;
-- safe, security, and contract pytest suites.
+- one broad non-external-db pytest run: `uv run --frozen pytest -q -m "not external_db"`;
+- an aggregate `CI status` job that is safe to require in branch protection and passes for docs-only changes when the backend quality gate is skipped.
 
 Local equivalent:
 

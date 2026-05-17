@@ -188,8 +188,6 @@ Direct backend commands must use `uv run`:
 ```bash
 cd backend
 uv run pytest -q -m "not external_db"
-uv run pytest -q -m "security and not external_db"
-uv run pytest -q tests/contracts
 uv run ruff check .
 uv run ruff format --check .
 ```
@@ -202,7 +200,7 @@ Security regression checks can be selected with `task test:security` or:
 uv run pytest -q -m "security and not external_db"
 ```
 
-Focused security slices include `bola`, `rate_limit`, `audit`, `cors`, `logging_security`, `auth`, `authz`, and `secrets`.
+Focused security slices include `auth`, `authz`, and legacy micro-markers such as `bola`, `rate_limit`, `audit`, `cors`, `logging_security`, and `secrets`. Focused runs are for local/manual diagnosis, not mandatory duplicate CI gates.
 
 Use this command as a lightweight marker-registration sanity check when updating security markers:
 
@@ -226,7 +224,8 @@ The CI workflow must use:
 - `uv lock --check`;
 - `uv sync --frozen --group dev`;
 - Ruff format and lint checks;
-- safe, security, and contract pytest suites.
+- one broad non-external-db pytest run: `uv run --frozen pytest -q -m "not external_db"`;
+- a branch-protection-safe aggregate CI status job.
 
 Local equivalent:
 

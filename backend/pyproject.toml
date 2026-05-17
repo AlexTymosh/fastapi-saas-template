@@ -60,19 +60,23 @@ indent-style = "space"
 testpaths = ["tests"]
 addopts = ["--strict-markers"]
 markers = [
-    "unit: fast tests without external I/O or external services",
+    "unit: deprecated legacy marker for fast tests; leave lightweight/default tests unmarked",
     "integration: tests that combine application code with ephemeral external services via Testcontainers",
     "e2e: end-to-end tests that exercise full API flows against ephemeral infrastructure",
     "external_db: opt-in tests that use TEST_DATABASE_URL and must never run by default",
     "security: security regression tests and security-sensitive behaviour checks",
     "auth: authentication and JWT validation security tests",
     "authz: authorization and permission-boundary tests",
-    "bola: tenant isolation, BOLA and IDOR regression tests",
-    "audit: audit trail and audit visibility security tests",
-    "rate_limit: rate limiting abuse-prevention tests",
-    "cors: browser-facing CORS security tests",
-    "logging_security: logging redaction and sensitive-data leakage tests",
-    "secrets: secrets/configuration hardening tests",
+    "privacy: privacy-sensitive behaviour and data-minimisation tests",
+    "container: tests that require containerised ephemeral infrastructure",
+    "slow: tests that are intentionally slower than the default lightweight suite",
+    "contract: contract tests for API/schema/client compatibility",
+    "bola: legacy tenant isolation, BOLA and IDOR micro-marker; prefer folder-based selection for new tests",
+    "audit: legacy audit trail and audit visibility micro-marker; prefer folder-based selection for new tests",
+    "rate_limit: legacy rate limiting abuse-prevention micro-marker; prefer folder-based selection for new tests",
+    "cors: legacy browser-facing CORS security micro-marker; prefer folder-based selection for new tests",
+    "logging_security: legacy logging redaction and sensitive-data leakage micro-marker; prefer folder-based selection for new tests",
+    "secrets: legacy secrets/configuration hardening micro-marker; prefer folder-based selection for new tests",
 ]
 
 [tool.alembic]

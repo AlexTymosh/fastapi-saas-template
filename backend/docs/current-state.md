@@ -105,9 +105,9 @@ uv sync --frozen --group dev
 uv run --frozen ruff format --check .
 uv run --frozen ruff check .
 uv run --frozen pytest -q -m "not external_db"
-uv run --frozen pytest -q -m "security and not external_db"
-uv run --frozen pytest -q tests/contracts
 ```
+
+Focused security and contract commands remain available for local/manual diagnosis, but the main CI quality gate avoids duplicate pytest execution.
 
 External DB tests are opt-in and must not run by default.
 
