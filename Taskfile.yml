@@ -46,7 +46,7 @@ tasks:
       - uv run --locked pytest -q -m "e2e and not external_db" -rs
 
   test:safe:
-    desc: Run the broad safe backend test suite.
+    desc: Run the broad safe backend test suite used by the CI quality gate.
     dir: backend
     cmds:
       - uv run --locked pytest -q -m "not external_db"
@@ -70,13 +70,11 @@ tasks:
       - uv run --locked pytest -q -m external_db --run-external-db -rs
 
   pre-push:
-    desc: Run local checks before pushing.
+    desc: Run local checks before pushing without duplicating focused pytest subsets.
     cmds:
       - task: deps:check
       - task: lint
       - task: test:safe
-      - task: test:security
-      - task: test:contracts
 
   ci:
     desc: Run the local equivalent of the GitHub backend quality gate.
@@ -84,5 +82,3 @@ tasks:
       - task: deps:check
       - task: lint
       - task: test:safe
-      - task: test:security
-      - task: test:contracts

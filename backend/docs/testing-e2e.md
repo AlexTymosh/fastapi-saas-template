@@ -2,12 +2,13 @@
 
 ## Test levels
 
-### Unit
+### Default lightweight tests
 
 - Fast tests.
 - No Docker.
 - No external services.
 - No network.
+- No marker is required for normal lightweight/default tests.
 
 ### Integration
 
@@ -44,6 +45,19 @@ uv sync --group dev
 Do not use `pip install -e ".[dev]"`, `requirements-dev.txt`, or `pip-tools`.
 `backend/uv.lock` is the only dependency lock source.
 
+## CI test-selection policy
+
+The main GitHub backend quality gate runs all non-external-db backend tests exactly once:
+
+```bash
+cd backend
+uv run --frozen pytest -q -m "not external_db"
+```
+
+Security-only, authz-only, contract-only, or domain-folder-only commands are focused local/manual diagnostics. They must not be added as mandatory duplicate CI gates when they are already covered by the broad non-external-db run.
+
+Docs-only pull requests still start the CI workflow, but path filtering skips the expensive backend quality gate. The aggregate `CI status` job is the branch-protection-safe required check and passes when the backend gate is skipped because no backend/tooling/CI-relevant paths changed.
+
 ## Taskfile commands
 
 Preferred commands from the repository root:
@@ -60,36 +74,58 @@ task ci
 
 The Taskfile wraps `uv run` so developers and agents do not need to type it manually for common checks.
 
-## Markers
+`task pre-push` and `task ci` intentionally run only:
 
-Use explicit level/infrastructure markers where they apply:
+1. `task deps:check`
+2. `task lint`
+3. `task test:safe`
 
-- `@pytest.mark.unit`
+Focused test tasks remain available for manual diagnosis, but they are not part of the mandatory aggregate quality gate.
+
+## Marker policy
+
+Domain folders are preferred for domain/subsystem selection. For example, prefer paths such as `tests/rate_limit`, `tests/audit`, `tests/api`, or `tests/contracts` for focused domain runs instead of adding new micro-markers.
+
+Markers are for execution cost and cross-cutting risk classification:
+
+- no marker: normal lightweight/default test;
+- execution markers: cost, infrastructure, or opt-in execution semantics;
+- cross-cutting markers: security/privacy/authentication/authorization risk classification.
+
+### Keep cross-cutting markers
+
+- `@pytest.mark.security`
+- `@pytest.mark.auth`
+- `@pytest.mark.authz`
+- `@pytest.mark.privacy`
+
+### Keep execution markers
+
 - `@pytest.mark.integration`
 - `@pytest.mark.e2e`
 - `@pytest.mark.external_db`
+- `@pytest.mark.container`
+- `@pytest.mark.slow`
+- `@pytest.mark.contract`
 
-Security-sensitive tests also use a base `@pytest.mark.security` marker plus stable focused slices only when relevant:
+### Deprecated marker direction
 
-- `@pytest.mark.auth`
-- `@pytest.mark.authz`
-- `@pytest.mark.bola`
-- `@pytest.mark.audit`
-- `@pytest.mark.rate_limit`
-- `@pytest.mark.cors`
-- `@pytest.mark.logging_security`
-- `@pytest.mark.secrets`
+- `@pytest.mark.unit` is deprecated; lightweight tests should normally be unmarked.
+- `@pytest.mark.rate_limit`, `@pytest.mark.audit`, `@pytest.mark.cors`, `@pytest.mark.bola`, `@pytest.mark.logging_security`, and `@pytest.mark.secrets` are legacy/micro-markers and should not be added to new tests.
+- Prefer folders such as `tests/rate_limit` or `tests/audit` for domain-specific runs.
 
-## Safe commands
+Do not remove old marker definitions or old marker usages until a complete cleanup proves that the usages are gone and the test suite still passes.
 
-Fast unit-style suite:
+## Safe and focused commands
+
+Fast unit-style suite for legacy marker-based local selection:
 
 ```bash
 cd backend
 uv run pytest -q -m "not integration and not e2e and not external_db"
 ```
 
-Pre-push safe suite:
+Broad safe suite used by CI:
 
 ```bash
 cd backend
@@ -110,10 +146,12 @@ cd backend
 uv run pytest -q -m "security and not external_db"
 ```
 
-Focused security slices:
+Focused cross-cutting or legacy slices:
 
 ```bash
 cd backend
+uv run pytest -q -m auth
+uv run pytest -q -m authz
 uv run pytest -q -m bola
 uv run pytest -q -m rate_limit
 uv run pytest -q -m audit
@@ -150,7 +188,7 @@ Important safety notes:
 
 ## Quality gate
 
-Local equivalent of GitHub CI:
+Local equivalent of the mandatory GitHub backend quality gate:
 
 ```bash
 task ci
@@ -164,11 +202,21 @@ uv sync --frozen --group dev
 uv run --frozen ruff format --check .
 uv run --frozen ruff check .
 uv run --frozen pytest -q -m "not external_db"
-uv run --frozen pytest -q -m "security and not external_db"
-uv run --frozen pytest -q tests/contracts
 ```
 
 Use `--frozen` in CI and other strict environments so dependency resolution cannot silently update the lockfile.
+
+## Fixture scoping guidance
+
+Do not use `pytest_plugins` in non-root `conftest.py` files. Pytest documentation deprecates `pytest_plugins` in non-root `conftest.py` files because loaded plugins affect the whole test tree.
+
+Future fixture scoping should prefer explicit fixture re-exports from domain-local `conftest.py` files, for example:
+
+```python
+from tests.fixtures.redis import redis_client as redis_client
+
+__all__ = ["redis_client"]
+```
 
 ## Testcontainers rules
 
