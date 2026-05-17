@@ -16,10 +16,14 @@ from app.outbox.dispatcher import (
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
 from app.outbox.workers import _process_outbox_event
-from tests.api.test_invites import InMemoryInviteTokenSink, _drain_outbox, _identity_for
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.outbox import process_all_claimed_outbox_events
 from tests.helpers.settings import reset_settings_cache
+from tests.invites.test_invites_api import (
+    InMemoryInviteTokenSink,
+    _drain_outbox,
+    _identity_for,
+)
 
 pytestmark = [pytest.mark.security]
 
