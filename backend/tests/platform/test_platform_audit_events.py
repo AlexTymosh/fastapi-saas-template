@@ -11,7 +11,7 @@ from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 
-pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.audit]
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 def _seed_platform_staff(

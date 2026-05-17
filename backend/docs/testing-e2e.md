@@ -1,5 +1,24 @@
 # End-to-end and integration test conventions
 
+## Test selection policy
+
+The backend test suite uses a domain-first layout and a small marker set.
+
+Main rule:
+
+- folders describe the domain or subsystem;
+- file names describe the test type for humans;
+- markers are used only for execution cost or cross-cutting risk selection.
+
+The main GitHub backend quality gate runs all non-external-db backend tests exactly once:
+
+```bash
+cd backend
+uv run --frozen pytest -q -m "not external_db"
+```
+
+Focused runs such as security-only, authz-only, privacy-only, contract-only, container-only, or domain-folder-only commands are local/manual diagnostics. They must not be added as mandatory duplicate CI gates when already covered by the broad non-external-db run.
+
 ## Test levels
 
 ### Default lightweight tests
@@ -8,20 +27,38 @@
 - No Docker.
 - No external services.
 - No network.
-- No marker is required for normal lightweight/default tests.
+- No execution marker is required.
+- A normal unmarked test is treated as lightweight/default.
 
 ### Integration
 
-- Tests combining 2-3 components.
-- May use Testcontainers.
-- Examples: repository + PostgreSQL, Redis client, rate limiter + Redis.
+- Tests combining multiple components.
+- May use ephemeral infrastructure.
+- Use `@pytest.mark.integration`.
 
 ### E2E
 
 - Full API flow tests through an HTTP client.
 - Should exercise realistic application behaviour.
-- Should use ephemeral infrastructure via Testcontainers.
-- Should avoid production resources.
+- Use `@pytest.mark.e2e`.
+
+### Container
+
+- Tests requiring Docker/Testcontainers or similar containerised ephemeral infrastructure.
+- Use `@pytest.mark.container`.
+- Container tests may also be `integration` or `e2e`.
+
+### Slow
+
+- Tests intentionally slower than the default suite.
+- Use `@pytest.mark.slow`.
+- Slow tests still run in the main safe CI suite unless they are also `external_db`.
+
+### Contract
+
+- API/schema/client compatibility tests.
+- Use `@pytest.mark.contract`.
+- Contract tests usually live under `tests/contracts` or in explicit OpenAPI contract files.
 
 ### External DB
 
@@ -29,7 +66,60 @@
 - Uses `TEST_DATABASE_URL`.
 - Must never run by default.
 - Requires both `--run-external-db` and `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`.
-- Intended only for debugging persistent local test DBs.
+- Use `@pytest.mark.external_db`.
+
+## Marker policy
+
+### Execution markers
+
+Keep:
+
+- `@pytest.mark.integration`
+- `@pytest.mark.e2e`
+- `@pytest.mark.external_db`
+- `@pytest.mark.container`
+- `@pytest.mark.slow`
+- `@pytest.mark.contract`
+
+### Cross-cutting risk markers
+
+Keep:
+
+- `@pytest.mark.security`
+- `@pytest.mark.auth`
+- `@pytest.mark.authz`
+- `@pytest.mark.privacy`
+
+### Removed legacy markers
+
+Do not use:
+
+- `@pytest.mark.unit`
+- `@pytest.mark.rate_limit`
+- `@pytest.mark.audit`
+- `@pytest.mark.cors`
+- `@pytest.mark.bola`
+- `@pytest.mark.logging_security`
+- `@pytest.mark.secrets`
+
+Use folders for domain/subsystem selection instead:
+
+```bash
+cd backend
+uv run pytest -q tests/rate_limit
+uv run pytest -q tests/audit
+uv run pytest -q tests/secrets
+uv run pytest -q tests/logging
+```
+
+Use cross-cutting markers only when selection cannot be represented by one folder:
+
+```bash
+cd backend
+uv run pytest -q -m "security and not external_db"
+uv run pytest -q -m "authz and not external_db"
+uv run pytest -q -m "privacy and not external_db"
+```
 
 ## Dependency setup
 
@@ -45,156 +135,11 @@ uv sync --group dev
 Do not use `pip install -e ".[dev]"`, `requirements-dev.txt`, or `pip-tools`.
 `backend/uv.lock` is the only dependency lock source.
 
-## CI test-selection policy
-
-The main GitHub backend quality gate runs all non-external-db backend tests exactly once:
-
-```bash
-cd backend
-uv run --frozen pytest -q -m "not external_db"
-```
-
-Security-only, authz-only, contract-only, or domain-folder-only commands are focused local/manual diagnostics. They must not be added as mandatory duplicate CI gates when they are already covered by the broad non-external-db run.
+## CI behaviour
 
 Docs-only pull requests still start the CI workflow, but path filtering skips the expensive backend quality gate. The aggregate `CI status` job is the branch-protection-safe required check and passes when the backend gate is skipped because no backend/tooling/CI-relevant paths changed.
 
-## Taskfile commands
-
-Preferred commands from the repository root:
-
-```bash
-task test:unit
-task test:safe
-task test:security
-task test:contracts
-task test:integration
-task test:e2e
-task ci
-```
-
-The Taskfile wraps `uv run` so developers and agents do not need to type it manually for common checks.
-
-`task pre-push` and `task ci` intentionally run only:
-
-1. `task deps:check`
-2. `task lint`
-3. `task test:safe`
-
-Focused test tasks remain available for manual diagnosis, but they are not part of the mandatory aggregate quality gate.
-
-## Marker policy
-
-Domain folders are preferred for domain/subsystem selection. For example, prefer paths such as `tests/rate_limit`, `tests/audit`, `tests/api`, or `tests/contracts` for focused domain runs instead of adding new micro-markers.
-
-Markers are for execution cost and cross-cutting risk classification:
-
-- no marker: normal lightweight/default test;
-- execution markers: cost, infrastructure, or opt-in execution semantics;
-- cross-cutting markers: security/privacy/authentication/authorization risk classification.
-
-### Keep cross-cutting markers
-
-- `@pytest.mark.security`
-- `@pytest.mark.auth`
-- `@pytest.mark.authz`
-- `@pytest.mark.privacy`
-
-### Keep execution markers
-
-- `@pytest.mark.integration`
-- `@pytest.mark.e2e`
-- `@pytest.mark.external_db`
-- `@pytest.mark.container`
-- `@pytest.mark.slow`
-- `@pytest.mark.contract`
-
-### Deprecated marker direction
-
-- `@pytest.mark.unit` is deprecated; lightweight tests should normally be unmarked.
-- `@pytest.mark.rate_limit`, `@pytest.mark.audit`, `@pytest.mark.cors`, `@pytest.mark.bola`, `@pytest.mark.logging_security`, and `@pytest.mark.secrets` are legacy/micro-markers and should not be added to new tests.
-- Prefer folders such as `tests/rate_limit` or `tests/audit` for domain-specific runs.
-
-Do not remove old marker definitions or old marker usages until a complete cleanup proves that the usages are gone and the test suite still passes.
-
-## Safe and focused commands
-
-Fast unit-style suite for legacy marker-based local selection:
-
-```bash
-cd backend
-uv run pytest -q -m "not integration and not e2e and not external_db"
-```
-
-Broad safe suite used by CI:
-
-```bash
-cd backend
-uv run pytest -q -m "not external_db"
-```
-
-Security marker collection sanity check:
-
-```bash
-cd backend
-uv run pytest -q -m "security and not external_db" --collect-only
-```
-
-Security regressions only:
-
-```bash
-cd backend
-uv run pytest -q -m "security and not external_db"
-```
-
-Focused cross-cutting or legacy slices:
-
-```bash
-cd backend
-uv run pytest -q -m auth
-uv run pytest -q -m authz
-uv run pytest -q -m bola
-uv run pytest -q -m rate_limit
-uv run pytest -q -m audit
-uv run pytest -q -m cors
-uv run pytest -q -m logging_security
-```
-
-Contract tests:
-
-```bash
-cd backend
-uv run pytest -q tests/contracts
-```
-
-Integration + E2E only:
-
-```bash
-cd backend
-uv run pytest -q -m "integration or e2e" -rs
-```
-
-External DB only:
-
-```bash
-cd backend
-uv run pytest -q -m external_db --run-external-db -rs
-```
-
-Important safety notes:
-
-- `external_db` tests require explicit `--run-external-db`.
-- `external_db` tests also require `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`.
-- Do not set `ENABLE_EXTERNAL_MIGRATION_DB_TEST` globally in your shell profile.
-
-## Quality gate
-
-Local equivalent of the mandatory GitHub backend quality gate:
-
-```bash
-task ci
-```
-
-Direct equivalent from `backend/`:
+The mandatory backend quality gate is:
 
 ```bash
 uv lock --check
@@ -204,11 +149,57 @@ uv run --frozen ruff check .
 uv run --frozen pytest -q -m "not external_db"
 ```
 
-Use `--frozen` in CI and other strict environments so dependency resolution cannot silently update the lockfile.
+Do not add overlapping mandatory pytest commands to the main CI workflow. In one CI workflow, a second pytest command must not select a subset that is already covered by the broad non-external-db run.
+
+## Taskfile commands
+
+Preferred commands from the repository root:
+
+```bash
+task test:lightweight
+task test:safe
+task test:security
+task test:auth
+task test:authz
+task test:privacy
+task test:contracts
+task test:integration
+task test:e2e
+task test:container
+task test:slow
+task ci
+```
+
+`task pre-push` and `task ci` intentionally run only:
+
+1. `task deps:check`
+2. `task lint`
+3. `task test:safe`
+
+Focused test tasks remain available for manual diagnosis, but they are not part of the mandatory aggregate quality gate.
+
+## Useful collection checks
+
+```bash
+cd backend
+uv run --frozen pytest --collect-only -q
+uv run --frozen pytest --collect-only -q -m "not external_db"
+uv run --frozen pytest --collect-only -q -m "external_db"
+uv run --frozen pytest --collect-only -q -m "integration"
+uv run --frozen pytest --collect-only -q -m "container"
+uv run --frozen pytest --collect-only -q -m "contract"
+uv run --frozen pytest --collect-only -q -m "security"
+```
+
+Expected relationship:
+
+- plain collection = all tests;
+- `not external_db` = all default CI-safe tests;
+- `external_db` = opt-in external DB tests only.
 
 ## Fixture scoping guidance
 
-Do not use `pytest_plugins` in non-root `conftest.py` files. Pytest documentation deprecates `pytest_plugins` in non-root `conftest.py` files because loaded plugins affect the whole test tree.
+Do not use `pytest_plugins` in non-root `conftest.py` files. Pytest deprecates this pattern because loaded plugins affect the whole test tree even when the declaration is inside a nested `conftest.py`.
 
 Future fixture scoping should prefer explicit fixture re-exports from domain-local `conftest.py` files, for example:
 
@@ -242,11 +233,12 @@ __all__ = ["redis_client"]
 - Use eventual polling for async exports.
 - Include last logs/output in timeout failures.
 - OTLP Collector export tests should use an ephemeral OpenTelemetry Collector via Testcontainers.
-- For OTLP integration/e2e verification run:
+
+For OTLP integration/e2e verification run:
 
 ```bash
 cd backend
-uv run pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
+uv run pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e and container" -rs
 ```
 
 ## When to ask the user

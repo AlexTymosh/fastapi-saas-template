@@ -9,8 +9,7 @@ from app.core.logging.processors import (
     redact_sensitive_fields,
 )
 
-pytestmark = [pytest.mark.security, pytest.mark.logging_security]
-
+pytestmark = [pytest.mark.security, pytest.mark.privacy]
 
 REDACTED = "[REDACTED]"
 MASKED_EMAIL_DOMAIN = "@example.invalid"

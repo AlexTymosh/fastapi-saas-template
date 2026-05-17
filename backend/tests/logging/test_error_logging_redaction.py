@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 
-pytestmark = [pytest.mark.security, pytest.mark.logging_security]
+pytestmark = [pytest.mark.security, pytest.mark.privacy]
 
 
 def build_test_client(*, raise_server_exceptions: bool = False) -> TestClient:

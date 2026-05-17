@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 pytestmark = [pytest.mark.security, pytest.mark.authz]
-
 _REALM_EXPORT = (
     Path(__file__).resolve().parents[3] / "docker/keycloak/realm-export.json"
 )

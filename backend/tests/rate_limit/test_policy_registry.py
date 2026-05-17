@@ -30,8 +30,7 @@ from app.core.rate_limit.registry import (
     iter_rate_limit_policies,
 )
 
-pytestmark = [pytest.mark.security, pytest.mark.rate_limit]
-
+pytestmark = [pytest.mark.security]
 EXPECTED_POLICIES = {
     "authenticated_default": AUTHENTICATED_DEFAULT_POLICY,
     "tenant_read": TENANT_READ_POLICY,

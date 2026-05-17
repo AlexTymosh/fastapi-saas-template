@@ -6,7 +6,7 @@ from hvac.exceptions import InvalidPath
 from app.core.config.settings import VaultSettings
 from app.core.secrets.vault_provider import VaultSecretsProvider
 
-pytestmark = [pytest.mark.security, pytest.mark.secrets]
+pytestmark = [pytest.mark.security]
 
 
 @patch("app.core.secrets.vault_provider.hvac.Client")

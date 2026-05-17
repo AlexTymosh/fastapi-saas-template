@@ -19,6 +19,8 @@ from app.core.rate_limit.policies import RateLimitPolicy
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
 
+pytestmark = [pytest.mark.container, pytest.mark.slow]
+
 
 class _FailingLimiter:
     async def hit(self, item, namespace: str, key: str) -> bool:

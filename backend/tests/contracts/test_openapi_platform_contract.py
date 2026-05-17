@@ -3,12 +3,14 @@ from __future__ import annotations
 from types import UnionType
 from typing import Any, get_args, get_origin
 
+import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
 
+pytestmark = [pytest.mark.contract]
 OPENAPI_METHODS = {"get", "post", "patch", "delete", "put"}
 PLATFORM_TAGS = {
     "platform-identity",

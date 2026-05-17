@@ -291,7 +291,6 @@ def test_replace_owner_membership_succeeds_and_keeps_exactly_one_owner() -> None
     assert service.session.flush.await_count == 2
 
 
-@pytest.mark.audit
 def test_change_membership_role_owner_can_promote_member() -> None:
     service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()
@@ -372,7 +371,6 @@ def test_change_membership_role_admin_is_forbidden() -> None:
         )
 
 
-@pytest.mark.audit
 def test_change_membership_role_rejects_noop_without_audit_event() -> None:
     service = MembershipService(session=_session_stub())
     service.membership_repository = AsyncMock()

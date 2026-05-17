@@ -596,7 +596,6 @@ def test_accept_invite_rejects_email_mismatch(
 
 
 @pytest.mark.integration
-@pytest.mark.secrets
 def test_invite_accept_normalises_unusable_token_state_problem_details(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -811,7 +810,6 @@ def test_create_invite_returns_single_resource_contract(
     assert body["status"] == "pending"
 
 
-@pytest.mark.audit
 def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -858,8 +856,6 @@ def test_create_invite_delivery_failure_keeps_invite_and_audit_event(
     run_async(_assert_persisted())
 
 
-@pytest.mark.audit
-@pytest.mark.secrets
 def test_resend_invite_delivery_failure_updates_outbox_state(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -1130,7 +1126,6 @@ def test_unverified_email_cannot_accept_invite(
         assert response.headers["content-type"].startswith("application/problem+json")
 
 
-@pytest.mark.secrets
 def test_invite_token_cannot_be_accepted_twice(
     authenticated_client_factory,
     migrated_database_url: str,

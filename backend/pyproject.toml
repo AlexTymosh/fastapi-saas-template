@@ -60,23 +60,16 @@ indent-style = "space"
 testpaths = ["tests"]
 addopts = ["--strict-markers"]
 markers = [
-    "unit: deprecated legacy marker for fast tests; leave lightweight/default tests unmarked",
-    "integration: tests that combine application code with ephemeral external services via Testcontainers",
-    "e2e: end-to-end tests that exercise full API flows against ephemeral infrastructure",
+    "integration: tests that combine multiple components and may use ephemeral infrastructure",
+    "e2e: end-to-end tests that exercise full API flows",
     "external_db: opt-in tests that use TEST_DATABASE_URL and must never run by default",
+    "container: tests that require Docker/Testcontainers or other containerised ephemeral infrastructure",
+    "slow: tests that are intentionally slower than the default lightweight suite",
+    "contract: API/schema/client compatibility contract tests",
     "security: security regression tests and security-sensitive behaviour checks",
     "auth: authentication and JWT validation security tests",
     "authz: authorization and permission-boundary tests",
-    "privacy: privacy-sensitive behaviour and data-minimisation tests",
-    "container: tests that require containerised ephemeral infrastructure",
-    "slow: tests that are intentionally slower than the default lightweight suite",
-    "contract: contract tests for API/schema/client compatibility",
-    "bola: legacy tenant isolation, BOLA and IDOR micro-marker; prefer folder-based selection for new tests",
-    "audit: legacy audit trail and audit visibility micro-marker; prefer folder-based selection for new tests",
-    "rate_limit: legacy rate limiting abuse-prevention micro-marker; prefer folder-based selection for new tests",
-    "cors: legacy browser-facing CORS security micro-marker; prefer folder-based selection for new tests",
-    "logging_security: legacy logging redaction and sensitive-data leakage micro-marker; prefer folder-based selection for new tests",
-    "secrets: legacy secrets/configuration hardening micro-marker; prefer folder-based selection for new tests",
+    "privacy: privacy-sensitive behaviour, data minimisation, and sensitive-data leakage tests",
 ]
 
 [tool.alembic]

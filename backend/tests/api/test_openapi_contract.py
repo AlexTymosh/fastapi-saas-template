@@ -1,7 +1,10 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
+
+pytestmark = [pytest.mark.contract]
 
 
 def _build_app(monkeypatch, *, docs_enabled: str):

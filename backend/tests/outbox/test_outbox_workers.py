@@ -305,7 +305,6 @@ def test_worker_runtime_fails_without_redis(monkeypatch) -> None:
         tasks_broker_module.configure_broker(require_redis=True)
 
 
-@pytest.mark.secrets
 def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
     migrated_session_factory, monkeypatch
 ) -> None:
@@ -492,7 +491,6 @@ def test_worker_marks_invalid_invite_id_payload_failed_attempt(
     run_async(_run())
 
 
-@pytest.mark.secrets
 def test_worker_marks_missing_encrypted_token_payload_failed_attempt(
     migrated_session_factory, monkeypatch
 ) -> None:
@@ -525,7 +523,6 @@ def test_worker_marks_missing_encrypted_token_payload_failed_attempt(
     run_async(_run())
 
 
-@pytest.mark.secrets
 def test_worker_marks_empty_encrypted_token_payload_failed_attempt(
     migrated_session_factory, monkeypatch
 ) -> None:
@@ -626,7 +623,6 @@ def test_worker_malformed_payload_retries_as_pending(
     run_async(_run())
 
 
-@pytest.mark.secrets
 def test_worker_malformed_payload_does_not_leak_sensitive_token(
     migrated_session_factory, monkeypatch, caplog
 ) -> None:

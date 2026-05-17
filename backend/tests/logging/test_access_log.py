@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 
+pytestmark = [pytest.mark.privacy]
+
 
 def build_test_client(*, raise_server_exceptions: bool = True) -> TestClient:
     app = create_app()
@@ -99,7 +101,7 @@ def test_access_log_middleware_logs_failed_request(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.logging_security
+@pytest.mark.privacy
 def test_access_log_does_not_leak_invite_token_from_request_body(monkeypatch) -> None:
     stream = io.StringIO()
     monkeypatch.setenv("LOGGING__AS_JSON", "true")

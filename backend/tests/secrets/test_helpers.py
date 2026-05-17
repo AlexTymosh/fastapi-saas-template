@@ -7,7 +7,7 @@ from app.core.secrets.helpers import (
     get_redis_url,
 )
 
-pytestmark = [pytest.mark.security, pytest.mark.secrets]
+pytestmark = [pytest.mark.security]
 
 
 class DummyProvider:
