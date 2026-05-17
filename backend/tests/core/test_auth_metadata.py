@@ -8,7 +8,6 @@ from tests.helpers.asyncio_runner import run_async
 from tests.helpers.jwt import generate_rsa_jwk
 
 pytestmark = [pytest.mark.security, pytest.mark.auth]
-
 ISSUER = "https://auth.example/realms/main"
 DISCOVERY_URL = f"{ISSUER}/.well-known/openid-configuration"
 JWKS_URL = "https://auth.example/realms/main/protocol/openid-connect/certs"

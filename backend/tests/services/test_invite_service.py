@@ -20,7 +20,7 @@ from app.outbox.models.outbox_event import OutboxEventType
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
-pytestmark = [pytest.mark.security, pytest.mark.unit]
+pytestmark = [pytest.mark.security]
 
 
 @asynccontextmanager
@@ -560,8 +560,6 @@ def test_create_invite_translates_integrity_error_to_conflict() -> None:
         )
 
 
-@pytest.mark.audit
-@pytest.mark.secrets
 def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     service = _service()
     org_id = uuid4()
@@ -635,8 +633,6 @@ def test_create_invite_publishes_outbox_event_without_direct_delivery() -> None:
     service.token_sink.deliver.assert_not_called()
 
 
-@pytest.mark.audit
-@pytest.mark.secrets
 def test_resend_invite_updates_token_hash_and_publishes_outbox_event() -> None:
     service = _service()
     org_id = uuid4()

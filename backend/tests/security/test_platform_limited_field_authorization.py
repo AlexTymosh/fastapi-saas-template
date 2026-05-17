@@ -10,7 +10,7 @@ from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 
-pytestmark = [pytest.mark.security, pytest.mark.authz]
+pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.privacy]
 
 
 def _seed_actor(session_factory, *, role: PlatformRole):

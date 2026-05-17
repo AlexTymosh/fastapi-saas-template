@@ -20,7 +20,7 @@ from app.platform.models.platform_staff import (
 from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 
-pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.audit]
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 def _seed_user(email: str, status: UserStatus = UserStatus.ACTIVE):

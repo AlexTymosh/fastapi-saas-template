@@ -17,7 +17,6 @@ from tests.helpers.settings import reset_settings_cache
 
 pytestmark = [pytest.mark.security, pytest.mark.auth]
 
-
 ISSUER = "http://localhost:8080/realms/fastapi-saas"
 JWKS_URL = "http://mock-idp/jwks"
 DISCOVERY_URL = f"{ISSUER}/.well-known/openid-configuration"

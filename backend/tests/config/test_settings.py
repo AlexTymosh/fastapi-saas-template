@@ -86,7 +86,6 @@ def test_legacy_security_keycloak_env_vars_are_ignored_for_runtime_auth(
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
 def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
     monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", "custom-prefix")
@@ -105,8 +104,6 @@ def test_settings_reads_rate_limiting_nested_env(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
-@pytest.mark.secrets
 def test_enabled_rate_limiting_requires_identifier_secret(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
     monkeypatch.delenv("RATE_LIMITING__IDENTIFIER_SECRET", raising=False)
@@ -121,8 +118,6 @@ def test_enabled_rate_limiting_requires_identifier_secret(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
-@pytest.mark.secrets
 def test_rate_limiting_identifier_secret_minimum_length(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
     monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", "short")
@@ -135,8 +130,6 @@ def test_rate_limiting_identifier_secret_minimum_length(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
-@pytest.mark.secrets
 def test_rate_limiting_identifier_secret_accepts_secret_value(monkeypatch) -> None:
     secret = "x" * 32
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
@@ -152,8 +145,6 @@ def test_rate_limiting_identifier_secret_accepts_secret_value(monkeypatch) -> No
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
-@pytest.mark.secrets
 def test_rate_limiting_identifier_secret_is_redacted_in_model_dump(monkeypatch) -> None:
     secret = "y" * 32
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
@@ -170,7 +161,6 @@ def test_rate_limiting_identifier_secret_is_redacted_in_model_dump(monkeypatch) 
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
 def test_settings_reads_rate_limit_policy_override(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT", "9")
     monkeypatch.setenv("RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS", "300")
@@ -188,7 +178,6 @@ def test_settings_reads_rate_limit_policy_override(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
 def test_settings_rejects_unknown_rate_limit_policy_override(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__POLICIES__UNKNOWN_POLICY__LIMIT", "10")
 
@@ -200,7 +189,6 @@ def test_settings_rejects_unknown_rate_limit_policy_override(monkeypatch) -> Non
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
 @pytest.mark.parametrize(
     ("field", "value"),
     [("LIMIT", "0"), ("WINDOW_SECONDS", "0"), ("WINDOW_SECONDS", "61")],
@@ -218,7 +206,6 @@ def test_settings_rejects_invalid_rate_limit_override_values(
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
 def test_prod_rejects_relaxed_rate_limit_mode(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     _set_complete_prod_auth(monkeypatch)
@@ -239,7 +226,6 @@ def test_prod_rejects_relaxed_rate_limit_mode(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
 def test_prod_accepts_panic_rate_limit_mode(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     _set_complete_prod_auth(monkeypatch)
@@ -345,7 +331,6 @@ def test_prod_rejects_non_https_auth_urls(monkeypatch) -> None:
 
 @pytest.mark.security
 @pytest.mark.auth
-@pytest.mark.secrets
 def test_prod_rejects_docs_and_request_id_trust(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     _set_complete_prod_auth(monkeypatch)
@@ -361,8 +346,6 @@ def test_prod_rejects_docs_and_request_id_trust(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.rate_limit
-@pytest.mark.secrets
 def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     _set_complete_prod_auth(monkeypatch)
@@ -390,7 +373,6 @@ def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.secrets
 def test_dev_requires_outbox_key_when_invite_delivery_enabled(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "dev")
     monkeypatch.setenv("OUTBOX__INVITE_DELIVERY_ENABLED", "true")
@@ -401,7 +383,6 @@ def test_dev_requires_outbox_key_when_invite_delivery_enabled(monkeypatch) -> No
 
 
 @pytest.mark.security
-@pytest.mark.secrets
 def test_settings_rejects_invalid_fernet_key(monkeypatch) -> None:
     monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", "invalid-key")
     reset_settings_cache()
@@ -423,7 +404,6 @@ def test_settings_reads_outbox_recovery_env(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.cors
 def test_default_cors_disabled(monkeypatch) -> None:
     reset_settings_cache()
     settings = get_settings()
@@ -436,7 +416,6 @@ def test_default_cors_disabled(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.cors
 def test_enabled_cors_requires_origin(monkeypatch) -> None:
     monkeypatch.setenv("CORS__ENABLED", "true")
     monkeypatch.setenv("CORS__ALLOW_ORIGINS", "[]")
@@ -449,7 +428,6 @@ def test_enabled_cors_requires_origin(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.cors
 def test_cors_rejects_wildcard_with_credentials(monkeypatch) -> None:
     monkeypatch.setenv("CORS__ENABLED", "true")
     monkeypatch.setenv("CORS__ALLOW_ORIGINS", '["*"]')
@@ -463,7 +441,6 @@ def test_cors_rejects_wildcard_with_credentials(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.cors
 def test_prod_rejects_cors_wildcard_origin(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     _set_complete_prod_auth(monkeypatch)
@@ -485,7 +462,6 @@ def test_prod_rejects_cors_wildcard_origin(monkeypatch) -> None:
 
 
 @pytest.mark.security
-@pytest.mark.cors
 def test_cors_list_normalisation_removes_empty_values(monkeypatch) -> None:
     monkeypatch.setenv("CORS__ENABLED", "true")
     monkeypatch.setenv(

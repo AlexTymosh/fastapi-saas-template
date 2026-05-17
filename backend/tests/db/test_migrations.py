@@ -12,6 +12,9 @@ from urllib.parse import urlparse
 import pytest
 import sqlalchemy as sa
 
+pytestmark = [pytest.mark.container]
+
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EXTERNAL_DB_CONNECT_TIMEOUT_SECONDS = 2
 
@@ -112,6 +115,7 @@ def _is_external_database_reachable(database_url: str) -> bool:
 
 
 @pytest.mark.integration
+@pytest.mark.container
 def test_alembic_upgrade_head_check_and_downgrade_base(
     postgres_integration_url: str,
 ) -> None:
@@ -181,7 +185,6 @@ def test_alembic_upgrade_head_and_check_with_external_database() -> None:
     assert check.returncode == 0, check.stdout + "\n" + check.stderr
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize(
     ("database_url", "expected"),
     [
@@ -209,7 +212,6 @@ def test_is_safe_test_database_url(database_url: str, expected: bool) -> None:
     assert _is_safe_test_database_url(database_url) is expected
 
 
-@pytest.mark.unit
 def test_is_external_database_reachable_returns_false_fast_for_unreachable_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,7 +230,6 @@ def test_is_external_database_reachable_returns_false_fast_for_unreachable_port(
     assert elapsed < 1
 
 
-@pytest.mark.unit
 def test_safe_url_check_rejects_unsafe_url() -> None:
     assert (
         _is_safe_test_database_url("postgresql://user:pass@localhost:5432/production")
@@ -236,14 +237,12 @@ def test_safe_url_check_rejects_unsafe_url() -> None:
     )
 
 
-@pytest.mark.unit
 def test_external_db_test_keeps_opt_in_marker() -> None:
     external_db_test = test_alembic_upgrade_head_and_check_with_external_database
     marker_names = {marker.name for marker in external_db_test.pytestmark}
     assert "external_db" in marker_names
 
 
-@pytest.mark.unit
 def test_external_db_test_requires_enable_env_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -495,7 +495,6 @@ def test_get_organisation_not_found_returns_problem_details(tmp_path) -> None:
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -521,7 +520,6 @@ def test_get_organisation_requires_membership_when_org_exists(tmp_path) -> None:
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_get_organisation_forbidden_still_provisions_current_user(tmp_path) -> None:
     app, engine, session_factory, auth_provider = _create_client_and_session_factory(
         tmp_path
@@ -590,7 +588,6 @@ def test_list_memberships_not_found_returns_404(tmp_path) -> None:
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -616,7 +613,6 @@ def test_list_memberships_requires_membership_when_org_exists(tmp_path) -> None:
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_list_memberships_forbidden_still_provisions_current_user(tmp_path) -> None:
     app, engine, session_factory, auth_provider = _create_client_and_session_factory(
         tmp_path
@@ -687,7 +683,6 @@ def test_list_memberships_returns_200_for_owner(tmp_path) -> None:
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_list_memberships_returns_404_for_soft_deleted_organisation_even_for_non_member(
     tmp_path,
 ) -> None:
@@ -890,7 +885,6 @@ def _insert_membership_with_role(
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
     authenticated_client_factory,
     migrated_database_url: str,
@@ -992,7 +986,6 @@ def test_list_memberships_allows_admin_but_forbids_member_and_non_member(
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_platform_role_does_not_grant_organisation_read_access(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 
@@ -1059,7 +1052,6 @@ def test_platform_role_does_not_bypass_single_organisation_creation_rule(
 
 
 @pytest.mark.authz
-@pytest.mark.bola
 def test_external_jwt_roles_are_ignored_for_membership_list_access(tmp_path) -> None:
     app, engine, _, auth_provider = _create_client_and_session_factory(tmp_path)
 

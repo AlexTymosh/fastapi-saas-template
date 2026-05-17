@@ -45,7 +45,6 @@ def _seed_organisation(session_factory, *, name: str, slug: str) -> Organisation
     return run_async(_run())
 
 
-@pytest.mark.audit
 def test_platform_admin_can_suspend_organisation(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -87,7 +86,6 @@ def test_platform_admin_can_suspend_organisation(
     run_async(_verify())
 
 
-@pytest.mark.audit
 def test_platform_admin_can_restore_suspended_organisation(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -180,7 +178,6 @@ def test_restore_active_organisation_is_idempotent(
     assert response.status_code == 200
 
 
-@pytest.mark.audit
 def test_platform_org_correction_updates_and_audits(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -290,7 +287,6 @@ def test_platform_org_correction_no_actual_change_returns_409(
     assert response.status_code == 409
 
 
-@pytest.mark.audit
 def test_platform_org_suspend_rolls_back_on_audit_failure(
     authenticated_client_factory,
     migrated_database_url,
@@ -439,7 +435,6 @@ def test_platform_get_organisation_includes_soft_deleted_organisations(
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_suspend_already_suspended_organisation_is_idempotent_without_audit(
     migrated_session_factory,
 ) -> None:
@@ -489,7 +484,6 @@ def test_suspend_already_suspended_organisation_is_idempotent_without_audit(
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_restore_active_organisation_is_idempotent_without_audit(
     migrated_session_factory,
 ) -> None:

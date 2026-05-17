@@ -16,7 +16,7 @@ from app.audit.models.audit_event import (
 from app.audit.services.audit_events import AuditEventService
 from tests.helpers.asyncio_runner import run_async
 
-pytestmark = [pytest.mark.security, pytest.mark.audit]
+pytestmark = [pytest.mark.security]
 
 
 def test_audit_service_persists_event(migrated_session_factory) -> None:

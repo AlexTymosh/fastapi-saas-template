@@ -6,7 +6,7 @@ from app.core.config.settings import Settings
 from app.core.secrets.env_provider import EnvSecretsProvider
 from app.core.secrets.factory import build_secrets_provider
 
-pytestmark = [pytest.mark.security, pytest.mark.secrets]
+pytestmark = [pytest.mark.security]
 
 
 def test_builds_env_provider_when_vault_disabled() -> None:

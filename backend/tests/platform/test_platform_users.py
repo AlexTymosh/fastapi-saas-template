@@ -34,7 +34,6 @@ def _seed_platform_admin(session_factory, *, external_auth_id: str, email: str):
     return run_async(_run())
 
 
-@pytest.mark.audit
 def test_suspend_user_commits_and_writes_audit(
     authenticated_client_factory, migrated_database_url, migrated_session_factory
 ) -> None:
@@ -77,7 +76,6 @@ def test_suspend_user_commits_and_writes_audit(
     run_async(_verify())
 
 
-@pytest.mark.audit
 def test_suspend_user_rolls_back_on_audit_failure(
     authenticated_client_factory,
     migrated_database_url,
@@ -211,7 +209,6 @@ def test_platform_list_users_uses_deterministic_order(migrated_session_factory) 
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_suspend_already_suspended_user_is_idempotent_without_audit(
     migrated_session_factory,
 ) -> None:
@@ -263,7 +260,6 @@ def test_suspend_already_suspended_user_is_idempotent_without_audit(
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_restore_active_user_is_idempotent_without_audit(
     migrated_session_factory,
 ) -> None:

@@ -10,7 +10,7 @@ from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 from tests.helpers.outbox import process_all_claimed_outbox_events
 
-pytestmark = [pytest.mark.security, pytest.mark.audit, pytest.mark.authz]
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 class InMemoryInviteTokenSink:

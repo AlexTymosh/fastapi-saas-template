@@ -588,7 +588,6 @@ def test_platform_staff_validation(staff_env):
         assert method(url, json=payload).status_code == 422
 
 
-@pytest.mark.audit
 def test_platform_staff_audit_events(staff_env, migrated_session_factory):
     # Perform actions within this isolated test context to generate the audit records
     candidate = _seed_user(
@@ -1059,7 +1058,6 @@ def test_platform_staff_service_restore_active_staff_is_idempotent_without_audit
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_platform_staff_create_rolls_back_on_audit_failure(
     migrated_session_factory, monkeypatch
 ) -> None:
@@ -1098,7 +1096,6 @@ def test_platform_staff_create_rolls_back_on_audit_failure(
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_platform_staff_change_role_rolls_back_on_audit_failure(
     migrated_session_factory, monkeypatch
 ) -> None:
@@ -1140,7 +1137,6 @@ def test_platform_staff_change_role_rolls_back_on_audit_failure(
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_platform_staff_suspend_rolls_back_on_audit_failure(
     migrated_session_factory, monkeypatch
 ) -> None:
@@ -1215,7 +1211,6 @@ def test_platform_staff_service_keeps_external_transaction_open(
     run_async(_run())
 
 
-@pytest.mark.audit
 def test_platform_staff_service_suspend_suspended_staff_is_idempotent_without_audit(
     migrated_session_factory,
 ) -> None:

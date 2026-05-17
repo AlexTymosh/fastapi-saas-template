@@ -18,7 +18,7 @@ from tests.helpers.asyncio_runner import run_async
 from tests.helpers.auth import identity_for
 from tests.helpers.settings import reset_settings_cache
 
-pytestmark = [pytest.mark.security, pytest.mark.authz, pytest.mark.rate_limit]
+pytestmark = [pytest.mark.security, pytest.mark.authz]
 
 
 @dataclass

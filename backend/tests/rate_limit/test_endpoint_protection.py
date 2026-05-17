@@ -8,7 +8,7 @@ from fastapi.routing import APIRoute
 
 from app.main import create_app
 
-pytestmark = [pytest.mark.security, pytest.mark.rate_limit]
+pytestmark = [pytest.mark.security]
 
 
 def find_route(app: FastAPI, *, path: str, method: str) -> APIRoute:
