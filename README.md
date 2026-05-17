@@ -76,8 +76,11 @@ Use Taskfile commands from the repository root for normal development:
 
 ```bash
 task lint
+task test:lightweight
 task test:safe
 task test:security
+task test:authz
+task test:privacy
 task test:contracts
 task ci
 ```
@@ -133,9 +136,11 @@ Do not combine wildcard origins with credentials. Production deployments must us
 Preferred local commands from the repository root:
 
 ```bash
-task test:unit
+task test:lightweight
 task test:safe
 task test:security
+task test:authz
+task test:privacy
 task test:contracts
 task ci
 ```
@@ -151,9 +156,11 @@ Focused marker or folder selections are available for local diagnosis, but they 
 ```bash
 uv run pytest -q -m "security and not external_db" --collect-only
 uv run pytest -q -m "security and not external_db"
-uv run pytest -q -m "security and integration"
-uv run pytest -q -m bola
-uv run pytest -q -m rate_limit
+uv run pytest -q -m "authz and not external_db"
+uv run pytest -q -m "privacy and not external_db"
+uv run pytest -q tests/rate_limit
+uv run pytest -q tests/audit
+uv run pytest -q tests/logging
 ```
 
 External DB tests are opt-in:

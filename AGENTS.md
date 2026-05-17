@@ -160,9 +160,11 @@ Expected flow:
 ## Testing
 
 - Tests live under `backend/tests`.
-- Levels: unit, integration, e2e, contract.
+- Lightweight tests are the default and normally do not need an execution marker.
+- Explicit execution markers are reserved for integration, e2e, container, slow, contract, and external_db tests.
+- Cross-cutting risk markers are limited to security, auth, authz, and privacy.
 - Test business logic in services.
-- Mock external dependencies in unit tests.
+- Mock external dependencies in lightweight tests.
 - Cover API behaviour with integration/e2e tests.
 
 Before running pytest in a fresh local environment, install development dependencies from the lockfile:
@@ -176,9 +178,12 @@ Preferred repository-root commands:
 
 ```bash
 task lint
-task test:unit
+task test:lightweight
 task test:safe
 task test:security
+task test:auth
+task test:authz
+task test:privacy
 task test:contracts
 task ci
 ```
@@ -200,7 +205,18 @@ Security regression checks can be selected with `task test:security` or:
 uv run pytest -q -m "security and not external_db"
 ```
 
-Focused security slices include `auth`, `authz`, and legacy micro-markers such as `bola`, `rate_limit`, `audit`, `cors`, `logging_security`, and `secrets`. Focused runs are for local/manual diagnosis, not mandatory duplicate CI gates.
+Focused security slices include `auth`, `authz`, and `privacy`. Focused runs are for local/manual diagnosis, not mandatory duplicate CI gates.
+
+Use folders for domain/subsystem-specific runs instead of legacy micro-markers:
+
+```bash
+uv run pytest -q tests/rate_limit
+uv run pytest -q tests/audit
+uv run pytest -q tests/logging
+uv run pytest -q tests/secrets
+```
+
+Do not add legacy micro-markers such as `unit`, `rate_limit`, `audit`, `cors`, `bola`, `logging_security`, or `secrets` to new tests.
 
 Use this command as a lightweight marker-registration sanity check when updating security markers:
 

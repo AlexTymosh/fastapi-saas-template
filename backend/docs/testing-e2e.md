@@ -90,7 +90,7 @@ Keep:
 - `@pytest.mark.authz`
 - `@pytest.mark.privacy`
 
-### Removed legacy markers
+### Retired legacy markers
 
 Do not use:
 
@@ -170,6 +170,8 @@ task test:slow
 task ci
 ```
 
+The old unit-test task name is intentionally not provided as a compatibility alias; lightweight/default tests are selected with `task test:lightweight`.
+
 `task pre-push` and `task ci` intentionally run only:
 
 1. `task deps:check`
@@ -201,13 +203,15 @@ Expected relationship:
 
 Do not use `pytest_plugins` in non-root `conftest.py` files. Pytest deprecates this pattern because loaded plugins affect the whole test tree even when the declaration is inside a nested `conftest.py`.
 
-Future fixture scoping should prefer explicit fixture re-exports from domain-local `conftest.py` files, for example:
+Fixture implementation should live in `tests/fixtures/`. Domain-local `conftest.py` files should explicitly re-export only the heavier fixtures they need, for example:
 
 ```python
-from tests.fixtures.redis import redis_client as redis_client
+from tests.fixtures.redis import redis_integration_url as redis_integration_url
 
-__all__ = ["redis_client"]
+__all__ = ["redis_integration_url"]
 ```
+
+The root `tests/conftest.py` may re-export lightweight shared fixtures that are broadly used across many folders, but it should not contain fixture implementation details or container startup code.
 
 ## Testcontainers rules
 
