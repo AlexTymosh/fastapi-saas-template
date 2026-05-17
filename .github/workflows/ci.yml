@@ -19,7 +19,7 @@ jobs:
     name: Detect relevant changes
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
+      backend: ${{ steps.filter.outputs.backend_code == 'true' || steps.filter.outputs.github_workflows == 'true' || steps.filter.outputs.python_version == 'true' || steps.filter.outputs.pre_commit == 'true' || steps.filter.outputs.taskfile == 'true' }}
 
     steps:
       - name: Checkout
@@ -28,18 +28,23 @@ jobs:
       - name: Filter changed paths
         id: filter
         # dorny/paths-filter v3.0.3.
+        # Keep backend include/exclude matching separate from mutually exclusive tooling paths.
         uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590
         with:
           predicate-quantifier: every
           filters: |
-            backend:
-              - ".github/workflows/**"
-              - ".python-version"
-              - ".pre-commit-config.yaml"
-              - "Taskfile.yml"
+            backend_code:
               - "backend/**"
               - "!backend/docs/**"
               - "!backend/**/*.md"
+            github_workflows:
+              - ".github/workflows/**"
+            python_version:
+              - ".python-version"
+            pre_commit:
+              - ".pre-commit-config.yaml"
+            taskfile:
+              - "Taskfile.yml"
 
   backend-quality-gate:
     name: Backend quality gate
