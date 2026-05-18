@@ -19,7 +19,7 @@ jobs:
     name: Detect relevant changes
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend_code == 'true' || steps.filter.outputs.github_workflows == 'true' || steps.filter.outputs.python_version == 'true' || steps.filter.outputs.pre_commit == 'true' || steps.filter.outputs.taskfile == 'true' }}
+      backend: ${{ steps.filter.outputs.backend_code == 'true' || steps.filter.outputs.github_workflows == 'true' || steps.filter.outputs.python_version == 'true' || steps.filter.outputs.pre_commit == 'true' || steps.filter.outputs.taskfile == 'true' || steps.filter.outputs.compose == 'true' || steps.filter.outputs.env_examples == 'true' || steps.filter.outputs.docker == 'true' }}
 
     steps:
       - name: Checkout
@@ -45,6 +45,14 @@ jobs:
               - ".pre-commit-config.yaml"
             taskfile:
               - "Taskfile.yml"
+            compose:
+              - "compose.yaml"
+              - "compose.*.yaml"
+            env_examples:
+              - ".env.example"
+              - ".env*.example"
+            docker:
+              - "docker/**"
 
   backend-quality-gate:
     name: Backend quality gate
@@ -70,6 +78,10 @@ jobs:
         with:
           version: "0.7.22"
           enable-cache: true
+
+      - name: Validate Docker Compose config
+        working-directory: ${{ github.workspace }}
+        run: docker compose config --quiet
 
       - name: Check lockfile
         run: uv lock --check
