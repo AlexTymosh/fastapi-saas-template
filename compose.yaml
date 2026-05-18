@@ -6,7 +6,8 @@ services:
     container_name: fastapi_app
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       APP__ENVIRONMENT: local
       LOGGING__AS_JSON: "true"
@@ -44,7 +45,8 @@ services:
     profiles:
       - tools
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       APP__ENVIRONMENT: local
       LOGGING__AS_JSON: "false"
@@ -65,7 +67,8 @@ services:
     container_name: fastapi_worker
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       APP__ENVIRONMENT: local
       LOGGING__AS_JSON: "true"
@@ -88,7 +91,8 @@ services:
     container_name: fastapi_outbox_dispatcher
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       APP__ENVIRONMENT: local
       LOGGING__AS_JSON: "true"
