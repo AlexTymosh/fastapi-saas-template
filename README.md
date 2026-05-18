@@ -45,16 +45,40 @@ The repository pins the local Python version in `.python-version`.
 
 ### Run locally with Docker Compose
 
+`compose.yaml` is a **local development stack only**. It is not a production deployment manifest.
+The default stack does not run database migrations automatically and does not start Vault.
+
 ```bash
 cp .env.example .env
-docker compose up --build -d
+docker compose up --build -d postgres redis keycloak
+docker compose run --rm migrate
+docker compose up --build -d app worker outbox-dispatcher
 ```
 
-### Apply migrations
+For later local starts:
 
 ```bash
-docker compose exec app python -m alembic upgrade head
+docker compose up -d
+docker compose run --rm migrate
 ```
+
+Run migrations explicitly after a fresh database setup or after schema changes:
+
+```bash
+docker compose run --rm migrate
+```
+
+The local migration service runs as a one-shot Compose tool and exits after `alembic upgrade head`.
+
+### Optional local Vault dev profile
+
+Vault is disabled by default. The local Vault service is a dev/demo integration profile, not a production secret store.
+
+```bash
+docker compose --profile vault up -d vault vault-init
+```
+
+Do not reuse the local Vault dev token in staging or production.
 
 ### Health checks
 
@@ -105,7 +129,28 @@ When started via Compose, the core local stack includes:
 - PostgreSQL.
 - Redis.
 - Keycloak for local identity flows.
-- Additional local services may include Dramatiq worker, outbox dispatcher, Vault dev service, and optional OTel Collector profile. See `compose.yaml` for the exact runtime composition.
+- Dramatiq worker.
+- Outbox dispatcher.
+
+Optional local profiles include:
+
+- Vault dev/demo profile: `docker compose --profile vault up -d vault vault-init`.
+- OTel Collector profile: `docker compose --profile observability up -d otel-collector`.
+
+See `compose.yaml` for the exact runtime composition.
+
+## Configuration and Secrets
+
+The project uses granular environment variables. `APP__ENVIRONMENT` is a validation/safety mode, not a hidden config selector.
+
+- `.env.example` contains local-only placeholders and should be copied to `.env` for local work.
+- `.env` must not be committed.
+- Staging and production secrets must come from the deployment platform, Vault, or another secret manager.
+- Docker Compose local service credentials such as `POSTGRES_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, and `VAULT_DEV_ROOT_TOKEN_ID` are local placeholders only.
+- Compose builds container-internal database URLs from `POSTGRES_*` variables so containers connect to the `postgres` service hostname.
+- Host-local development can keep using `DATABASE__URL` with `localhost`.
+
+See `backend/docs/configuration.md` for the detailed configuration model.
 
 ## Authentication / Keycloak
 
@@ -190,12 +235,27 @@ Local equivalent:
 task ci
 ```
 
+## Deployment and migrations
+
+This repository does not currently provide a production deployment manifest.
+
+For local Docker Compose, database migrations are explicit:
+
+```bash
+docker compose run --rm migrate
+```
+
+For staging and production, migrations should be run as a separate deployment/release step using the same application image and the real deployment `DATABASE__URL`.
+
+Do not run migrations implicitly inside every application container startup.
+
 ## Documentation
 
 Start here:
 
 - Architecture source of truth: `backend/docs/architecture.md`.
 - Current project state: `backend/docs/current-state.md`.
+- Configuration and local Compose boundaries: `backend/docs/configuration.md`.
 - Rate limiting: `backend/docs/rate-limiting.md`.
 - Keycloak identity contract: `backend/docs/keycloak-identity-contract.md`.
 - Keycloak production setup: `backend/docs/auth/keycloak-production-setup.md`.
