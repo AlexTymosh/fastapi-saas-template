@@ -46,10 +46,8 @@ jobs:
             taskfile:
               - "Taskfile.yml"
             compose:
-              - "compose.yaml"
-              - "compose.*.yaml"
+              - "compose*.yaml"
             env_examples:
-              - ".env.example"
               - ".env*.example"
             docker:
               - "docker/**"
