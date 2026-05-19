@@ -442,6 +442,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_environment_security(self) -> Settings:
         env = self.app.environment
+
         if env in {"staging", "prod"}:
             if not self.auth.enabled:
                 raise ValueError("AUTH__ENABLED must be true in staging/prod")
@@ -457,9 +458,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "AUTH__METADATA_VALIDATION=fail is required in staging/prod"
                 )
+
             self._validate_rate_limit_fail_open_overrides(env=env)
             self._validate_trusted_proxy_header_policy(env=env)
             self._validate_pre_auth_policy(env=env)
+            self._validate_edge_enforced_mode(env=env)
+
         if env == "prod":
             if not self.auth.issuer_url.startswith("https://"):
                 raise ValueError("AUTH__ISSUER_URL must use HTTPS in prod")
@@ -480,10 +484,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Rate limiting must be enabled in app or enforced by edge in prod"
                 )
-            self._validate_edge_enforced_mode(env=env)
+
             self._validate_production_transport_security()
+
         if env == "prod" and "*" in self.cors.allow_origins:
             raise ValueError("CORS wildcard origins are not allowed in prod")
+
         if (
             self.outbox.invite_delivery_enabled
             and env in {"dev", "staging", "prod"}
@@ -492,6 +498,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY is required for invite outbox"
             )
+
         return self
 
     def _validate_rate_limit_fail_open_overrides(self, *, env: str) -> None:
