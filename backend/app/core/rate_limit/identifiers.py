@@ -45,6 +45,7 @@ def build_identifier(
     request: Request,
     trust_proxy_headers: bool,
     identifier_secret: SecretStr | str,
+    trusted_proxy_cidrs: list[str] | tuple[str, ...] | None = None,
 ) -> RateLimitIdentifier:
     secret = _secret_value(identifier_secret)
     if principal is not None:
@@ -59,6 +60,7 @@ def build_identifier(
     ip_value = resolve_client_ip(
         request=request,
         trust_proxy_headers=trust_proxy_headers,
+        trusted_proxy_cidrs=trusted_proxy_cidrs,
     )
     return RateLimitIdentifier(
         kind="ip",
@@ -66,9 +68,21 @@ def build_identifier(
     )
 
 
-def resolve_client_ip(*, request: Request, trust_proxy_headers: bool) -> str:
+def resolve_client_ip(
+    *,
+    request: Request,
+    trust_proxy_headers: bool,
+    trusted_proxy_cidrs: list[str] | tuple[str, ...] | None = None,
+) -> str:
+    peer_ip = _normalise_ip(request.client.host if request.client else None)
     if not trust_proxy_headers:
-        return _normalise_ip(request.client.host if request.client else None)
+        return peer_ip
+
+    if not is_request_from_trusted_proxy(
+        request=request,
+        trusted_proxy_cidrs=trusted_proxy_cidrs,
+    ):
+        return peer_ip
 
     x_forwarded_for = request.headers.get("x-forwarded-for")
     if x_forwarded_for:
@@ -83,17 +97,48 @@ def resolve_client_ip(*, request: Request, trust_proxy_headers: bool) -> str:
         if normalised_real_ip != "0.0.0.0":
             return normalised_real_ip
 
-    return _normalise_ip(request.client.host if request.client else None)
+    return peer_ip
+
+
+def is_request_from_trusted_proxy(
+    *,
+    request: Request,
+    trusted_proxy_cidrs: list[str] | tuple[str, ...] | None,
+) -> bool:
+    peer = _parse_ip(request.client.host if request.client else None)
+    if peer is None:
+        return False
+
+    for raw_cidr in trusted_proxy_cidrs or []:
+        try:
+            network = ipaddress.ip_network(raw_cidr, strict=False)
+        except ValueError:
+            continue
+        if peer in network:
+            return True
+    return False
+
+
+def _parse_ip(
+    value: str | None,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    candidate = (value or "").strip()
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
 
 
 def _normalise_ip(value: str | None) -> str:
-    candidate = (value or "").strip()
-    try:
-        # TODO: consider truncating IPv6 client identifiers to /64 to reduce
-        # bypass risk from IPv6 address rotation.
-        return ipaddress.ip_address(candidate).compressed
-    except ValueError:
+    parsed = _parse_ip(value)
+    if parsed is None:
         return "0.0.0.0"
+
+    if parsed.version == 6:
+        network = ipaddress.ip_network(f"{parsed}/64", strict=False)
+        return network.network_address.compressed
+
+    return parsed.compressed
 
 
 def _secret_value(secret: SecretStr | str) -> str:

@@ -6,6 +6,7 @@ from app.core.auth import AuthenticatedPrincipal
 from app.core.rate_limit.identifiers import (
     BUCKET_KEY_PREFIX,
     build_identifier,
+    is_request_from_trusted_proxy,
     resolve_client_ip,
 )
 
@@ -134,21 +135,72 @@ def test_invalid_ip_falls_back_without_error() -> None:
     )
 
 
-def test_ipv6_is_normalised_to_canonical_compressed_form() -> None:
-    request = _request(host="2001:0db8:0000:0000:0000:0000:0000:0001")
+def test_ipv6_is_normalised_to_64_network_for_ip_buckets() -> None:
+    first = _request(host="2001:0db8:0000:0000:0000:0000:0000:0001")
+    second = _request(host="2001:0db8:0000:0000:0000:0000:0000:ffff")
+
+    assert resolve_client_ip(request=first, trust_proxy_headers=False) == "2001:db8::"
+    assert resolve_client_ip(request=second, trust_proxy_headers=False) == "2001:db8::"
+
+
+def test_direct_client_spoofed_forwarded_header_is_ignored() -> None:
+    request = _request(
+        host="203.0.113.10",
+        headers={"X-Forwarded-For": "198.51.100.77"},
+    )
 
     assert (
-        resolve_client_ip(request=request, trust_proxy_headers=False) == "2001:db8::1"
+        resolve_client_ip(
+            request=request,
+            trust_proxy_headers=True,
+            trusted_proxy_cidrs=["10.0.0.0/8"],
+        )
+        == "203.0.113.10"
     )
 
 
-def test_trusted_proxy_headers_are_normalised() -> None:
+def test_trusted_proxy_headers_are_normalised_when_peer_is_trusted() -> None:
     request = _request(
-        host="198.51.100.1",
+        host="10.1.2.3",
         headers={"X-Forwarded-For": "2001:0db8:0000:0000::0002, 198.51.100.2"},
     )
 
-    assert resolve_client_ip(request=request, trust_proxy_headers=True) == "2001:db8::2"
+    assert (
+        resolve_client_ip(
+            request=request,
+            trust_proxy_headers=True,
+            trusted_proxy_cidrs=["10.0.0.0/8"],
+        )
+        == "2001:db8::"
+    )
+
+
+def test_malformed_forwarded_headers_fall_back_to_trusted_proxy_peer() -> None:
+    request = _request(
+        host="10.1.2.3",
+        headers={"X-Forwarded-For": "not-an-ip", "X-Real-IP": "also-not-an-ip"},
+    )
+
+    assert (
+        resolve_client_ip(
+            request=request,
+            trust_proxy_headers=True,
+            trusted_proxy_cidrs=["10.0.0.0/8"],
+        )
+        == "10.1.2.3"
+    )
+
+
+def test_trusted_proxy_detection_requires_peer_cidr_match() -> None:
+    trusted = _request(host="10.1.2.3")
+    untrusted = _request(host="203.0.113.10")
+
+    assert is_request_from_trusted_proxy(
+        request=trusted, trusted_proxy_cidrs=["10.0.0.0/8"]
+    )
+    assert not is_request_from_trusted_proxy(
+        request=untrusted, trusted_proxy_cidrs=["10.0.0.0/8"]
+    )
 
 
 def test_same_business_bucket_and_secret_build_same_bucket_key() -> None:
@@ -156,7 +208,10 @@ def test_same_business_bucket_and_secret_build_same_bucket_key() -> None:
 
     bucket = RateLimitBucket(
         kind="organisation_target_email",
-        raw_value="organisation:00000000-0000-4000-8000-000000000001:email:invitee@example.com",
+        raw_value=(
+            "organisation:00000000-0000-4000-8000-000000000001"
+            ":email:invitee@example.com"
+        ),
     )
 
     first = build_bucket_identifier(bucket=bucket, identifier_secret=SECRET_A)
@@ -202,7 +257,9 @@ def test_business_bucket_key_hides_raw_email_domain_organisation_and_invite() ->
     identifier = build_bucket_identifier(
         bucket=RateLimitBucket(
             kind="organisation_target_email",
-            raw_value=f"organisation:{organisation_id}:invite:{invite_id}:email:{email}",
+            raw_value=(
+                f"organisation:{organisation_id}:invite:{invite_id}:email:{email}"
+            ),
         ),
         identifier_secret=SECRET_A,
     )

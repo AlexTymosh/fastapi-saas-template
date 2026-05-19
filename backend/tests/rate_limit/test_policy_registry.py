@@ -19,6 +19,7 @@ from app.core.rate_limit.policies import (
     PLATFORM_READ_POLICY,
     PLATFORM_STAFF_WRITE_POLICY,
     PLATFORM_WRITE_POLICY,
+    PRE_AUTH_POLICY,
     TENANT_READ_POLICY,
     TENANT_WRITE_POLICY,
     RateLimitPolicySpec,
@@ -32,6 +33,7 @@ from app.core.rate_limit.registry import (
 
 pytestmark = [pytest.mark.security]
 EXPECTED_POLICIES = {
+    "pre_auth": PRE_AUTH_POLICY,
     "authenticated_default": AUTHENTICATED_DEFAULT_POLICY,
     "tenant_read": TENANT_READ_POLICY,
     "tenant_write": TENANT_WRITE_POLICY,
@@ -89,6 +91,10 @@ def test_registered_policy_names_are_unique() -> None:
 
 def test_default_effective_policies_preserve_current_behaviour() -> None:
     registry = build_effective_policy_registry(_settings())
+
+    assert registry["pre_auth"].item.amount == 120
+    assert registry["pre_auth"].item.get_expiry() == 60
+    assert registry["pre_auth"].fail_open is False
 
     assert registry["authenticated_default"].item.amount == 120
     assert registry["authenticated_default"].item.get_expiry() == 60

@@ -16,7 +16,11 @@ from app.core.middleware.request_context import RequestContextMiddleware
 from app.core.observability import init_observability, shutdown_observability
 from app.core.observability.middleware import HttpMetricsMiddleware
 from app.core.openapi import generate_route_name_operation_id
-from app.core.rate_limit import init_rate_limiter, shutdown_rate_limiter
+from app.core.rate_limit import (
+    RateLimitIngressMiddleware,
+    init_rate_limiter,
+    shutdown_rate_limiter,
+)
 from app.core.redis import close_redis
 
 
@@ -72,6 +76,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
 
+    app.add_middleware(
+        RateLimitIngressMiddleware,
+        api_prefix=resolved_settings.api.v1_prefix,
+        request_id_header_name=resolved_settings.request_context.header_name,
+    )
     app.add_middleware(
         RequestContextMiddleware,
         header_name=resolved_settings.request_context.header_name,

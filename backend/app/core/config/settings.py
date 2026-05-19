@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -38,6 +39,17 @@ def _normalise_optional_string(value: str | None) -> str | None:
         return None
     normalised = value.strip()
     return normalised or None
+
+
+def _normalise_cidr_list(value: list[str] | tuple[str, ...] | str | None) -> list[str]:
+    result: list[str] = []
+    for raw_item in _normalise_string_list(value):
+        try:
+            network = ipaddress.ip_network(raw_item, strict=False)
+        except ValueError as exc:
+            raise ValueError(f"Invalid trusted proxy CIDR: {raw_item}") from exc
+        result.append(str(network))
+    return result
 
 
 def _url_scheme(value: str | None) -> str:
@@ -255,23 +267,52 @@ class RateLimitingSettings(BaseModel):
     backend: Literal["redis"] = "redis"
     redis_prefix: str = "rate-limit"
     trust_proxy_headers: bool = False
+    trusted_proxy_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    pre_auth_enabled: bool = False
+    edge_assertion_header_name: str | None = None
+    edge_assertion_secret: SecretStr | None = None
     identifier_secret: SecretStr | None = None
     mode: Literal["normal", "strict", "relaxed", "panic"] = "normal"
     policies: dict[str, RateLimitPolicyOverride] = Field(default_factory=dict)
     storage_timeout_seconds: float = Field(default=1.0, gt=0)
 
-    @field_validator("identifier_secret")
+    @field_validator("trusted_proxy_cidrs", mode="before")
     @classmethod
-    def validate_identifier_secret(cls, value: SecretStr | None) -> SecretStr | None:
+    def normalise_trusted_proxy_cidrs(
+        cls, value: list[str] | tuple[str, ...] | str | None
+    ) -> list[str]:
+        return _normalise_cidr_list(value)
+
+    @field_validator("edge_assertion_header_name")
+    @classmethod
+    def normalise_edge_assertion_header_name(cls, value: str | None) -> str | None:
+        normalised = _normalise_optional_string(value)
+        if normalised is None:
+            return None
+        if len(normalised) > 128:
+            raise ValueError(
+                "RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME must be at most "
+                "128 characters"
+            )
+        if any(ord(char) < 33 or ord(char) > 126 or char == ":" for char in normalised):
+            raise ValueError(
+                "RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME must be a valid HTTP "
+                "header name"
+            )
+        return normalised
+
+    @field_validator("edge_assertion_secret", "identifier_secret")
+    @classmethod
+    def validate_secret_minimum_length(
+        cls, value: SecretStr | None
+    ) -> SecretStr | None:
         if value is None:
             return None
         secret = value.get_secret_value().strip()
         if not secret:
             return None
         if len(secret) < 32:
-            raise ValueError(
-                "RATE_LIMITING__IDENTIFIER_SECRET must be at least 32 characters"
-            )
+            raise ValueError("Rate limit secrets must be at least 32 characters")
         return SecretStr(secret)
 
     @model_validator(mode="after")
@@ -417,6 +458,8 @@ class Settings(BaseSettings):
                     "AUTH__METADATA_VALIDATION=fail is required in staging/prod"
                 )
             self._validate_rate_limit_fail_open_overrides(env=env)
+            self._validate_trusted_proxy_header_policy(env=env)
+            self._validate_pre_auth_policy(env=env)
         if env == "prod":
             if not self.auth.issuer_url.startswith("https://"):
                 raise ValueError("AUTH__ISSUER_URL must use HTTPS in prod")
@@ -437,6 +480,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Rate limiting must be enabled in app or enforced by edge in prod"
                 )
+            self._validate_edge_enforced_mode(env=env)
             self._validate_production_transport_security()
         if env == "prod" and "*" in self.cors.allow_origins:
             raise ValueError("CORS wildcard origins are not allowed in prod")
@@ -466,6 +510,43 @@ class Settings(BaseSettings):
             raise ValueError(
                 "RATE_LIMITING__POLICIES fail_open=true is not allowed for "
                 f"sensitive or critical policies in {env}: {policies}"
+            )
+
+    def _validate_trusted_proxy_header_policy(self, *, env: str) -> None:
+        if (
+            self.rate_limiting.trust_proxy_headers
+            and not self.rate_limiting.trusted_proxy_cidrs
+        ):
+            raise ValueError(
+                "RATE_LIMITING__TRUSTED_PROXY_CIDRS is required in "
+                f"{env} when RATE_LIMITING__TRUST_PROXY_HEADERS=true"
+            )
+
+    def _validate_pre_auth_policy(self, *, env: str) -> None:
+        if (
+            self.rate_limiting.enabled
+            and not self.rate_limiting.pre_auth_enabled
+            and not self.rate_limiting.enforced_by_edge
+        ):
+            raise ValueError(
+                "RATE_LIMITING__PRE_AUTH_ENABLED must be true in "
+                f"{env} unless RATE_LIMITING__ENFORCED_BY_EDGE=true"
+            )
+
+    def _validate_edge_enforced_mode(self, *, env: str) -> None:
+        if not self.rate_limiting.enforced_by_edge:
+            return
+        missing = []
+        if not self.rate_limiting.trusted_proxy_cidrs:
+            missing.append("RATE_LIMITING__TRUSTED_PROXY_CIDRS")
+        if not self.rate_limiting.edge_assertion_header_name:
+            missing.append("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME")
+        if self.rate_limiting.edge_assertion_secret is None:
+            missing.append("RATE_LIMITING__EDGE_ASSERTION_SECRET")
+        if missing:
+            raise ValueError(
+                "RATE_LIMITING__ENFORCED_BY_EDGE=true requires trusted edge "
+                f"controls in {env}: " + ", ".join(missing)
             )
 
     def _validate_production_transport_security(self) -> None:

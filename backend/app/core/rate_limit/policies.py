@@ -26,6 +26,15 @@ class RateLimitPolicy:
     override_applied: bool = False
 
 
+PRE_AUTH_POLICY = RateLimitPolicySpec(
+    name="pre_auth",
+    default_limit=120,
+    default_window_seconds=60,
+    default_fail_open=False,
+    sensitivity="sensitive",
+)
+
+
 AUTHENTICATED_DEFAULT_POLICY = RateLimitPolicySpec(
     name="authenticated_default",
     default_limit=120,

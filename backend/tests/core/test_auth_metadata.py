@@ -23,7 +23,12 @@ def _settings(
         app={"environment": environment},
         api={"docs_enabled": False},
         request_context={"trust_incoming_request_id": False},
-        rate_limiting={"enforced_by_edge": True},
+        rate_limiting={
+            "enabled": True,
+            "enforced_by_edge": False,
+            "pre_auth_enabled": True,
+            "identifier_secret": "test-rate-limit-identifier-secret-32chars",
+        },
         outbox={"invite_delivery_enabled": False},
         auth=AuthSettings(
             enabled=True,

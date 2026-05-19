@@ -1,4 +1,5 @@
 from app.core.rate_limit.dependencies import (
+    check_pre_auth_rate_limit,
     check_rate_limit,
     check_rate_limit_for_bucket,
     check_rate_limits_for_buckets,
@@ -6,6 +7,7 @@ from app.core.rate_limit.dependencies import (
 )
 from app.core.rate_limit.identifiers import RateLimitBucket
 from app.core.rate_limit.lifecycle import init_rate_limiter, shutdown_rate_limiter
+from app.core.rate_limit.middleware import RateLimitIngressMiddleware
 from app.core.rate_limit.policies import (
     AUDIT_READ_POLICY,
     AUTHENTICATED_DEFAULT_POLICY,
@@ -22,6 +24,7 @@ from app.core.rate_limit.policies import (
     PLATFORM_READ_POLICY,
     PLATFORM_STAFF_WRITE_POLICY,
     PLATFORM_WRITE_POLICY,
+    PRE_AUTH_POLICY,
     TENANT_READ_POLICY,
     TENANT_WRITE_POLICY,
     RateLimitPolicy,
@@ -38,6 +41,7 @@ __all__ = [
     "RateLimitPolicy",
     "RateLimitPolicySpec",
     "RateLimitBucket",
+    "PRE_AUTH_POLICY",
     "AUTHENTICATED_DEFAULT_POLICY",
     "TENANT_READ_POLICY",
     "TENANT_WRITE_POLICY",
@@ -55,10 +59,12 @@ __all__ = [
     "AUDIT_READ_POLICY",
     "PLATFORM_WRITE_POLICY",
     "PLATFORM_STAFF_WRITE_POLICY",
+    "check_pre_auth_rate_limit",
     "check_rate_limit",
     "check_rate_limit_for_bucket",
     "check_rate_limits_for_buckets",
     "rate_limit_dependency",
+    "RateLimitIngressMiddleware",
     "init_rate_limiter",
     "shutdown_rate_limiter",
     "build_effective_policy_registry",

@@ -24,6 +24,7 @@ from app.core.rate_limit.policies import (
     PLATFORM_READ_POLICY,
     PLATFORM_STAFF_WRITE_POLICY,
     PLATFORM_WRITE_POLICY,
+    PRE_AUTH_POLICY,
     TENANT_READ_POLICY,
     TENANT_WRITE_POLICY,
     RateLimitPolicy,
@@ -115,6 +116,7 @@ def _apply_override(
 
 
 _REGISTERED_POLICY_SPECS: tuple[RateLimitPolicySpec, ...] = (
+    PRE_AUTH_POLICY,
     AUTHENTICATED_DEFAULT_POLICY,
     TENANT_READ_POLICY,
     TENANT_WRITE_POLICY,

@@ -123,6 +123,7 @@ def _build_app(
 
     monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true" if enabled else "false")
+    monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "false")
     monkeypatch.setenv(
         "RATE_LIMITING__IDENTIFIER_SECRET",
         "test-rate-limit-identifier-secret-32chars",

@@ -25,7 +25,11 @@ from app.core.rate_limit.identifiers import (
     build_bucket_identifier,
     build_identifier,
 )
-from app.core.rate_limit.policies import RateLimitPolicy, RateLimitPolicySpec
+from app.core.rate_limit.policies import (
+    PRE_AUTH_POLICY,
+    RateLimitPolicy,
+    RateLimitPolicySpec,
+)
 from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
 log = get_logger(__name__)
@@ -253,10 +257,46 @@ async def check_rate_limits_for_buckets(
         )
 
 
+async def check_pre_auth_rate_limit(
+    *,
+    request: Request,
+    policy: RateLimitPolicy | RateLimitPolicySpec = PRE_AUTH_POLICY,
+) -> None:
+    settings = get_settings()
+
+    if (
+        not settings.rate_limiting.enabled
+        or not settings.rate_limiting.pre_auth_enabled
+    ):
+        return
+
+    effective_policy = _effective_policy(request=request, policy=policy)
+    started_at = time.perf_counter()
+    identifier_secret = _identifier_secret_or_error(
+        policy_name=effective_policy.name,
+        started_at=started_at,
+    )
+
+    identifier = build_identifier(
+        principal=None,
+        request=request,
+        trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
+        trusted_proxy_cidrs=settings.rate_limiting.trusted_proxy_cidrs,
+        identifier_secret=identifier_secret,
+    )
+
+    await _check_rate_limit_for_identifier(
+        request=request,
+        policy=effective_policy,
+        identifier=identifier,
+        started_at=started_at,
+    )
+
+
 async def check_rate_limit(
     *,
     request: Request,
-    principal: AuthenticatedPrincipal,
+    principal: AuthenticatedPrincipal | None,
     policy: RateLimitPolicy | RateLimitPolicySpec,
 ) -> None:
     settings = get_settings()
@@ -275,6 +315,7 @@ async def check_rate_limit(
         principal=principal,
         request=request,
         trust_proxy_headers=settings.rate_limiting.trust_proxy_headers,
+        trusted_proxy_cidrs=settings.rate_limiting.trusted_proxy_cidrs,
         identifier_secret=identifier_secret,
     )
 
