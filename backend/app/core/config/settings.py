@@ -459,6 +459,7 @@ class Settings(BaseSettings):
                     "AUTH__METADATA_VALIDATION=fail is required in staging/prod"
                 )
 
+            self._validate_rate_limit_protection_required(env=env)
             self._validate_rate_limit_fail_open_overrides(env=env)
             self._validate_trusted_proxy_header_policy(env=env)
             self._validate_pre_auth_policy(env=env)
@@ -477,13 +478,6 @@ class Settings(BaseSettings):
                 )
             if self.rate_limiting.mode == "relaxed":
                 raise ValueError("RATE_LIMITING__MODE=relaxed is not allowed in prod")
-            if (
-                not self.rate_limiting.enabled
-                and not self.rate_limiting.enforced_by_edge
-            ):
-                raise ValueError(
-                    "Rate limiting must be enabled in app or enforced by edge in prod"
-                )
 
             self._validate_production_transport_security()
 
@@ -500,6 +494,12 @@ class Settings(BaseSettings):
             )
 
         return self
+
+    def _validate_rate_limit_protection_required(self, *, env: str) -> None:
+        if not self.rate_limiting.enabled and not self.rate_limiting.enforced_by_edge:
+            raise ValueError(
+                f"Rate limiting must be enabled in app or enforced by edge in {env}"
+            )
 
     def _validate_rate_limit_fail_open_overrides(self, *, env: str) -> None:
         from app.core.rate_limit.registry import get_rate_limit_policy
