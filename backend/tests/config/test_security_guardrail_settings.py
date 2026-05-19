@@ -5,6 +5,7 @@ from app.core.db.session import _database_url_with_ssl_mode
 from tests.helpers.settings import reset_settings_cache
 
 FERNET_TEST_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+RATE_LIMIT_SECRET = "test-rate-limit-identifier-secret-32chars"
 
 
 def _set_complete_staging_prod_auth(monkeypatch) -> None:
@@ -16,12 +17,19 @@ def _set_complete_staging_prod_auth(monkeypatch) -> None:
     monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", FERNET_TEST_KEY)
 
 
+def _set_app_rate_limiting_baseline(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "false")
+    monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", RATE_LIMIT_SECRET)
+
+
 def _set_complete_prod_baseline(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     _set_complete_staging_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    _set_app_rate_limiting_baseline(monkeypatch)
     monkeypatch.setenv(
         "DATABASE__URL", "postgresql+psycopg://app:app@db.example:5432/app"
     )
@@ -49,7 +57,7 @@ def test_staging_prod_reject_sensitive_rate_limit_fail_open_overrides(
     if env_name == "prod":
         monkeypatch.setenv("API__DOCS_ENABLED", "false")
         monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-        monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+        _set_app_rate_limiting_baseline(monkeypatch)
         monkeypatch.setenv(
             "DATABASE__URL", "postgresql+psycopg://app:app@db.example:5432/app"
         )

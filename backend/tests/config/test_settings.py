@@ -3,6 +3,9 @@ import pytest
 from app.core.config.settings import get_settings
 from tests.helpers.settings import reset_settings_cache
 
+FERNET_TEST_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+RATE_LIMIT_SECRET = "test-rate-limit-identifier-secret-32chars"
+
 
 def _set_complete_prod_auth(monkeypatch) -> None:
     monkeypatch.setenv("AUTH__ENABLED", "true")
@@ -10,6 +13,21 @@ def _set_complete_prod_auth(monkeypatch) -> None:
     monkeypatch.setenv("AUTH__AUDIENCE", "fastapi-api")
     monkeypatch.setenv("AUTH__ALLOWED_AUTHORIZED_PARTIES", "fastapi-web,fastapi-admin")
     monkeypatch.setenv("AUTH__METADATA_VALIDATION", "fail")
+
+
+def _set_app_rate_limiting_baseline(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "false")
+    monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", RATE_LIMIT_SECRET)
+
+
+def _set_verified_edge_rate_limiting(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", "e" * 32)
 
 
 def test_settings_parses_nested_env(monkeypatch) -> None:
@@ -211,12 +229,9 @@ def test_prod_rejects_relaxed_rate_limit_mode(monkeypatch) -> None:
     _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    _set_app_rate_limiting_baseline(monkeypatch)
     monkeypatch.setenv("RATE_LIMITING__MODE", "relaxed")
-    monkeypatch.setenv(
-        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
-        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-    )
+    monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", FERNET_TEST_KEY)
 
     reset_settings_cache()
     with pytest.raises(ValueError, match="RATE_LIMITING__MODE=relaxed"):
@@ -231,12 +246,9 @@ def test_prod_accepts_panic_rate_limit_mode(monkeypatch) -> None:
     _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    _set_app_rate_limiting_baseline(monkeypatch)
     monkeypatch.setenv("RATE_LIMITING__MODE", "panic")
-    monkeypatch.setenv(
-        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
-        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-    )
+    monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", FERNET_TEST_KEY)
 
     reset_settings_cache()
     settings = get_settings()
@@ -301,7 +313,7 @@ def test_staging_prod_require_complete_auth_config(
     if env_name == "prod":
         monkeypatch.setenv("API__DOCS_ENABLED", "false")
         monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-        monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+        _set_app_rate_limiting_baseline(monkeypatch)
 
     reset_settings_cache()
     with pytest.raises(ValueError, match=match):
@@ -315,7 +327,7 @@ def test_prod_rejects_non_https_auth_urls(monkeypatch) -> None:
     _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    _set_app_rate_limiting_baseline(monkeypatch)
     monkeypatch.setenv("AUTH__ISSUER_URL", "http://auth.example/realms/main")
 
     reset_settings_cache()
@@ -334,6 +346,7 @@ def test_prod_rejects_non_https_auth_urls(monkeypatch) -> None:
 def test_prod_rejects_docs_and_request_id_trust(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "prod")
     _set_complete_prod_auth(monkeypatch)
+    _set_app_rate_limiting_baseline(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "true")
     reset_settings_cache()
     with pytest.raises(ValueError, match="API__DOCS_ENABLED"):
@@ -356,18 +369,17 @@ def test_prod_rate_limiting_edge_override_and_outbox_key(monkeypatch) -> None:
     reset_settings_cache()
     with pytest.raises(ValueError, match="Rate limiting"):
         get_settings()
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+
+    _set_verified_edge_rate_limiting(monkeypatch)
     monkeypatch.delenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", raising=False)
     reset_settings_cache()
     with pytest.raises(ValueError, match="OUTBOX_TOKEN_ENCRYPTION_KEY"):
         get_settings()
-    monkeypatch.setenv(
-        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
-        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-    )
+    monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", FERNET_TEST_KEY)
     reset_settings_cache()
     settings = get_settings()
     assert settings.app.environment == "prod"
+    assert settings.rate_limiting.enforced_by_edge is True
 
     reset_settings_cache()
 
@@ -446,11 +458,8 @@ def test_prod_rejects_cors_wildcard_origin(monkeypatch) -> None:
     _set_complete_prod_auth(monkeypatch)
     monkeypatch.setenv("API__DOCS_ENABLED", "false")
     monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
-    monkeypatch.setenv(
-        "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY",
-        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-    )
+    _set_app_rate_limiting_baseline(monkeypatch)
+    monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", FERNET_TEST_KEY)
     monkeypatch.setenv("CORS__ENABLED", "true")
     monkeypatch.setenv("CORS__ALLOW_ORIGINS", '["*"]')
 
