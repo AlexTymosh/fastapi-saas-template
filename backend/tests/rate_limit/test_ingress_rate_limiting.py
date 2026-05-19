@@ -11,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
 from app.core.config.settings import Settings
 from app.core.db.session import get_db_session
-from app.core.rate_limit import AUTHENTICATED_DEFAULT_POLICY, rate_limit_dependency
+from app.core.rate_limit import (
+    AUTHENTICATED_DEFAULT_POLICY,
+    TENANT_WRITE_POLICY,
+    rate_limit_dependency,
+)
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
@@ -25,12 +29,20 @@ class _WindowStats:
 
 
 class FakeLimiter:
-    def __init__(self, *, allow: bool = True):
+    def __init__(
+        self,
+        *,
+        allow: bool = True,
+        raise_error: Exception | None = None,
+    ):
         self.allow = allow
+        self.raise_error = raise_error
         self.hit_calls: list[tuple[str, str, int, int]] = []
         self.window_calls: list[tuple[str, str, int, int]] = []
 
     async def hit(self, item, namespace: str, key: str) -> bool:
+        if self.raise_error is not None:
+            raise self.raise_error
         self.hit_calls.append((namespace, key, item.amount, item.multiples))
         return self.allow
 
@@ -152,6 +164,57 @@ def test_valid_authenticated_request_still_uses_user_post_auth_bucket(
     assert fake.hit_calls[1][0].startswith("test-rl:authenticated_default:user")
 
 
+def test_pre_auth_backend_failure_preserves_fail_open_read_policy(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(raise_error=RuntimeError("redis down"))
+    client = _build_app(monkeypatch, limiter=fake)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    router = APIRouter()
+
+    @router.get(
+        "/api/v1/test/pre-auth/fail-open-read",
+        dependencies=[Depends(rate_limit_dependency(AUTHENTICATED_DEFAULT_POLICY))],
+    )
+    async def _probe() -> dict[str, str]:
+        return {"ok": "true"}
+
+    client.app.include_router(router)
+
+    with client as api_client:
+        response = api_client.get("/api/v1/test/pre-auth/fail-open-read")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": "true"}
+
+
+def test_pre_auth_backend_failure_still_allows_fail_closed_policy_to_block(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(raise_error=RuntimeError("redis down"))
+    client = _build_app(monkeypatch, limiter=fake)
+    client.app.dependency_overrides[get_authenticated_principal] = _principal_user_a
+
+    router = APIRouter()
+
+    @router.post(
+        "/api/v1/test/pre-auth/fail-closed-write",
+        dependencies=[Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
+    )
+    async def _probe() -> dict[str, str]:
+        return {"ok": "true"}
+
+    client.app.include_router(router)
+
+    with client as api_client:
+        response = api_client.post("/api/v1/test/pre-auth/fail-closed-write")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["error_code"] == "rate_limiter_unavailable"
+
+
 def test_health_endpoints_are_not_pre_auth_rate_limited(monkeypatch) -> None:
     fake = FakeLimiter(allow=False)
     client = _build_app(monkeypatch, limiter=fake)
@@ -160,6 +223,23 @@ def test_health_endpoints_are_not_pre_auth_rate_limited(monkeypatch) -> None:
         response = api_client.get("/api/v1/health/live")
 
     assert response.status_code == 200
+    assert fake.hit_calls == []
+
+
+def test_health_endpoints_are_not_rejected_by_edge_assertion(monkeypatch) -> None:
+    fake = FakeLimiter(allow=True)
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", "e" * 32)
+    client = _build_app(monkeypatch, limiter=fake, enabled=False)
+
+    with client as api_client:
+        live_response = api_client.get("/api/v1/health/live")
+        ready_response = api_client.get("/api/v1/health/ready")
+
+    assert live_response.status_code == 200
+    assert ready_response.status_code != 403
     assert fake.hit_calls == []
 
 

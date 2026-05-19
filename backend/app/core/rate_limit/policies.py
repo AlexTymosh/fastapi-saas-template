@@ -30,7 +30,7 @@ PRE_AUTH_POLICY = RateLimitPolicySpec(
     name="pre_auth",
     default_limit=120,
     default_window_seconds=60,
-    default_fail_open=False,
+    default_fail_open=True,
     sensitivity="sensitive",
 )
 

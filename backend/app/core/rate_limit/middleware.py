@@ -58,9 +58,16 @@ class RateLimitIngressMiddleware:
         settings = _settings_from_scope(scope)
         request = Request(scope, receive=receive)
 
-        if settings.rate_limiting.enforced_by_edge and not _has_valid_edge_assertion(
-            request=request,
-            settings=settings,
+        if (
+            settings.rate_limiting.enforced_by_edge
+            and _should_apply_edge_assertion(
+                scope=scope,
+                api_prefix=self.api_prefix,
+            )
+            and not _has_valid_edge_assertion(
+                request=request,
+                settings=settings,
+            )
         ):
             await _send_problem_response(
                 send,
@@ -104,6 +111,31 @@ def _settings_from_scope(scope: Scope) -> Settings:
     return get_settings()
 
 
+def _is_excluded_api_path(*, scope: Scope, api_prefix: str) -> bool:
+    path = str(scope.get("path") or "")
+    if not path.startswith(api_prefix + "/"):
+        return False
+
+    suffix = path.removeprefix(api_prefix)
+    return suffix in _DEFAULT_EXCLUDED_PATH_SUFFIXES
+
+
+def _should_apply_edge_assertion(
+    *,
+    scope: Scope,
+    api_prefix: str,
+) -> bool:
+    method = str(scope.get("method") or "").upper()
+    if method == "OPTIONS":
+        return False
+
+    path = str(scope.get("path") or "")
+    if not path.startswith(api_prefix + "/"):
+        return False
+
+    return not _is_excluded_api_path(scope=scope, api_prefix=api_prefix)
+
+
 def _should_apply_pre_auth_rate_limit(
     *,
     scope: Scope,
@@ -123,8 +155,7 @@ def _should_apply_pre_auth_rate_limit(
     if not path.startswith(api_prefix + "/"):
         return False
 
-    suffix = path.removeprefix(api_prefix)
-    return suffix not in _DEFAULT_EXCLUDED_PATH_SUFFIXES
+    return not _is_excluded_api_path(scope=scope, api_prefix=api_prefix)
 
 
 def _has_valid_edge_assertion(*, request: Request, settings: Settings) -> bool:

@@ -94,7 +94,7 @@ def test_default_effective_policies_preserve_current_behaviour() -> None:
 
     assert registry["pre_auth"].item.amount == 120
     assert registry["pre_auth"].item.get_expiry() == 60
-    assert registry["pre_auth"].fail_open is False
+    assert registry["pre_auth"].fail_open is True
 
     assert registry["authenticated_default"].item.amount == 120
     assert registry["authenticated_default"].item.get_expiry() == 60
