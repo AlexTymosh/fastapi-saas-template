@@ -54,10 +54,10 @@ def test_staging_prod_reject_sensitive_rate_limit_fail_open_overrides(
 ) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", env_name)
     _set_complete_staging_prod_auth(monkeypatch)
+    _set_app_rate_limiting_baseline(monkeypatch)
     if env_name == "prod":
         monkeypatch.setenv("API__DOCS_ENABLED", "false")
         monkeypatch.setenv("REQUEST_CONTEXT__TRUST_INCOMING_REQUEST_ID", "false")
-        _set_app_rate_limiting_baseline(monkeypatch)
         monkeypatch.setenv(
             "DATABASE__URL", "postgresql+psycopg://app:app@db.example:5432/app"
         )
@@ -75,6 +75,7 @@ def test_staging_prod_reject_sensitive_rate_limit_fail_open_overrides(
 def test_staging_allows_normal_policy_fail_open_override(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "staging")
     _set_complete_staging_prod_auth(monkeypatch)
+    _set_app_rate_limiting_baseline(monkeypatch)
     monkeypatch.setenv(
         "RATE_LIMITING__POLICIES__AUTHENTICATED_DEFAULT__FAIL_OPEN", "true"
     )
