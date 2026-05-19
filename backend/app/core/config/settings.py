@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import parse_qs, urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_SECURE_DATABASE_SSL_MODES = frozenset({"require", "verify-ca", "verify-full"})
 
 
 def _normalise_string_list(
@@ -28,6 +31,58 @@ def _normalise_string_list(
     else:
         raw_items = value
     return [str(item).strip() for item in raw_items if str(item).strip()]
+
+
+def _normalise_optional_string(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalised = value.strip()
+    return normalised or None
+
+
+def _url_scheme(value: str | None) -> str:
+    if not value:
+        return ""
+    return urlsplit(value).scheme.lower()
+
+
+def _url_query_value(value: str | None, key: str) -> str | None:
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    query = parse_qs(parsed.query)
+    for candidate_key, values in query.items():
+        if candidate_key.lower() == key.lower() and values:
+            normalised = values[-1].strip().lower()
+            return normalised or None
+    return None
+
+
+def _is_secure_database_transport(database: DatabaseSettings) -> bool:
+    if not database.url:
+        return True
+
+    scheme = _url_scheme(database.url)
+    if scheme.startswith("sqlite"):
+        return True
+
+    if not scheme.startswith("postgresql"):
+        return False
+
+    ssl_mode = database.ssl_mode or _url_query_value(database.url, "sslmode")
+    return ssl_mode in _SECURE_DATABASE_SSL_MODES
+
+
+def _is_secure_redis_transport(redis: RedisSettings) -> bool:
+    if not redis.url:
+        return True
+    return _url_scheme(redis.url) == "rediss"
+
+
+def _is_secure_vault_transport(vault: VaultSettings) -> bool:
+    if not vault.addr:
+        return True
+    return _url_scheme(vault.addr) == "https"
 
 
 class AppSettings(BaseModel):
@@ -67,6 +122,8 @@ class VaultSettings(BaseModel):
     role_id: str | None = None
     secret_id: str | None = None
     fail_fast: bool = False
+    tls_required: bool = True
+    allow_plaintext_private_network: bool = False
 
 
 class DatabaseSettings(BaseModel):
@@ -77,11 +134,26 @@ class DatabaseSettings(BaseModel):
     pool_timeout: int = 30
     pool_recycle: int = 1800
     healthcheck_timeout: float = 1.0
+    ssl_mode: (
+        Literal["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]
+        | None
+    ) = None
+    allow_plaintext_private_network: bool = False
+
+    @field_validator("ssl_mode", mode="before")
+    @classmethod
+    def normalise_ssl_mode(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalised = _normalise_optional_string(str(value))
+        return normalised.lower() if normalised is not None else None
 
 
 class RedisSettings(BaseModel):
     url: str | None = None
     healthcheck_timeout: float = 0.5
+    tls_required: bool = True
+    allow_plaintext_private_network: bool = False
 
 
 class SecuritySettings(BaseModel):
@@ -151,10 +223,7 @@ class AuthSettings(BaseModel):
     @field_validator("audience", "client_id")
     @classmethod
     def normalise_optional_string(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalised = value.strip()
-        return normalised or None
+        return _normalise_optional_string(value)
 
     @field_validator("allowed_authorized_parties", mode="before")
     @classmethod
@@ -288,24 +357,12 @@ class ObservabilitySettings(BaseModel):
     @field_validator("otlp_endpoint")
     @classmethod
     def normalize_otlp_endpoint(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-
-        normalized = value.strip()
-        if not normalized:
-            return None
-        return normalized
+        return _normalise_optional_string(value)
 
     @field_validator("service_name")
     @classmethod
     def normalize_service_name(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-
-        normalized = value.strip()
-        if not normalized:
-            return None
-        return normalized
+        return _normalise_optional_string(value)
 
     @model_validator(mode="after")
     def validate_otlp_requirements(self) -> ObservabilitySettings:
@@ -359,6 +416,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "AUTH__METADATA_VALIDATION=fail is required in staging/prod"
                 )
+            self._validate_rate_limit_fail_open_overrides(env=env)
         if env == "prod":
             if not self.auth.issuer_url.startswith("https://"):
                 raise ValueError("AUTH__ISSUER_URL must use HTTPS in prod")
@@ -379,6 +437,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Rate limiting must be enabled in app or enforced by edge in prod"
                 )
+            self._validate_production_transport_security()
         if env == "prod" and "*" in self.cors.allow_origins:
             raise ValueError("CORS wildcard origins are not allowed in prod")
         if (
@@ -390,6 +449,57 @@ class Settings(BaseSettings):
                 "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY is required for invite outbox"
             )
         return self
+
+    def _validate_rate_limit_fail_open_overrides(self, *, env: str) -> None:
+        from app.core.rate_limit.registry import get_rate_limit_policy
+
+        unsafe_overrides = []
+        for policy_name, override in self.rate_limiting.policies.items():
+            if override.fail_open is not True:
+                continue
+            policy_spec = get_rate_limit_policy(policy_name)
+            if policy_spec.sensitivity in {"sensitive", "critical"}:
+                unsafe_overrides.append(policy_name)
+
+        if unsafe_overrides:
+            policies = ", ".join(sorted(unsafe_overrides))
+            raise ValueError(
+                "RATE_LIMITING__POLICIES fail_open=true is not allowed for "
+                f"sensitive or critical policies in {env}: {policies}"
+            )
+
+    def _validate_production_transport_security(self) -> None:
+        if (
+            not self.database.allow_plaintext_private_network
+            and not _is_secure_database_transport(self.database)
+        ):
+            raise ValueError(
+                "DATABASE__SSL_MODE must be one of require, verify-ca, or "
+                "verify-full in prod unless "
+                "DATABASE__ALLOW_PLAINTEXT_PRIVATE_NETWORK=true"
+            )
+
+        if (
+            self.redis.url
+            and self.redis.tls_required
+            and not self.redis.allow_plaintext_private_network
+            and not _is_secure_redis_transport(self.redis)
+        ):
+            raise ValueError(
+                "REDIS__URL must use rediss:// in prod unless "
+                "REDIS__ALLOW_PLAINTEXT_PRIVATE_NETWORK=true"
+            )
+
+        if (
+            self.vault.enabled
+            and self.vault.tls_required
+            and not self.vault.allow_plaintext_private_network
+            and not _is_secure_vault_transport(self.vault)
+        ):
+            raise ValueError(
+                "VAULT__ADDR must use https:// in prod unless "
+                "VAULT__ALLOW_PLAINTEXT_PRIVATE_NETWORK=true"
+            )
 
 
 @lru_cache(maxsize=1)

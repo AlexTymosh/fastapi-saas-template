@@ -15,7 +15,20 @@ from app.core.config.settings import get_settings
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
-_engine_url: str | None = None
+_engine_cache_key: tuple[str, str | None] | None = None
+
+
+def _database_url_with_ssl_mode(database_url: str, ssl_mode: str | None) -> str:
+    if ssl_mode is None:
+        return database_url
+
+    url = make_url(database_url)
+    if url.get_backend_name() == "sqlite":
+        return database_url
+
+    query = dict(url.query)
+    query["sslmode"] = ssl_mode
+    return str(url.set(query=query))
 
 
 def _build_engine() -> AsyncEngine:
@@ -24,6 +37,10 @@ def _build_engine() -> AsyncEngine:
     if not database_url:
         raise RuntimeError("DATABASE__URL is not set")
 
+    database_url = _database_url_with_ssl_mode(
+        database_url,
+        settings.database.ssl_mode,
+    )
     url = make_url(database_url)
 
     engine_kwargs: dict[str, object] = {
@@ -43,21 +60,22 @@ def _build_engine() -> AsyncEngine:
 
 
 def get_async_engine() -> AsyncEngine:
-    global _engine, _engine_url
+    global _engine, _engine_cache_key
 
     settings = get_settings()
     database_url = settings.database.url
     if not database_url:
         raise RuntimeError("DATABASE__URL is not set")
 
+    cache_key = (database_url, settings.database.ssl_mode)
     if _engine is None:
         _engine = _build_engine()
-        _engine_url = database_url
+        _engine_cache_key = cache_key
         return _engine
 
-    if _engine_url != database_url:
+    if _engine_cache_key != cache_key:
         raise RuntimeError(
-            "Database URL changed during runtime. "
+            "Database URL or SSL mode changed during runtime. "
             "Call dispose_engine() before reinitializing the engine."
         )
 
@@ -101,11 +119,11 @@ async def ping_database() -> None:
 
 
 async def dispose_engine() -> None:
-    global _engine, _session_factory, _engine_url
+    global _engine, _session_factory, _engine_cache_key
 
     if _engine is not None:
         await _engine.dispose()
 
     _engine = None
     _session_factory = None
-    _engine_url = None
+    _engine_cache_key = None
