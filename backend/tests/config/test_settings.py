@@ -20,6 +20,8 @@ def _set_app_rate_limiting_baseline(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "false")
     monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "true")
     monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", RATE_LIMIT_SECRET)
+    monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
 
 
 def _set_verified_edge_rate_limiting(monkeypatch) -> None:

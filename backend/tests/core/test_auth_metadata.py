@@ -28,6 +28,8 @@ def _settings(
             "enforced_by_edge": False,
             "pre_auth_enabled": True,
             "identifier_secret": "test-rate-limit-identifier-secret-32chars",
+            "trust_proxy_headers": True,
+            "trusted_proxy_cidrs": ["127.0.0.1/32"],
         },
         outbox={"invite_delivery_enabled": False},
         auth=AuthSettings(
