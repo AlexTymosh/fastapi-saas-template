@@ -2,48 +2,63 @@
 
 ## Current status
 
-Rate limiting is implemented for sensitive authenticated endpoint groups using `limits` with an async Redis backend.
+Rate limiting is implemented with `limits` using an async Redis backend.
 
-- Status: implemented for authenticated user reads, tenant read/write flows, organisation creation, layered invite anti-abuse flows, platform read/list/detail flows, platform audit listing, and platform write operations.
-- Default enablement: disabled (`RATE_LIMITING__ENABLED=false`).
-- Policy mode default: `normal`.
-- When disabled, limiter dependencies are no-op, but policy resolution still uses the same settings-aware registry so startup can report the effective configuration.
-- Health and docs/static endpoints are intentionally not protected by this app-level limiter; keep edge/WAF controls for public unauthenticated traffic.
-- The limiter is intentionally route-level and dependency-based, not FastAPI/Starlette middleware-based. This preserves authenticated principal resolution, per-endpoint policy selection, policy matrix tests, and the auth -> rate-limit -> database dependency ordering.
+The project now has two complementary rate-limit layers:
+
+1. **Ingress pre-auth layer** — `RateLimitIngressMiddleware` protects protected API traffic before JWT validation. It throttles missing, malformed, or invalid-token traffic before it reaches authentication and database-dependent dependencies.
+2. **Endpoint/business layer** — route dependencies protect authenticated endpoint groups and business-specific abuse dimensions such as tenant writes, organisation creation, invite creation, invite resend, platform reads/writes, and audit reads.
+
+Default local/test enablement remains disabled:
+
+```bash
+RATE_LIMITING__ENABLED=false
+```
+
+Staging and production are stricter:
+
+- staging/prod require either app-level rate limiting or verified edge enforcement;
+- app-level rate limiting in staging/prod requires pre-auth protection unless verified edge mode is configured;
+- verified edge mode requires trusted proxy CIDRs and an edge assertion header/secret.
+
+Health endpoints are excluded from app-level pre-auth throttling.
 
 ## Configuration
 
 Primary settings:
 
-- `RATE_LIMITING__ENABLED`
-- `RATE_LIMITING__BACKEND`
-- `RATE_LIMITING__REDIS_PREFIX`
-- `RATE_LIMITING__TRUST_PROXY_HEADERS`
-- `RATE_LIMITING__IDENTIFIER_SECRET`
-- `RATE_LIMITING__MODE` (`normal`, `strict`, `relaxed`, `panic`)
-- `RATE_LIMITING__POLICIES__<POLICY_NAME>__LIMIT`
-- `RATE_LIMITING__POLICIES__<POLICY_NAME>__WINDOW_SECONDS`
-- `RATE_LIMITING__POLICIES__<POLICY_NAME>__FAIL_OPEN`
-- `RATE_LIMITING__STORAGE_TIMEOUT_SECONDS`
-- `REDIS__URL`
+| Setting | Purpose |
+|---|---|
+| `RATE_LIMITING__ENABLED` | Enables app-level Redis-backed rate limiting. |
+| `RATE_LIMITING__BACKEND` | Rate-limit backend. Currently `redis`. |
+| `RATE_LIMITING__REDIS_PREFIX` | Redis namespace prefix for rate-limit buckets. |
+| `RATE_LIMITING__TRUST_PROXY_HEADERS` | Allows forwarded client IP headers only when the immediate peer is trusted. |
+| `RATE_LIMITING__TRUSTED_PROXY_CIDRS` | Comma-separated CIDRs for reverse proxies/load balancers allowed to provide `X-Forwarded-For` / `X-Real-IP`. |
+| `RATE_LIMITING__PRE_AUTH_ENABLED` | Enables ingress pre-auth IP/client throttling for protected API paths. |
+| `RATE_LIMITING__IDENTIFIER_SECRET` | HMAC secret for rate-limit bucket identifiers. Required when app-level rate limiting is enabled. |
+| `RATE_LIMITING__ENFORCED_BY_EDGE` | Allows app-level rate limiting to be disabled only when trusted edge enforcement is verified. |
+| `RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME` | Header name used by the trusted edge/gateway to assert that the request passed edge enforcement. |
+| `RATE_LIMITING__EDGE_ASSERTION_SECRET` | Shared assertion secret used to validate edge-originated requests. |
+| `RATE_LIMITING__MODE` | `normal`, `strict`, `relaxed`, or `panic`. `relaxed` is rejected in production. |
+| `RATE_LIMITING__POLICIES__<POLICY_NAME>__LIMIT` | Optional per-policy limit override. |
+| `RATE_LIMITING__POLICIES__<POLICY_NAME>__WINDOW_SECONDS` | Optional per-policy window override. Supported windows: `60`, `300`, `3600`, `86400`. |
+| `RATE_LIMITING__POLICIES__<POLICY_NAME>__FAIL_OPEN` | Optional per-policy fail-open override. Rejected for sensitive/critical policies in staging/prod. |
+| `RATE_LIMITING__STORAGE_TIMEOUT_SECONDS` | Timeout for Redis limiter operations. |
+| `REDIS__URL` | Required when app-level rate limiting is enabled. |
 
 Rules:
 
-- `REDIS__URL` is required only when `RATE_LIMITING__ENABLED=true`.
-- `RATE_LIMITING__IDENTIFIER_SECRET` is required when `RATE_LIMITING__ENABLED=true` and must be at least 32 characters. It is used only for rate-limit identifier HMAC bucket keys and must not match Keycloak, client, outbox/Fernet, database, Redis, or other application secrets.
-- If enabled without `REDIS__URL` or `RATE_LIMITING__IDENTIFIER_SECRET`, startup fails fast.
-- Unknown policy override names fail fast, for example `RATE_LIMITING__POLICIES__UNKNOWN_POLICY__LIMIT=10`.
-- Invalid override limits/windows fail fast. Supported runtime windows are 60 seconds, 300 seconds, 3600 seconds, and 86400 seconds.
+- `REDIS__URL` is required when `RATE_LIMITING__ENABLED=true`.
+- `RATE_LIMITING__IDENTIFIER_SECRET` is required when `RATE_LIMITING__ENABLED=true`.
+- `RATE_LIMITING__IDENTIFIER_SECRET` and `RATE_LIMITING__EDGE_ASSERTION_SECRET` must be at least 32 characters.
+- `RATE_LIMITING__TRUST_PROXY_HEADERS=true` requires `RATE_LIMITING__TRUSTED_PROXY_CIDRS` in staging/prod.
+- In staging/prod, either `RATE_LIMITING__ENABLED=true` or `RATE_LIMITING__ENFORCED_BY_EDGE=true` is required.
+- In staging/prod, `RATE_LIMITING__ENABLED=true` requires `RATE_LIMITING__PRE_AUTH_ENABLED=true` unless verified edge mode is enabled.
+- `RATE_LIMITING__ENFORCED_BY_EDGE=true` requires `RATE_LIMITING__TRUSTED_PROXY_CIDRS`, `RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME`, and `RATE_LIMITING__EDGE_ASSERTION_SECRET`.
+- Unknown policy override names fail fast.
+- Invalid override limits/windows fail fast.
 - `relaxed` mode is rejected in production.
-- `panic` mode is accepted in production and is config-level only in this change; there is no runtime/admin-UI panic switch.
-
-Policy defaults are declared once in `backend/app/core/rate_limit/policies.py` as declarative specs. Startup resolves effective runtime policies from those specs, the selected mode, and explicit per-policy overrides. Precedence is:
-
-1. policy spec defaults;
-2. mode transformation;
-3. explicit per-policy override.
-
-Exception: in `panic` mode, sensitive and critical policies always remain fail-closed even if an override attempts `FAIL_OPEN=true`.
+- `panic` mode is accepted in production and is config-level only; there is no runtime/admin UI panic switch.
 
 Generate a strong identifier secret with OpenSSL:
 
@@ -51,15 +66,62 @@ Generate a strong identifier secret with OpenSSL:
 openssl rand -hex 32
 ```
 
-Do not hardcode weak placeholder values and do not commit real secrets. Local/dev environments may use a locally generated value. Staging and production should inject the value through a secrets manager or environment injection. Rotating `RATE_LIMITING__IDENTIFIER_SECRET` changes the HMAC output and resets active limiter buckets; this is acceptable for rate limiting, but rotation is best done during a low-traffic window or as part of compromise response. No dual-read/dual-write rotation is implemented.
+Do not commit real secrets. Staging and production should inject secrets through the deployment platform, Vault, or another secret manager.
 
-Example override:
+Rotating `RATE_LIMITING__IDENTIFIER_SECRET` changes HMAC bucket keys and resets active limiter buckets. This is acceptable for rate limiting, but rotation is best done during a low-traffic window or as part of compromise response. No dual-read/dual-write rotation is implemented.
+
+## Production and staging protection modes
+
+### App-level protection
+
+Use this when the application itself owns Redis-backed throttling:
 
 ```bash
-RATE_LIMITING__POLICIES__TENANT_WRITE__LIMIT=20
-RATE_LIMITING__POLICIES__TENANT_WRITE__WINDOW_SECONDS=60
-RATE_LIMITING__POLICIES__TENANT_WRITE__FAIL_OPEN=false
+RATE_LIMITING__ENABLED=true
+RATE_LIMITING__PRE_AUTH_ENABLED=true
+RATE_LIMITING__IDENTIFIER_SECRET=<strong-secret>
+REDIS__URL=redis://redis:6379/0
+RATE_LIMITING__ENFORCED_BY_EDGE=false
 ```
+
+In this mode:
+
+- `RateLimitIngressMiddleware` applies the `pre_auth` policy before JWT validation for protected API paths;
+- endpoint-level dependencies still apply authenticated/business-specific policies after authentication;
+- missing/invalid token traffic can return `429` before `401` if the pre-auth bucket is exhausted.
+
+### Verified edge protection
+
+Use this only when a trusted edge/API gateway/WAF enforces rate limits before traffic reaches the application origin:
+
+```bash
+RATE_LIMITING__ENABLED=false
+RATE_LIMITING__ENFORCED_BY_EDGE=true
+RATE_LIMITING__TRUSTED_PROXY_CIDRS=10.0.0.0/8
+RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME=X-Edge-Assertion
+RATE_LIMITING__EDGE_ASSERTION_SECRET=<strong-shared-secret>
+```
+
+In this mode:
+
+- the immediate peer must be in `RATE_LIMITING__TRUSTED_PROXY_CIDRS`;
+- the configured assertion header must be present;
+- the assertion value must match `RATE_LIMITING__EDGE_ASSERTION_SECRET`;
+- direct-origin requests are rejected with `403`.
+
+The current edge assertion model is a shared secret header. Timestamped/HMAC-signed edge assertions are not implemented in this PR and should be handled as a separate hardening task if required.
+
+## Policy resolution
+
+Policy defaults are declared in `backend/app/core/rate_limit/policies.py` as declarative specs. Startup resolves effective runtime policies from those specs, selected mode, and explicit per-policy overrides.
+
+Precedence:
+
+1. policy spec defaults;
+2. mode transformation;
+3. explicit per-policy override.
+
+Exception: in `panic` mode, sensitive and critical policies always remain fail-closed even if an override attempts `FAIL_OPEN=true`.
 
 Mode behaviour:
 
@@ -74,27 +136,58 @@ Mode behaviour:
 
 | Policy | Default limit | Default window | Default fail mode | Sensitivity | Purpose |
 |---|---:|---|---|---|---|
-| `authenticated_default` | 120 | 1 minute | fail-open | normal | Low-risk authenticated reads such as `/users/me` |
-| `tenant_read` | 120 | 1 minute | fail-open | normal | Tenant read, directory, and membership listing endpoints |
-| `tenant_write` | 30 | 1 minute | fail-closed | sensitive | Tenant mutations and membership management |
-| `organisation_create` | 5 | 1 hour | fail-closed | critical | Protect organisation creation/onboarding from abuse |
-| `invite_accept` | 5 | 5 minutes | fail-closed | critical | Protect invite acceptance from brute force/token guessing |
-| `invite_create` | 20 | 1 hour | fail-closed | sensitive | Protect invite creation by authenticated actor |
-| `invite_create_organisation` | 50 | 1 hour | fail-closed | sensitive | Limit organisation-wide invite creation bursts |
-| `invite_create_organisation_daily` | 200 | 1 day | fail-closed | critical | Cap daily organisation-wide invite creation pressure |
-| `invite_create_target_email` | 3 | 1 day | fail-closed | critical | Limit repeated invite creation to one email within one organisation |
-| `invite_create_target_domain` | 50 | 1 day | fail-closed | sensitive | Limit invite creation to one target domain within one organisation |
-| `invite_mutation` | 30 | 1 hour | fail-closed | sensitive | Protect invite revoke/resend/admin invite operations |
-| `invite_resend_invite` | 5 | 1 hour | fail-closed | sensitive | Limit repeated resend attempts for one invite |
-| `invite_resend_organisation_daily` | 200 | 1 day | fail-closed | sensitive | Cap daily organisation-wide resend pressure |
-| `platform_read` | 60 | 1 minute | fail-closed | sensitive | Reduce platform user/organisation/staff enumeration and listing abuse |
-| `audit_read` | 30 | 1 minute | fail-closed | critical | Protect sensitive full and limited audit listing/filtering |
-| `platform_write` | 30 | 1 minute | fail-closed | critical | Protect sensitive platform user/organisation writes from abuse with a valid platform token |
-| `platform_staff_write` | 10 | 1 minute | fail-closed | critical | Protect high-impact platform staff management writes |
+| `pre_auth` | 120 | 1 minute | fail-closed | sensitive | Pre-auth IP/client protection for protected API paths before JWT validation. |
+| `authenticated_default` | 120 | 1 minute | fail-open | normal | Low-risk authenticated reads such as `/users/me`. |
+| `tenant_read` | 120 | 1 minute | fail-open | normal | Tenant read, directory, and membership listing endpoints. |
+| `tenant_write` | 30 | 1 minute | fail-closed | sensitive | Tenant mutations and membership management. |
+| `organisation_create` | 5 | 1 hour | fail-closed | critical | Protect organisation creation/onboarding from abuse. |
+| `invite_accept` | 5 | 5 minutes | fail-closed | critical | Protect invite acceptance from brute force/token guessing. |
+| `invite_create` | 20 | 1 hour | fail-closed | sensitive | Protect invite creation by authenticated actor. |
+| `invite_create_organisation` | 50 | 1 hour | fail-closed | sensitive | Limit organisation-wide invite creation bursts. |
+| `invite_create_organisation_daily` | 200 | 1 day | fail-closed | critical | Cap daily organisation-wide invite creation pressure. |
+| `invite_create_target_email` | 3 | 1 day | fail-closed | critical | Limit repeated invite creation to one email within one organisation. |
+| `invite_create_target_domain` | 50 | 1 day | fail-closed | sensitive | Limit invite creation to one target domain within one organisation. |
+| `invite_mutation` | 30 | 1 hour | fail-closed | sensitive | Protect invite revoke/resend/admin invite operations. |
+| `invite_resend_invite` | 5 | 1 hour | fail-closed | sensitive | Limit repeated resend attempts for one invite. |
+| `invite_resend_organisation_daily` | 200 | 1 day | fail-closed | sensitive | Cap daily organisation-wide resend pressure. |
+| `platform_read` | 60 | 1 minute | fail-closed | sensitive | Reduce platform user/organisation/staff enumeration and listing abuse. |
+| `audit_read` | 30 | 1 minute | fail-closed | critical | Protect sensitive full and limited audit listing/filtering. |
+| `platform_write` | 30 | 1 minute | fail-closed | critical | Protect sensitive platform user/organisation writes. |
+| `platform_staff_write` | 10 | 1 minute | fail-closed | critical | Protect high-impact platform staff management writes. |
 
-Fail-open is reserved for low-risk authenticated reads where availability is preferred and backend errors are still recorded. Tenant writes, organisation creation, invite administration, platform reads, audit reads, and platform writes are fail-closed because abuse impact or enumeration risk is higher.
+Fail-open is reserved for low-risk authenticated reads where availability is preferred and backend errors are still recorded. Tenant writes, organisation creation, invite administration, platform reads, audit reads, platform writes, and pre-auth checks are fail-closed because abuse impact or enumeration risk is higher.
 
-## Protected endpoint matrix
+## Ingress pre-auth layer
+
+`RateLimitIngressMiddleware` runs before route dependencies. It is responsible for controls that must happen before authentication:
+
+- verified edge assertion checks;
+- pre-auth IP/client throttling.
+
+The pre-auth limiter applies only when:
+
+- `RATE_LIMITING__ENABLED=true`;
+- `RATE_LIMITING__PRE_AUTH_ENABLED=true`;
+- the request path starts with the configured API prefix, normally `/api/v1/`;
+- the method is not `OPTIONS`;
+- the endpoint is not an excluded health endpoint.
+
+Excluded by default:
+
+- `/api/v1/health/live`;
+- `/api/v1/health/ready`.
+
+Important behaviour change:
+
+- unauthenticated protected requests are no longer guaranteed to return `401` before any limiter check;
+- if the pre-auth bucket is over limit, the request can return `429` before JWT validation;
+- if the pre-auth bucket allows the request, normal authentication still returns `401` for missing/invalid credentials.
+
+## Authenticated and business rate-limit layer
+
+Endpoint-level dependencies still own authenticated and business-specific policies. These checks run after authentication and before endpoint body/database work for protected routes.
+
+Protected endpoint matrix:
 
 | Method | Endpoint | Policy |
 |---|---|---|
@@ -129,7 +222,6 @@ Fail-open is reserved for low-risk authenticated reads where availability is pre
 | GET | `/api/v1/platform/audit-events/limited` | `audit_read` |
 | GET | `/api/v1/platform/audit-events` | `audit_read` |
 
-
 ## Invite layered anti-abuse model
 
 Invite creation and resend use sequential multi-bucket Redis checks before the database session or invite services are constructed. These checks are intentionally part of the core rate-limit layer, not `InviteService`, so durable business rules remain separate from ephemeral anti-abuse controls.
@@ -137,7 +229,7 @@ Invite creation and resend use sequential multi-bucket Redis checks before the d
 Invite create (`POST /api/v1/organisations/{organisation_id}/invites`) checks, in order:
 
 | Policy | Bucket kind | Default | Purpose |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | `invite_create` | `user` | 20 / hour | Limit one authenticated actor's invite creation rate. |
 | `invite_create_organisation` | `organisation` | 50 / hour | Prevent multiple admins in the same organisation from multiplying spam. |
 | `invite_create_organisation_daily` | `organisation` | 200 / day | Cap daily invite creation pressure from one organisation. |
@@ -147,61 +239,50 @@ Invite create (`POST /api/v1/organisations/{organisation_id}/invites`) checks, i
 Invite resend (`POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend`) checks, in order:
 
 | Policy | Bucket kind | Default | Purpose |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | `invite_mutation` | `user` | 30 / hour | Limit one actor's invite administration mutation rate. |
 | `invite_resend_invite` | `invite` | 5 / hour | Prevent repeatedly resending one invite. |
 | `invite_resend_organisation_daily` | `organisation` | 200 / day | Prevent high-volume resend pressure from one organisation. |
 
 Invite revoke keeps the existing `invite_mutation` actor bucket; no organisation-level revoke throttle is added at this stage.
 
-Example policy override:
-
-```bash
-RATE_LIMITING__POLICIES__INVITE_CREATE_ORGANISATION_DAILY__LIMIT=100
-RATE_LIMITING__POLICIES__INVITE_CREATE_ORGANISATION_DAILY__WINDOW_SECONDS=86400
-RATE_LIMITING__POLICIES__INVITE_CREATE_TARGET_EMAIL__LIMIT=2
-```
-
-Daily windows use `86400` seconds and are supported by the policy registry. Existing `60`, `300`, and `3600` second windows remain supported.
-
-### Privacy and identifier guarantees
-
-All actor, IP, organisation, organisation+email, organisation+domain, and invite buckets use versioned HMAC-SHA256 bucket keys (`rlid:v1:hmac-sha256:<digest>`) with `RATE_LIMITING__IDENTIFIER_SECRET`. Redis namespaces include only the configured prefix, policy name, and bucket kind, for example `rate-limit:invite_create_target_email:organisation_target_email`.
-
-Raw email addresses, email domains, organisation IDs, invite IDs, user IDs, IP addresses, tokens, token hashes, and encrypted raw tokens must not appear in Redis keys, namespaces, logs, metrics, audit metadata, or client errors. Metrics and logs may record low-cardinality `policy_name` and bucket/identifier kind only.
-
-### Anti-abuse versus durable product limits
-
-Redis-backed rate limits are ephemeral anti-abuse controls. They may expire, protect against spam/brute-force/floods/excessive retries, and return `429 Too Many Requests` with the standard Problem Details and `Retry-After` contract.
-
-Durable product and subscription limits must remain database-backed and must not be implemented as Redis counters. Examples include plan seat limits, paid feature access, subscription entitlement, organisation capacity, and owner/admin invariants. Those future product contracts should return `403`, `402`, or `409` as appropriate, not `429`.
-
 Sequential multi-bucket consumption is intentional conservative throttling: an earlier actor or organisation bucket may be consumed even if a later email/domain/invite bucket blocks the request. Lua scripts, custom Redis scripts, and atomic multi-key Redis transactions are intentionally out of scope for this stage.
 
 ## Identifier strategy
 
 - Authenticated requests are bucketed by principal identity.
+- Pre-auth requests are bucketed by normalised client IP.
 - Invite anti-abuse also uses custom business buckets for organisation, organisation+target-email, organisation+target-domain, and invite resend dimensions.
 - Identifier kind is tracked via `rate_limit.identifier_kind` for observability.
 - Redis bucket keys use versioned HMAC-SHA256 identifiers in the form `rlid:v1:hmac-sha256:<digest>`.
 - HMAC messages use domain separation: `user:<external_auth_id>` for user buckets, `ip:<normalised_ip>` for IP buckets, and `<bucket_kind>:<raw_value>` for business buckets.
 - Raw user ID/email/IP, organisation IDs, invite IDs, target emails, and target domains must not appear in Redis keys, logs, metrics, audit metadata, or client errors.
-- IP addresses are normalised with the standard `ipaddress` canonical/compressed form.
-- Keep `RATE_LIMITING__TRUST_PROXY_HEADERS=false` unless proxy chain is explicitly trusted.
+- IPv4 addresses are canonicalised.
+- IPv6 addresses are normalised to a `/64` network address to reduce bypass risk from IPv6 address rotation.
+- Forwarded client IP headers are ignored unless the immediate peer is inside `RATE_LIMITING__TRUSTED_PROXY_CIDRS`.
 
-## Auth-before-rate-limit rule
+## Proxy and edge trust model
 
-For protected endpoints:
+Keep `RATE_LIMITING__TRUST_PROXY_HEADERS=false` unless the proxy chain is explicitly trusted.
 
-- authentication is resolved before limiter checks;
-- unauthenticated requests return `401` first;
-- no anonymous buckets are created for protected routes.
+When proxy headers are enabled:
+
+- the app first checks the immediate peer IP;
+- `X-Forwarded-For` / `X-Real-IP` are used only if the peer is inside `RATE_LIMITING__TRUSTED_PROXY_CIDRS`;
+- spoofed forwarded headers from direct clients are ignored.
+
+When edge-enforced mode is enabled:
+
+- the same trusted proxy check applies;
+- the configured assertion header must be present;
+- the assertion value must match the configured secret;
+- otherwise the request is rejected with `403`.
 
 ## Redis outage behaviour
 
 Runtime/backend failures follow policy fail mode.
 
-- **Fail-closed** (`fail_open=false`): return `503` (`error_code=rate_limiter_unavailable`). Sensitive tenant writes, organisation create, invite administration, audit/platform reads, and platform writes block when Redis/rate-limiter is unavailable.
+- **Fail-closed** (`fail_open=false`): return `503` (`error_code=rate_limiter_unavailable`). Sensitive tenant writes, organisation create, invite administration, audit/platform reads, platform writes, and pre-auth checks block when Redis/rate-limiter is unavailable.
 - **Fail-open** (`fail_open=true`): allow request, emit backend-error metric, log security warning. This is limited to low-risk authenticated and tenant reads.
 - **Runtime unavailable** (limiter/runtime missing): return `503` (`error_code=rate_limiter_unavailable`).
 
@@ -252,40 +333,64 @@ Forbidden high-cardinality/sensitive values:
 - Redis key;
 - identifier raw/hashed value.
 
-## OTLP verification status
-
-Current e2e OTLP coverage validates export through OTel Collector debug logs for:
-
-- HTTP metrics;
-- rate-limit `allowed` and `blocked` decisions;
-- backend error paths (`backend_error`, `fail_open`, `runtime_unavailable`) with `error.type`.
-
-Prometheus/Grafana dashboards are out of scope for this phase, and `/metrics` is not exposed.
-
 ## Testing coverage
 
-Policy registry tests assert every named policy is registered and retrievable. Endpoint-protection tests introspect FastAPI route dependencies and verify sensitive route groups carry the expected endpoint-level policy metadata while health endpoints remain unprotected. Fake-limiter API tests cover `429` Problem Details, `Retry-After`, unauthenticated `401` before limiter checks, and blocking before service/DB execution for tenant write, audit read, and organisation create paths.
+Policy registry tests assert every named policy is registered and retrievable. Endpoint-protection tests introspect FastAPI route dependencies and verify sensitive route groups carry the expected endpoint-level policy metadata while health endpoints remain unprotected by endpoint dependencies.
 
-Platform write policies remain covered by both fast fake-limiter API regression tests and Redis/Testcontainers integration tests. The fake tests keep fail-closed and transaction-boundary behaviour cheap to validate, while the integration tests exercise `limits`, async Redis storage, real Redis windows, and real over-limit responses for `platform_write` and `platform_staff_write`.
+Fake-limiter API tests cover:
+
+- `429` Problem Details;
+- `Retry-After`;
+- pre-auth `429` before JWT validation;
+- missing token consuming the pre-auth bucket and then returning `401`;
+- valid authenticated requests still using the post-auth user bucket;
+- runtime settings coming from `request.app.state.settings` when `create_app(settings=...)` is used;
+- blocking before service/DB execution for sensitive paths;
+- fail-closed and fail-open Redis/backend behaviour.
+
+Settings tests cover:
+
+- trusted proxy CIDR parsing and validation;
+- staging/prod requiring app-level or verified edge protection;
+- staging/prod rejecting app-level rate limiting without pre-auth unless verified edge mode is configured;
+- staging/prod validating edge-enforced mode controls;
+- production transport security guardrails.
 
 ## Testing commands
 
 Run from `backend/`:
 
 ```bash
-pytest -q tests/rate_limit/test_policy_registry.py
-pytest -q tests/rate_limit/test_endpoint_protection.py
-pytest -q tests/api/test_rate_limiting.py
-pytest -q tests/platform/test_platform_write_rate_limiting.py
-pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs
-pytest -q tests/api/test_rate_limiting_integration.py -m integration -rs
-pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
+uv run --locked pytest -q tests/config/test_rate_limit_ingress_settings.py
+uv run --locked pytest -q tests/rate_limit/test_identifiers.py
+uv run --locked pytest -q tests/rate_limit/test_ingress_rate_limiting.py
+uv run --locked pytest -q tests/rate_limit/test_api_rate_limiting.py
+uv run --locked pytest -q tests/rate_limit/test_policy_registry.py
+uv run --locked pytest -q tests/rate_limit/test_endpoint_protection.py
+uv run --locked pytest -q tests/platform/test_platform_write_rate_limiting.py
+uv run --locked pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs
+uv run --locked pytest -q tests/api/test_rate_limiting_integration.py -m integration -rs
+uv run --locked pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs
+```
+
+Full project validation:
+
+```bash
+task ci
 ```
 
 ## Acceptance checklist
 
 - [x] Default local/test startup does not require Redis.
-- [x] Enabling rate limiting without Redis fails fast.
+- [x] Enabling app-level rate limiting without Redis fails fast.
+- [x] Staging/prod require either app-level rate limiting or verified edge enforcement.
+- [x] App-level rate limiting in staging/prod requires pre-auth protection unless verified edge mode is configured.
+- [x] Edge-enforced mode requires trusted proxy CIDRs and an assertion header/secret.
+- [x] Forwarded client IP headers are accepted only from trusted proxy CIDRs.
+- [x] Pre-auth throttling can block missing/invalid-token traffic before JWT validation.
+- [x] Missing-token traffic consumes the pre-auth bucket and then returns `401` when allowed.
+- [x] Valid authenticated requests still use post-auth user/business buckets.
+- [x] `create_app(settings=...)` is respected by runtime limiter checks.
 - [x] Invite create endpoint is layered by actor, organisation, target email, and target domain buckets.
 - [x] Invite accept endpoint is rate limited.
 - [x] Invite revoke remains actor rate limited and invite resend is layered by actor, invite, and organisation buckets.
@@ -293,8 +398,7 @@ pytest tests/observability/test_otlp_export_integration.py -q -m "integration an
 - [x] Tenant read/write/create endpoint groups are rate limited.
 - [x] Platform read/list/detail endpoint groups are rate limited.
 - [x] Platform full and limited audit listing endpoints are rate limited.
-- [x] Health/docs/static endpoints are not protected by this app-level limiter.
-- [x] `401` happens before limiter for unauthenticated protected requests.
+- [x] Health endpoints are excluded from pre-auth throttling.
 - [x] `429` includes Problem Details payload.
 - [x] `429` includes `Retry-After`.
 - [x] Over-limit requests do not execute endpoint body.
