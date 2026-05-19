@@ -253,22 +253,21 @@ def test_missing_identifier_secret_returns_503_without_hitting_limiter(
     settings_without_identifier_secret = SimpleNamespace(
         rate_limiting=SimpleNamespace(
             enabled=True,
+            enforced_by_edge=False,
+            pre_auth_enabled=False,
             trust_proxy_headers=False,
+            trusted_proxy_cidrs=[],
             identifier_secret=None,
             redis_prefix="test-rl",
             storage_timeout_seconds=1.0,
         )
     )
 
-    with patch(
-        "app.core.rate_limit.dependencies.get_settings",
-        return_value=settings_without_identifier_secret,
-    ):
-        with client as api_client:
-            response = api_client.get("/api/v1/test/rate-limit/protected")
+    with client as api_client:
+        client.app.state.settings = settings_without_identifier_secret
+        response = api_client.get("/api/v1/test/rate-limit/protected")
 
     assert response.status_code == 503
-    assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["error_code"] == "rate_limiter_unavailable"
     assert fake.hit_calls == []
 

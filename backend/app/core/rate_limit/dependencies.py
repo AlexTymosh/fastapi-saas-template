@@ -43,6 +43,10 @@ def _runtime_from_request(request: Request) -> Any | None:
     return getattr(request.app.state, "rate_limiter_runtime", None)
 
 
+def _settings_from_request(request: Request) -> Any:
+    return getattr(request.app.state, "settings", None) or get_settings()
+
+
 def _build_retry_after(reset_time: float) -> str:
     retry_after = max(1, math.ceil(reset_time - time.time()))
     return str(retry_after)
@@ -76,7 +80,7 @@ async def _check_rate_limit_for_identifier(
     identifier: RateLimitIdentifier,
     started_at: float,
 ) -> None:
-    settings = get_settings()
+    settings = _settings_from_request(request)
     runtime = _runtime_from_request(request)
 
     if runtime is None or runtime.limiter is None:
@@ -192,8 +196,13 @@ def _effective_policy(
     return policy
 
 
-def _identifier_secret_or_error(*, policy_name: str, started_at: float) -> str:
-    settings = get_settings()
+def _identifier_secret_or_error(
+    *,
+    request: Request,
+    policy_name: str,
+    started_at: float,
+) -> str:
+    settings = _settings_from_request(request)
     identifier_secret = settings.rate_limiting.identifier_secret
     if identifier_secret is None:
         record_rate_limit_backend_error(
@@ -221,7 +230,7 @@ async def check_rate_limit_for_bucket(
     bucket: RateLimitBucket,
     policy: RateLimitPolicy | RateLimitPolicySpec,
 ) -> None:
-    settings = get_settings()
+    settings = _settings_from_request(request)
 
     if not settings.rate_limiting.enabled:
         return
@@ -229,6 +238,7 @@ async def check_rate_limit_for_bucket(
     effective_policy = _effective_policy(request=request, policy=policy)
     started_at = time.perf_counter()
     identifier_secret = _identifier_secret_or_error(
+        request=request,
         policy_name=effective_policy.name,
         started_at=started_at,
     )
@@ -262,7 +272,7 @@ async def check_pre_auth_rate_limit(
     request: Request,
     policy: RateLimitPolicy | RateLimitPolicySpec = PRE_AUTH_POLICY,
 ) -> None:
-    settings = get_settings()
+    settings = _settings_from_request(request)
 
     if (
         not settings.rate_limiting.enabled
@@ -273,6 +283,7 @@ async def check_pre_auth_rate_limit(
     effective_policy = _effective_policy(request=request, policy=policy)
     started_at = time.perf_counter()
     identifier_secret = _identifier_secret_or_error(
+        request=request,
         policy_name=effective_policy.name,
         started_at=started_at,
     )
@@ -299,7 +310,7 @@ async def check_rate_limit(
     principal: AuthenticatedPrincipal | None,
     policy: RateLimitPolicy | RateLimitPolicySpec,
 ) -> None:
-    settings = get_settings()
+    settings = _settings_from_request(request)
 
     if not settings.rate_limiting.enabled:
         return
@@ -307,6 +318,7 @@ async def check_rate_limit(
     effective_policy = _effective_policy(request=request, policy=policy)
     started_at = time.perf_counter()
     identifier_secret = _identifier_secret_or_error(
+        request=request,
         policy_name=effective_policy.name,
         started_at=started_at,
     )

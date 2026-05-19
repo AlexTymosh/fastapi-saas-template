@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedPrincipal, get_authenticated_principal
+from app.core.config.settings import Settings
 from app.core.db.session import get_db_session
 from app.core.rate_limit import AUTHENTICATED_DEFAULT_POLICY, rate_limit_dependency
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
@@ -200,3 +201,53 @@ def test_valid_edge_assertion_allows_edge_enforced_request(monkeypatch) -> None:
 
     assert response.status_code == 401
     assert fake.hit_calls == []
+
+
+def test_pre_auth_rate_limit_uses_injected_app_settings_not_global_cache(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=False)
+
+    async def _fake_init_rate_limiter(app, settings) -> None:
+        from app.core.rate_limit.registry import build_effective_policy_registry
+
+        app.state.rate_limit_policy_registry = build_effective_policy_registry(settings)
+        app.state.rate_limiter_runtime = RateLimiterRuntime(
+            enabled=True,
+            storage=object(),
+            limiter=fake,
+            strategy_name="moving-window",
+        )
+
+    monkeypatch.setattr("app.main.init_rate_limiter", _fake_init_rate_limiter)
+
+    # Global cached settings intentionally disagree with the injected app settings.
+    # The regression this test protects against: check_pre_auth_rate_limit()
+    # used get_settings() and skipped the limiter when the global cache had
+    # RATE_LIMITING__ENABLED=false.
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    reset_settings_cache()
+
+    injected_settings = Settings(
+        rate_limiting={
+            "enabled": True,
+            "pre_auth_enabled": True,
+            "identifier_secret": "injected-rate-limit-identifier-secret",
+            "redis_prefix": "injected-rl",
+        }
+    )
+
+    app = create_app(settings=injected_settings)
+
+    with TestClient(app) as api_client:
+        response = api_client.get(
+            "/api/v1/users/me",
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+
+    assert response.status_code == 429
+    assert response.json()["error_code"] == "rate_limited"
+    assert len(fake.hit_calls) == 1
+    assert fake.hit_calls[0][0].startswith("injected-rl:pre_auth:ip")
+
+    reset_settings_cache()
