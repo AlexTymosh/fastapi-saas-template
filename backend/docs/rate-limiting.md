@@ -19,9 +19,10 @@ Staging and production are stricter:
 
 - staging/prod require either app-level rate limiting or verified edge enforcement;
 - app-level rate limiting in staging/prod requires pre-auth protection unless verified edge mode is configured;
+- app-level pre-auth protection in staging/prod requires trusted proxy headers and trusted proxy CIDRs unless verified edge mode is configured;
 - verified edge mode requires trusted proxy CIDRs and an edge assertion header/secret.
 
-Health endpoints are excluded from app-level pre-auth throttling.
+Health endpoints are excluded from app-level pre-auth throttling and the edge-assertion hard gate.
 
 ## Configuration
 
@@ -54,6 +55,7 @@ Rules:
 - `RATE_LIMITING__TRUST_PROXY_HEADERS=true` requires `RATE_LIMITING__TRUSTED_PROXY_CIDRS` in staging/prod.
 - In staging/prod, either `RATE_LIMITING__ENABLED=true` or `RATE_LIMITING__ENFORCED_BY_EDGE=true` is required.
 - In staging/prod, `RATE_LIMITING__ENABLED=true` requires `RATE_LIMITING__PRE_AUTH_ENABLED=true` unless verified edge mode is enabled.
+- In staging/prod, app-level pre-auth without verified edge mode requires `RATE_LIMITING__TRUST_PROXY_HEADERS=true` and `RATE_LIMITING__TRUSTED_PROXY_CIDRS`, so pre-auth buckets use the real client IP instead of a shared ingress/load-balancer IP.
 - `RATE_LIMITING__ENFORCED_BY_EDGE=true` requires `RATE_LIMITING__TRUSTED_PROXY_CIDRS`, `RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME`, and `RATE_LIMITING__EDGE_ASSERTION_SECRET`.
 - Unknown policy override names fail fast.
 - Invalid override limits/windows fail fast.
@@ -81,6 +83,8 @@ RATE_LIMITING__ENABLED=true
 RATE_LIMITING__PRE_AUTH_ENABLED=true
 RATE_LIMITING__IDENTIFIER_SECRET=<strong-secret>
 REDIS__URL=redis://redis:6379/0
+RATE_LIMITING__TRUST_PROXY_HEADERS=true
+RATE_LIMITING__TRUSTED_PROXY_CIDRS=10.0.0.0/8
 RATE_LIMITING__ENFORCED_BY_EDGE=false
 ```
 
@@ -88,7 +92,8 @@ In this mode:
 
 - `RateLimitIngressMiddleware` applies the `pre_auth` policy before JWT validation for protected API paths;
 - endpoint-level dependencies still apply authenticated/business-specific policies after authentication;
-- missing/invalid token traffic can return `429` before `401` if the pre-auth bucket is exhausted.
+- missing/invalid token traffic can return `429` before `401` if the pre-auth bucket is exhausted;
+- in staging/prod, forwarded client IP headers must be trusted only from configured proxy CIDRs to avoid collapsing all users behind one ingress IP into one bucket.
 
 ### Verified edge protection
 
@@ -107,7 +112,8 @@ In this mode:
 - the immediate peer must be in `RATE_LIMITING__TRUSTED_PROXY_CIDRS`;
 - the configured assertion header must be present;
 - the assertion value must match `RATE_LIMITING__EDGE_ASSERTION_SECRET`;
-- direct-origin requests are rejected with `403`.
+- direct-origin requests are rejected with `403`;
+- health probes under `/api/v1/health/live` and `/api/v1/health/ready` are excluded from the edge-assertion hard gate, including trailing-slash variants.
 
 The current edge assertion model is a shared secret header. Timestamped/HMAC-signed edge assertions are not implemented in this PR and should be handled as a separate hardening task if required.
 
@@ -136,7 +142,7 @@ Mode behaviour:
 
 | Policy | Default limit | Default window | Default fail mode | Sensitivity | Purpose |
 |---|---:|---|---|---|---|
-| `pre_auth` | 120 | 1 minute | fail-closed | sensitive | Pre-auth IP/client protection for protected API paths before JWT validation. |
+| `pre_auth` | 120 | 1 minute | fail-open | sensitive | Pre-auth IP/client protection for protected API paths before JWT validation. |
 | `authenticated_default` | 120 | 1 minute | fail-open | normal | Low-risk authenticated reads such as `/users/me`. |
 | `tenant_read` | 120 | 1 minute | fail-open | normal | Tenant read, directory, and membership listing endpoints. |
 | `tenant_write` | 30 | 1 minute | fail-closed | sensitive | Tenant mutations and membership management. |
@@ -155,7 +161,7 @@ Mode behaviour:
 | `platform_write` | 30 | 1 minute | fail-closed | critical | Protect sensitive platform user/organisation writes. |
 | `platform_staff_write` | 10 | 1 minute | fail-closed | critical | Protect high-impact platform staff management writes. |
 
-Fail-open is reserved for low-risk authenticated reads where availability is preferred and backend errors are still recorded. Tenant writes, organisation creation, invite administration, platform reads, audit reads, platform writes, and pre-auth checks are fail-closed because abuse impact or enumeration risk is higher.
+Fail-open is reserved for low-risk availability paths. The `pre_auth` policy also fails open for Redis/backend errors so that the ingress layer does not turn low-risk read endpoints such as `authenticated_default` and `tenant_read` into fail-closed endpoints before their route-specific policies can run. Sensitive endpoint/business policies such as tenant writes, organisation creation, invite administration, audit reads, and platform writes remain fail-closed at the endpoint/business layer.
 
 ## Ingress pre-auth layer
 
@@ -172,10 +178,12 @@ The pre-auth limiter applies only when:
 - the method is not `OPTIONS`;
 - the endpoint is not an excluded health endpoint.
 
-Excluded by default:
+Excluded by default from pre-auth throttling and edge-assertion hard deny:
 
 - `/api/v1/health/live`;
-- `/api/v1/health/ready`.
+- `/api/v1/health/live/`;
+- `/api/v1/health/ready`;
+- `/api/v1/health/ready/`.
 
 Important behaviour change:
 
@@ -276,14 +284,15 @@ When edge-enforced mode is enabled:
 - the same trusted proxy check applies;
 - the configured assertion header must be present;
 - the assertion value must match the configured secret;
-- otherwise the request is rejected with `403`.
+- otherwise protected API requests are rejected with `403`;
+- health endpoints are excluded from the hard deny so liveness/readiness probes can still reach the app origin.
 
 ## Redis outage behaviour
 
 Runtime/backend failures follow policy fail mode.
 
-- **Fail-closed** (`fail_open=false`): return `503` (`error_code=rate_limiter_unavailable`). Sensitive tenant writes, organisation create, invite administration, audit/platform reads, platform writes, and pre-auth checks block when Redis/rate-limiter is unavailable.
-- **Fail-open** (`fail_open=true`): allow request, emit backend-error metric, log security warning. This is limited to low-risk authenticated and tenant reads.
+- **Fail-closed** (`fail_open=false`): return `503` (`error_code=rate_limiter_unavailable`). Sensitive tenant writes, organisation create, invite administration, audit/platform reads, and platform writes block when Redis/rate-limiter is unavailable.
+- **Fail-open** (`fail_open=true`): allow request, emit backend-error metric, log security warning. This applies to low-risk authenticated reads, tenant reads, and the ingress `pre_auth` policy so Redis backend errors do not bypass route-specific fail-closed policies or turn fail-open read routes into fail-closed routes before authentication.
 - **Runtime unavailable** (limiter/runtime missing): return `503` (`error_code=rate_limiter_unavailable`).
 
 In all backend failure paths, observability metrics are emitted.
@@ -345,14 +354,17 @@ Fake-limiter API tests cover:
 - missing token consuming the pre-auth bucket and then returning `401`;
 - valid authenticated requests still using the post-auth user bucket;
 - runtime settings coming from `request.app.state.settings` when `create_app(settings=...)` is used;
+- health endpoint exact and trailing-slash paths bypassing pre-auth throttling and edge-assertion hard deny;
 - blocking before service/DB execution for sensitive paths;
 - fail-closed and fail-open Redis/backend behaviour.
 
 Settings tests cover:
 
 - trusted proxy CIDR parsing and validation;
+- RFC token validation for edge assertion header names;
 - staging/prod requiring app-level or verified edge protection;
 - staging/prod rejecting app-level rate limiting without pre-auth unless verified edge mode is configured;
+- staging/prod requiring trusted proxy client IP mode for app-level pre-auth without verified edge enforcement;
 - staging/prod validating edge-enforced mode controls;
 - production transport security guardrails.
 
@@ -385,7 +397,9 @@ task ci
 - [x] Enabling app-level rate limiting without Redis fails fast.
 - [x] Staging/prod require either app-level rate limiting or verified edge enforcement.
 - [x] App-level rate limiting in staging/prod requires pre-auth protection unless verified edge mode is configured.
+- [x] App-level pre-auth in staging/prod requires trusted proxy client IP mode unless verified edge mode is configured.
 - [x] Edge-enforced mode requires trusted proxy CIDRs and an assertion header/secret.
+- [x] Edge assertion header names are restricted to valid HTTP token characters.
 - [x] Forwarded client IP headers are accepted only from trusted proxy CIDRs.
 - [x] Pre-auth throttling can block missing/invalid-token traffic before JWT validation.
 - [x] Missing-token traffic consumes the pre-auth bucket and then returns `401` when allowed.
@@ -398,7 +412,7 @@ task ci
 - [x] Tenant read/write/create endpoint groups are rate limited.
 - [x] Platform read/list/detail endpoint groups are rate limited.
 - [x] Platform full and limited audit listing endpoints are rate limited.
-- [x] Health endpoints are excluded from pre-auth throttling.
+- [x] Health endpoints are excluded from pre-auth throttling and edge-assertion hard deny, including trailing-slash variants.
 - [x] `429` includes Problem Details payload.
 - [x] `429` includes `Retry-After`.
 - [x] Over-limit requests do not execute endpoint body.

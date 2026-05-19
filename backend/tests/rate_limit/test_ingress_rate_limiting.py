@@ -237,9 +237,19 @@ def test_health_endpoints_are_not_rejected_by_edge_assertion(monkeypatch) -> Non
     with client as api_client:
         live_response = api_client.get("/api/v1/health/live")
         ready_response = api_client.get("/api/v1/health/ready")
+        live_slash_response = api_client.get(
+            "/api/v1/health/live/",
+            follow_redirects=False,
+        )
+        ready_slash_response = api_client.get(
+            "/api/v1/health/ready/",
+            follow_redirects=False,
+        )
 
     assert live_response.status_code == 200
     assert ready_response.status_code != 403
+    assert live_slash_response.status_code != 403
+    assert ready_slash_response.status_code != 403
     assert fake.hit_calls == []
 
 

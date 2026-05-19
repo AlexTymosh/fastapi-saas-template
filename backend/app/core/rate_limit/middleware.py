@@ -116,7 +116,7 @@ def _is_excluded_api_path(*, scope: Scope, api_prefix: str) -> bool:
     if not path.startswith(api_prefix + "/"):
         return False
 
-    suffix = path.removeprefix(api_prefix)
+    suffix = path.removeprefix(api_prefix).rstrip("/")
     return suffix in _DEFAULT_EXCLUDED_PATH_SUFFIXES
 
 
