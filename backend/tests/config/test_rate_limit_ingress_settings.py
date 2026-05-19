@@ -50,6 +50,40 @@ def test_settings_reject_invalid_trusted_proxy_cidr(monkeypatch) -> None:
     reset_settings_cache()
 
 
+@pytest.mark.parametrize(
+    "header_name",
+    [
+        "X/Edge-Assertion",
+        "X(Edge-Assertion)",
+        "X Edge Assertion",
+    ],
+)
+def test_settings_reject_invalid_edge_assertion_header_name_chars(
+    monkeypatch,
+    header_name: str,
+) -> None:
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", header_name)
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="valid HTTP header name"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+def test_settings_accept_rfc_token_edge_assertion_header_name(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge_Assertion.1"
+    )
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.rate_limiting.edge_assertion_header_name == "X-Edge_Assertion.1"
+
+    reset_settings_cache()
+
+
 def test_prod_trust_proxy_headers_requires_trusted_proxy_cidrs(monkeypatch) -> None:
     _set_complete_prod_base(monkeypatch)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
@@ -109,12 +143,30 @@ def test_staging_app_rate_limiting_requires_pre_auth_unless_verified_edge(
     reset_settings_cache()
 
 
+def test_staging_app_pre_auth_requires_trusted_proxy_client_ip(monkeypatch) -> None:
+    _set_complete_staging_base(monkeypatch)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", "i" * 32)
+    monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "false")
+    monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "false")
+    monkeypatch.delenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", raising=False)
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="RATE_LIMITING__TRUST_PROXY_HEADERS"):
+        get_settings()
+
+    reset_settings_cache()
+
+
 def test_staging_accepts_app_rate_limiting_with_pre_auth(monkeypatch) -> None:
     _set_complete_staging_base(monkeypatch)
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
     monkeypatch.setenv("RATE_LIMITING__IDENTIFIER_SECRET", "i" * 32)
     monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "true")
     monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "false")
+    monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
 
     reset_settings_cache()
     settings = get_settings()
@@ -122,6 +174,8 @@ def test_staging_accepts_app_rate_limiting_with_pre_auth(monkeypatch) -> None:
     assert settings.app.environment == "staging"
     assert settings.rate_limiting.enabled is True
     assert settings.rate_limiting.pre_auth_enabled is True
+    assert settings.rate_limiting.trust_proxy_headers is True
+    assert settings.rate_limiting.trusted_proxy_cidrs == ["10.0.0.0/8"]
 
     reset_settings_cache()
 

@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _SECURE_DATABASE_SSL_MODES = frozenset({"require", "verify-ca", "verify-full"})
+_HTTP_HEADER_NAME_CHARS = frozenset(
+    "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+)
 
 
 def _normalise_string_list(
@@ -294,7 +297,7 @@ class RateLimitingSettings(BaseModel):
                 "RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME must be at most "
                 "128 characters"
             )
-        if any(ord(char) < 33 or ord(char) > 126 or char == ":" for char in normalised):
+        if any(char not in _HTTP_HEADER_NAME_CHARS for char in normalised):
             raise ValueError(
                 "RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME must be a valid HTTP "
                 "header name"
@@ -530,14 +533,24 @@ class Settings(BaseSettings):
             )
 
     def _validate_pre_auth_policy(self, *, env: str) -> None:
-        if (
-            self.rate_limiting.enabled
-            and not self.rate_limiting.pre_auth_enabled
-            and not self.rate_limiting.enforced_by_edge
-        ):
+        if not self.rate_limiting.enabled or self.rate_limiting.enforced_by_edge:
+            return
+
+        if not self.rate_limiting.pre_auth_enabled:
             raise ValueError(
                 "RATE_LIMITING__PRE_AUTH_ENABLED must be true in "
                 f"{env} unless RATE_LIMITING__ENFORCED_BY_EDGE=true"
+            )
+
+        if (
+            not self.rate_limiting.trust_proxy_headers
+            or not self.rate_limiting.trusted_proxy_cidrs
+        ):
+            raise ValueError(
+                "RATE_LIMITING__TRUST_PROXY_HEADERS=true and "
+                "RATE_LIMITING__TRUSTED_PROXY_CIDRS are required in "
+                f"{env} when app pre-auth rate limiting is enabled without "
+                "RATE_LIMITING__ENFORCED_BY_EDGE=true"
             )
 
     def _validate_edge_enforced_mode(self, *, env: str) -> None:
