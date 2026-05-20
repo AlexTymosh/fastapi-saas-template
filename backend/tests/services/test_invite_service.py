@@ -515,7 +515,7 @@ def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
             )
         )
 
-    service.invite_repository.rotate_pending_invite_token.assert_awaited_once()
+    service.invite_repository.rotate_pending_invite_token.assert_not_awaited()
     service.invite_repository.mark_pending_invite_expired_by_id.assert_awaited_once()
     service.outbox_service.publish_event.assert_not_awaited()
     assert invite.token_hash == "old"

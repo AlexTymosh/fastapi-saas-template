@@ -16,18 +16,20 @@ from app.core.errors.openapi import (
     WRITE_ERROR_RESPONSES,
 )
 from app.core.rate_limit import (
-    INVITE_ACCEPT_POLICY,
     INVITE_MUTATION_POLICY,
+    check_authorized_invite_create_business_rate_limits,
+    check_authorized_invite_resend_business_rate_limits,
     rate_limit_dependency,
 )
 from app.invites.api.rate_limits import (
+    InviteAcceptRateLimitContext,
     InviteCreateRateLimitContext,
     InviteResendRateLimitContext,
+    require_rate_limited_invite_accept_context,
     require_rate_limited_invite_create_context,
     require_rate_limited_invite_resend_context,
 )
 from app.invites.schemas.invites import (
-    AcceptInviteRequest,
     AcceptInviteResponse,
     InviteResponse,
     RevokeInviteRequest,
@@ -63,6 +65,14 @@ async def create_invite(
         rate_limit_context.principal
     )
     invite_service = InviteService(db_session)
+
+    async def _business_rate_limiter() -> None:
+        await check_authorized_invite_create_business_rate_limits(
+            request=request,
+            organisation_id=organisation_id,
+            email=str(rate_limit_context.payload.email),
+        )
+
     invite = await invite_service.create_invite(
         organisation_id=organisation_id,
         actor_user_id=user.id,
@@ -71,6 +81,7 @@ async def create_invite(
         audit_context=build_audit_context_from_request(
             actor_user_id=user.id, request=request
         ),
+        business_rate_limiter=_business_rate_limiter,
     )
     return InviteResponse.model_validate(invite)
 
@@ -82,15 +93,16 @@ async def create_invite(
     name="accept_invite",
 )
 async def accept_invite(
-    payload: AcceptInviteRequest,
-    identity: PrincipalDep,
-    _: Annotated[None, Depends(rate_limit_dependency(INVITE_ACCEPT_POLICY))],
+    rate_limit_context: Annotated[
+        InviteAcceptRateLimitContext,
+        Depends(require_rate_limited_invite_accept_context),
+    ],
     db_session: DbSessionDep,
 ) -> AcceptInviteResponse:
     invite_service = InviteService(db_session)
     membership = await invite_service.accept_invite(
-        token=payload.token,
-        identity=identity,
+        token=rate_limit_context.payload.token,
+        identity=rate_limit_context.principal,
     )
     return AcceptInviteResponse(
         membership_id=membership.id,
@@ -147,6 +159,14 @@ async def resend_invite(
         rate_limit_context.principal
     )
     invite_service = InviteService(db_session)
+
+    async def _business_rate_limiter() -> None:
+        await check_authorized_invite_resend_business_rate_limits(
+            request=request,
+            organisation_id=organisation_id,
+            invite_id=invite_id,
+        )
+
     invite = await invite_service.resend_invite(
         organisation_id=organisation_id,
         invite_id=invite_id,
@@ -154,5 +174,6 @@ async def resend_invite(
         audit_context=build_audit_context_from_request(
             actor_user_id=user.id, request=request
         ),
+        business_rate_limiter=_business_rate_limiter,
     )
     return InviteResponse.model_validate(invite)

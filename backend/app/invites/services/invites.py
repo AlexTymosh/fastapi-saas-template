@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
@@ -34,6 +35,8 @@ from app.users.services.users import UserService
 
 _INVALID_INVITE_DETAIL = "Invalid or expired invite"
 
+BusinessRateLimiter = Callable[[], Awaitable[None]]
+
 
 def _raise_invalid_invite_token() -> NoReturn:
     raise BadRequestError(detail=_INVALID_INVITE_DETAIL)
@@ -64,6 +67,13 @@ class InviteService:
     def _token_hash(token: str) -> str:
         return sha256(token.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    async def _run_business_rate_limiter(
+        business_rate_limiter: BusinessRateLimiter | None,
+    ) -> None:
+        if business_rate_limiter is not None:
+            await business_rate_limiter()
+
     async def _get_actor_membership(
         self, *, organisation_id: UUID, actor_user_id: UUID
     ):
@@ -88,6 +98,7 @@ class InviteService:
         role: MembershipRole,
         email: str,
         audit_context: AuditContext,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Invite:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -117,6 +128,12 @@ class InviteService:
                 raise ConflictError(
                     detail="Pending invite already exists for this email"
                 )
+
+            # Business-scope invite quotas must be consumed only after tenant
+            # membership/role checks and non-mutating preconditions pass. This
+            # prevents cross-tenant quota poisoning by authenticated outsiders.
+            await self._run_business_rate_limiter(business_rate_limiter)
+
             token = token_urlsafe(32)
             expires_at = datetime.now(UTC) + self.DEFAULT_INVITE_TTL
             try:
@@ -260,6 +277,7 @@ class InviteService:
         invite_id: UUID,
         actor_user_id: UUID,
         audit_context: AuditContext,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Invite:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -285,9 +303,26 @@ class InviteService:
             ):
                 raise ForbiddenError(detail="Admin can resend member invites only")
 
+            now = datetime.now(UTC)
+            if self._is_expired(expires_at=invite.expires_at):
+                mark_expired_by_id = (
+                    self.invite_repository.mark_pending_invite_expired_by_id
+                )
+                expired = await mark_expired_by_id(
+                    invite_id=invite.id,
+                    organisation_id=organisation_id,
+                    now=now,
+                )
+                if expired is not None:
+                    raise ConflictError(detail="Invite has expired")
+                raise ConflictError(detail="Only pending invite can be resent")
+
+            # Consume invite/organisation resend buckets only after the actor is
+            # authorised and the invite is a valid mutable pending invite.
+            await self._run_business_rate_limiter(business_rate_limiter)
+
             token = token_urlsafe(32)
             token_hash = self._token_hash(token)
-            now = datetime.now(UTC)
             expires_at = now + self.DEFAULT_INVITE_TTL
             rotated = await self.invite_repository.rotate_pending_invite_token(
                 invite_id=invite.id,
