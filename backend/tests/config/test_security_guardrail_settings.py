@@ -2,6 +2,7 @@ import pytest
 
 from app.core.config.settings import get_settings
 from app.core.db.session import _database_url_with_ssl_mode
+from app.core.rate_limit.registry import build_effective_policy_registry
 from tests.helpers.settings import reset_settings_cache
 
 FERNET_TEST_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
@@ -74,6 +75,28 @@ def test_staging_prod_reject_sensitive_rate_limit_fail_open_overrides(
 
 
 @pytest.mark.security
+@pytest.mark.parametrize("env_name", ["staging", "prod"])
+def test_staging_prod_force_pre_auth_policy_fail_closed(
+    monkeypatch,
+    env_name: str,
+) -> None:
+    if env_name == "prod":
+        _set_complete_prod_baseline(monkeypatch)
+    else:
+        monkeypatch.setenv("APP__ENVIRONMENT", "staging")
+        _set_complete_staging_prod_auth(monkeypatch)
+        _set_app_rate_limiting_baseline(monkeypatch)
+
+    reset_settings_cache()
+    settings = get_settings()
+    registry = build_effective_policy_registry(settings)
+
+    assert registry["pre_auth"].fail_open is False
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
 def test_staging_allows_normal_policy_fail_open_override(monkeypatch) -> None:
     monkeypatch.setenv("APP__ENVIRONMENT", "staging")
     _set_complete_staging_prod_auth(monkeypatch)
@@ -141,6 +164,36 @@ def test_prod_accepts_database_plaintext_private_network_exception(monkeypatch) 
 
 
 @pytest.mark.security
+@pytest.mark.security
+def test_prod_rejects_sqlite_database_url(monkeypatch) -> None:
+    _set_complete_prod_baseline(monkeypatch)
+    monkeypatch.setenv("DATABASE__URL", "sqlite+aiosqlite:///./prod.db")
+    monkeypatch.delenv("DATABASE__SSL_MODE", raising=False)
+
+    reset_settings_cache()
+    with pytest.raises(ValueError, match="SQLite DATABASE__URL is not allowed"):
+        get_settings()
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+def test_prod_accepts_sqlite_database_url_only_with_explicit_override(
+    monkeypatch,
+) -> None:
+    _set_complete_prod_baseline(monkeypatch)
+    monkeypatch.setenv("DATABASE__URL", "sqlite+aiosqlite:///./prod.db")
+    monkeypatch.delenv("DATABASE__SSL_MODE", raising=False)
+    monkeypatch.setenv("DATABASE__ALLOW_SQLITE_IN_PROD", "true")
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.database.allow_sqlite_in_prod is True
+
+    reset_settings_cache()
+
+
 def test_prod_rejects_plaintext_redis_transport(monkeypatch) -> None:
     _set_complete_prod_baseline(monkeypatch)
     monkeypatch.setenv("REDIS__URL", "redis://redis.example:6379/0")
