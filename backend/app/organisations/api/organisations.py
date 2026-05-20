@@ -19,6 +19,8 @@ from app.core.rate_limit import (
     ORGANISATION_CREATE_POLICY,
     TENANT_READ_POLICY,
     TENANT_WRITE_POLICY,
+    BusinessRateLimiter,
+    check_authorized_tenant_write_business_rate_limit,
     rate_limit_dependency,
 )
 from app.memberships.schemas.memberships import (
@@ -50,6 +52,20 @@ PrincipalDep = Annotated[
     AuthenticatedPrincipal,
     Depends(require_authenticated_principal),
 ]
+
+
+def _tenant_write_business_rate_limiter(
+    *,
+    request: Request,
+    organisation_id: UUID,
+) -> BusinessRateLimiter:
+    async def _business_rate_limiter() -> None:
+        await check_authorized_tenant_write_business_rate_limit(
+            request=request,
+            organisation_id=organisation_id,
+        )
+
+    return _business_rate_limiter
 
 
 @router.post(
@@ -117,6 +133,10 @@ async def update_organisation(
         ),
         name=payload.name,
         slug=payload.slug,
+        business_rate_limiter=_tenant_write_business_rate_limiter(
+            request=request,
+            organisation_id=organisation_id,
+        ),
     )
     return OrganisationResponse.model_validate(organisation)
 
@@ -176,6 +196,10 @@ async def change_membership_role(
         ),
         membership_id=membership_id,
         role=payload.role,
+        business_rate_limiter=_tenant_write_business_rate_limiter(
+            request=request,
+            organisation_id=organisation_id,
+        ),
     )
     return MembershipResponse.model_validate(membership)
 
@@ -204,6 +228,10 @@ async def remove_membership(
         ),
         membership_id=membership_id,
         reason=payload.reason if payload is not None else None,
+        business_rate_limiter=_tenant_write_business_rate_limiter(
+            request=request,
+            organisation_id=organisation_id,
+        ),
     )
     return None
 
@@ -231,6 +259,10 @@ async def delete_organisation(
             actor_user_id=user.id, request=request
         ),
         reason=payload.reason if payload is not None else None,
+        business_rate_limiter=_tenant_write_business_rate_limiter(
+            request=request,
+            organisation_id=organisation_id,
+        ),
     )
 
 

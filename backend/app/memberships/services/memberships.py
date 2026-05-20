@@ -11,6 +11,7 @@ from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
 from app.audit.services.audit_events import AuditEventService
 from app.core.errors.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.rate_limit import BusinessRateLimiter
 from app.memberships.models.membership import Membership, MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 from app.organisations.services.organisations import OrganisationService
@@ -32,6 +33,13 @@ class MembershipService:
     ) -> None:
         if audit_context.actor_user_id != actor_user_id:
             raise ValueError("Audit actor does not match action actor")
+
+    @staticmethod
+    async def _run_business_rate_limiter(
+        business_rate_limiter: BusinessRateLimiter | None,
+    ) -> None:
+        if business_rate_limiter is not None:
+            await business_rate_limiter()
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -97,6 +105,7 @@ class MembershipService:
         audit_context: AuditContext,
         membership_id: UUID,
         role: MembershipRole,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Membership:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -109,6 +118,7 @@ class MembershipService:
                 audit_context=audit_context,
                 membership_id=membership_id,
                 role=role,
+                business_rate_limiter=business_rate_limiter,
             )
         async with self.session.begin():
             return await self._change_membership_role(
@@ -117,6 +127,7 @@ class MembershipService:
                 audit_context=audit_context,
                 membership_id=membership_id,
                 role=role,
+                business_rate_limiter=business_rate_limiter,
             )
 
     async def _change_membership_role(
@@ -127,6 +138,7 @@ class MembershipService:
         audit_context: AuditContext,
         membership_id: UUID,
         role: MembershipRole,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Membership:
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
         await self.user_service.ensure_user_is_active(actor_user)
@@ -150,6 +162,9 @@ class MembershipService:
             raise ForbiddenError(detail="Only owner can change membership roles")
         if target_membership.role == role:
             raise ConflictError(detail="Membership already has this role")
+
+        await self._run_business_rate_limiter(business_rate_limiter)
+
         old_role = target_membership.role
         updated = await self.membership_repository.update_role(
             target_membership, role=role
@@ -176,6 +191,7 @@ class MembershipService:
         audit_context: AuditContext,
         membership_id: UUID,
         reason: str | None = None,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Membership:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -188,6 +204,7 @@ class MembershipService:
                 audit_context=audit_context,
                 membership_id=membership_id,
                 reason=reason,
+                business_rate_limiter=business_rate_limiter,
             )
         async with self.session.begin():
             return await self._remove_membership(
@@ -196,6 +213,7 @@ class MembershipService:
                 audit_context=audit_context,
                 membership_id=membership_id,
                 reason=reason,
+                business_rate_limiter=business_rate_limiter,
             )
 
     async def _remove_membership(
@@ -206,6 +224,7 @@ class MembershipService:
         audit_context: AuditContext,
         membership_id: UUID,
         reason: str | None = None,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Membership:
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
         await self.user_service.ensure_user_is_active(actor_user)
@@ -223,19 +242,19 @@ class MembershipService:
         )
         if target_membership.role == MembershipRole.OWNER:
             raise ForbiddenError(detail="Owner membership cannot be removed")
-        removed = None
         if actor_membership.role == MembershipRole.OWNER:
-            removed = await self.membership_repository.deactivate_membership(
-                target_membership
-            )
+            pass
         elif actor_membership.role == MembershipRole.ADMIN:
             if target_membership.role != MembershipRole.MEMBER:
                 raise ForbiddenError(detail="Admin can remove only members")
-            removed = await self.membership_repository.deactivate_membership(
-                target_membership
-            )
         else:
             raise ForbiddenError(detail="You are not allowed to remove memberships")
+
+        await self._run_business_rate_limiter(business_rate_limiter)
+
+        removed = await self.membership_repository.deactivate_membership(
+            target_membership
+        )
         await AuditEventService(self.session).record_event(
             audit_context=audit_context,
             category=AuditCategory.TENANT,

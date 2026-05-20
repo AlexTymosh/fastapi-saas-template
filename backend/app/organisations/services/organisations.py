@@ -16,6 +16,7 @@ from app.core.errors.exceptions import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.rate_limit import BusinessRateLimiter
 from app.memberships.models.membership import MembershipRole
 from app.memberships.repositories.memberships import MembershipRepository
 from app.organisations.models.organisation import Organisation
@@ -32,6 +33,13 @@ class OrganisationService:
     ) -> None:
         if audit_context.actor_user_id != actor_user_id:
             raise ValueError("Audit actor does not match action actor")
+
+    @staticmethod
+    async def _run_business_rate_limiter(
+        business_rate_limiter: BusinessRateLimiter | None,
+    ) -> None:
+        if business_rate_limiter is not None:
+            await business_rate_limiter()
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -95,6 +103,7 @@ class OrganisationService:
         audit_context: AuditContext,
         name: str | None = None,
         slug: str | None = None,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Organisation:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -107,6 +116,7 @@ class OrganisationService:
                 audit_context=audit_context,
                 name=name,
                 slug=slug,
+                business_rate_limiter=business_rate_limiter,
             )
         async with self.session.begin():
             return await self._update_organisation_details(
@@ -115,6 +125,7 @@ class OrganisationService:
                 audit_context=audit_context,
                 name=name,
                 slug=slug,
+                business_rate_limiter=business_rate_limiter,
             )
 
     async def _update_organisation_details(
@@ -125,6 +136,7 @@ class OrganisationService:
         audit_context: AuditContext,
         name: str | None = None,
         slug: str | None = None,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
@@ -148,6 +160,9 @@ class OrganisationService:
         slug_changed = normalized_slug is not None and normalized_slug != previous_slug
         if not name_changed and not slug_changed:
             return organisation
+
+        await self._run_business_rate_limiter(business_rate_limiter)
+
         updated = None
         try:
             updated = await self.organisation_repository.update_details(
@@ -183,6 +198,7 @@ class OrganisationService:
         actor_user_id: UUID,
         audit_context: AuditContext,
         reason: str | None = None,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Organisation:
         self._ensure_audit_actor_matches(
             actor_user_id=actor_user_id,
@@ -194,6 +210,7 @@ class OrganisationService:
                 actor_user_id=actor_user_id,
                 audit_context=audit_context,
                 reason=reason,
+                business_rate_limiter=business_rate_limiter,
             )
         async with self.session.begin():
             return await self._soft_delete(
@@ -201,6 +218,7 @@ class OrganisationService:
                 actor_user_id=actor_user_id,
                 audit_context=audit_context,
                 reason=reason,
+                business_rate_limiter=business_rate_limiter,
             )
 
     async def _soft_delete(
@@ -210,6 +228,7 @@ class OrganisationService:
         actor_user_id: UUID,
         audit_context: AuditContext,
         reason: str | None = None,
+        business_rate_limiter: BusinessRateLimiter | None = None,
     ) -> Organisation:
         organisation = await self.get_organisation(organisation_id)
         actor_user = await self.user_service.get_user_by_id(actor_user_id)
@@ -229,6 +248,8 @@ class OrganisationService:
             raise ConflictError(
                 detail="Organisation must always have at least one owner"
             )
+
+        await self._run_business_rate_limiter(business_rate_limiter)
 
         previous_slug = organisation.slug
         await self.membership_repository.deactivate_organisation_memberships(
