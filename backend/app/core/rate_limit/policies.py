@@ -62,6 +62,15 @@ TENANT_WRITE_POLICY = RateLimitPolicySpec(
 )
 
 
+TENANT_WRITE_ORGANISATION_POLICY = RateLimitPolicySpec(
+    name="tenant_write_organisation",
+    default_limit=60,
+    default_window_seconds=60,
+    default_fail_open=False,
+    sensitivity="sensitive",
+)
+
+
 ORGANISATION_CREATE_POLICY = RateLimitPolicySpec(
     name="organisation_create",
     default_limit=5,

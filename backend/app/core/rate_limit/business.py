@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from uuid import UUID
 
@@ -18,7 +19,10 @@ from app.core.rate_limit.policies import (
     INVITE_CREATE_TARGET_EMAIL_POLICY,
     INVITE_RESEND_INVITE_POLICY,
     INVITE_RESEND_ORGANISATION_DAILY_POLICY,
+    TENANT_WRITE_ORGANISATION_POLICY,
 )
+
+BusinessRateLimiter = Callable[[], Awaitable[None]]
 
 
 def _normalised_email(value: str) -> str:
@@ -50,6 +54,28 @@ async def check_invite_accept_token_rate_limit(
         bucket=RateLimitBucket(
             kind="invite_accept_token",
             raw_value=f"token_sha256:{_token_fingerprint(token)}",
+        ),
+    )
+
+
+async def check_authorized_tenant_write_business_rate_limit(
+    *,
+    request: Request,
+    organisation_id: UUID,
+) -> None:
+    """Apply an organisation-wide tenant-write bucket after authorization.
+
+    Actor-level TENANT_WRITE_POLICY remains an endpoint dependency and protects
+    the API before DB access. This business-scope bucket must run only after the
+    service layer has proved that the actor can mutate the target organisation,
+    otherwise outsiders could poison a victim tenant's quota.
+    """
+    await check_rate_limit_for_bucket(
+        request=request,
+        policy=TENANT_WRITE_ORGANISATION_POLICY,
+        bucket=RateLimitBucket(
+            kind="organisation",
+            raw_value=f"organisation:{organisation_id}",
         ),
     )
 

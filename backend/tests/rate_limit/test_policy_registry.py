@@ -22,6 +22,7 @@ from app.core.rate_limit.policies import (
     PLATFORM_WRITE_POLICY,
     PRE_AUTH_POLICY,
     TENANT_READ_POLICY,
+    TENANT_WRITE_ORGANISATION_POLICY,
     TENANT_WRITE_POLICY,
     RateLimitPolicySpec,
 )
@@ -38,6 +39,7 @@ EXPECTED_POLICIES = {
     "authenticated_default": AUTHENTICATED_DEFAULT_POLICY,
     "tenant_read": TENANT_READ_POLICY,
     "tenant_write": TENANT_WRITE_POLICY,
+    "tenant_write_organisation": TENANT_WRITE_ORGANISATION_POLICY,
     "organisation_create": ORGANISATION_CREATE_POLICY,
     "invite_accept": INVITE_ACCEPT_POLICY,
     "invite_accept_token": INVITE_ACCEPT_TOKEN_POLICY,
@@ -110,6 +112,10 @@ def test_default_effective_policies_preserve_current_behaviour() -> None:
     assert registry["tenant_write"].item.get_expiry() == 60
     assert registry["tenant_write"].fail_open is False
 
+    assert registry["tenant_write_organisation"].item.amount == 60
+    assert registry["tenant_write_organisation"].item.get_expiry() == 60
+    assert registry["tenant_write_organisation"].fail_open is False
+
     assert registry["organisation_create"].item.amount == 5
     assert registry["organisation_create"].item.get_expiry() == 3600
     assert registry["organisation_create"].fail_open is False
@@ -171,6 +177,23 @@ def test_default_effective_policies_preserve_current_behaviour() -> None:
     assert registry["invite_resend_organisation_daily"].item.amount == 200
     assert registry["invite_resend_organisation_daily"].item.get_expiry() == 86400
     assert registry["invite_resend_organisation_daily"].fail_open is False
+
+
+def test_tenant_write_organisation_policy_can_be_overridden() -> None:
+    registry = build_effective_policy_registry(
+        _settings(
+            policies={
+                "tenant_write_organisation": RateLimitPolicyOverride(
+                    limit=10,
+                    window_seconds=60,
+                )
+            }
+        )
+    )
+
+    assert registry["tenant_write_organisation"].item.amount == 10
+    assert registry["tenant_write_organisation"].item.get_expiry() == 60
+    assert registry["tenant_write_organisation"].fail_open is False
 
 
 def test_duplicate_policy_names_are_rejected() -> None:
