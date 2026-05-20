@@ -53,6 +53,44 @@ def _assert_no_accept_success_side_effects(service: InviteService) -> None:
     service.outbox_service.publish_event.assert_not_awaited()
 
 
+def _prepare_authorised_resend_service(
+    service: InviteService,
+    *,
+    invite: Invite,
+    actor_user_id,
+    organisation_id,
+    actor_role: MembershipRole = MembershipRole.OWNER,
+) -> None:
+    service.user_service = AsyncMock()
+    service.user_service.get_user_by_id = AsyncMock(
+        return_value=User(external_auth_id="kc-1", email="owner@example.com")
+    )
+    service.user_service.ensure_user_is_active = AsyncMock()
+    service.organisation_service = AsyncMock()
+    service.organisation_service.get_organisation = AsyncMock(
+        return_value=Organisation(name="Acme", slug="acme")
+    )
+    service.membership_service = AsyncMock()
+    service.membership_service.membership_repository = AsyncMock()
+    service.membership_service.membership_repository.get_membership = AsyncMock(
+        return_value=Membership(
+            user_id=actor_user_id,
+            organisation_id=organisation_id,
+            role=actor_role,
+        )
+    )
+    service.invite_repository = AsyncMock()
+    service.invite_repository.get_invite_for_organisation = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.rotate_pending_invite_token = AsyncMock(
+        return_value=invite
+    )
+    service.invite_repository.mark_pending_invite_expired_by_id = AsyncMock(
+        return_value=invite
+    )
+
+
 @pytest.mark.parametrize(
     ("existing_invite_status", "expired_invite_returned"),
     [
@@ -110,7 +148,9 @@ def test_accept_invite_normalises_unusable_token_state_errors(
     assert exc_info.value.detail == "Invalid or expired invite"
     assert exc_info.value.status_code == 400
     assert str(exc_info.value.error_code) == "bad_request"
-    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
+    (
+        service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
+    )
     service.invite_repository.get_by_token_hash.assert_not_awaited()
     _assert_no_accept_success_side_effects(service)
 
@@ -240,7 +280,9 @@ def test_user_with_active_membership_cannot_accept_invite_to_another_organisatio
         role=MembershipRole.MEMBER,
     )
     service.membership_service.transfer_membership.assert_not_awaited()
-    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
+    (
+        service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
+    )
 
 
 @pytest.mark.authz
@@ -283,7 +325,9 @@ def test_user_already_in_same_organisation_cannot_accept_invite() -> None:
         )
 
     service.membership_service.create_membership.assert_awaited_once()
-    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
+    (
+        service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
+    )
 
 
 @pytest.mark.authz
@@ -341,7 +385,9 @@ def test_sole_owner_cannot_be_transferred_by_accepting_invite() -> None:
         role=MembershipRole.MEMBER,
     )
     service.membership_service.transfer_membership.assert_not_awaited()
-    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
+    (
+        service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_not_called()
+    )
 
 
 def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> None:
@@ -373,7 +419,9 @@ def test_accept_invite_rejects_expired_pending_invite_and_marks_expired() -> Non
         )
 
     assert exc_info.value.detail == "Invalid or expired invite"
-    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
+    (
+        service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
+    )
     service.user_service.get_or_create_current_user.assert_not_called()
 
 
@@ -407,7 +455,9 @@ def test_accept_invite_rejects_non_pending_expired_invite() -> None:
         )
 
     assert exc_info.value.detail == "Invalid or expired invite"
-    service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
+    (
+        service.invite_repository.mark_pending_invite_expired_by_token_hash.assert_awaited_once()
+    )
     service.user_service.get_or_create_current_user.assert_not_called()
 
 
@@ -470,52 +520,76 @@ def test_create_invite_rejects_owner_role() -> None:
 
 def test_resend_invite_rejects_expired_pending_invite_and_marks_expired() -> None:
     service = _service()
-    service.user_service = AsyncMock()
-    service.user_service.get_user_by_id = AsyncMock(
-        return_value=User(external_auth_id="kc-1", email="owner@example.com")
-    )
-    service.user_service.ensure_user_is_active = AsyncMock()
-    service.organisation_service = AsyncMock()
-    service.organisation_service.get_organisation = AsyncMock(
-        return_value=Organisation(name="Acme", slug="acme")
-    )
-    service.membership_service = AsyncMock()
-    service.membership_service.membership_repository = AsyncMock()
-    service.membership_service.membership_repository.get_membership = AsyncMock(
-        return_value=Membership(
-            user_id=uuid4(),
-            organisation_id=uuid4(),
-            role=MembershipRole.OWNER,
-        )
-    )
-    service.invite_repository = AsyncMock()
+    organisation_id = uuid4()
+    actor_user_id = uuid4()
     invite = Invite(
         email="invited@example.com",
-        organisation_id=uuid4(),
+        organisation_id=organisation_id,
         role=MembershipRole.MEMBER,
         status=InviteStatus.PENDING,
         token_hash="old",
         expires_at=datetime.now(UTC) - timedelta(minutes=5),
     )
-    service.invite_repository.get_invite_for_organisation = AsyncMock(
-        return_value=invite
+    _prepare_authorised_resend_service(
+        service,
+        invite=invite,
+        actor_user_id=actor_user_id,
+        organisation_id=organisation_id,
     )
-    service.invite_repository.rotate_pending_invite_token = AsyncMock(return_value=None)
-    service.invite_repository.mark_pending_invite_expired_by_id = AsyncMock(
-        return_value=invite
-    )
+
     with pytest.raises(ConflictError, match="Invite has expired"):
-        actor_user_id = uuid4()
         run_async(
             service.resend_invite(
-                organisation_id=uuid4(),
+                organisation_id=organisation_id,
                 invite_id=uuid4(),
                 actor_user_id=actor_user_id,
                 audit_context=AuditContext(actor_user_id=actor_user_id),
             )
         )
 
-    service.invite_repository.rotate_pending_invite_token.assert_awaited_once()
+    service.invite_repository.rotate_pending_invite_token.assert_not_awaited()
+    service.invite_repository.mark_pending_invite_expired_by_id.assert_awaited_once()
+    service.outbox_service.publish_event.assert_not_awaited()
+    assert invite.token_hash == "old"
+
+
+def test_resend_invite_rechecks_expiry_after_business_rate_limit() -> None:
+    service = _service()
+    organisation_id = uuid4()
+    actor_user_id = uuid4()
+    invite = Invite(
+        email="invited@example.com",
+        organisation_id=organisation_id,
+        role=MembershipRole.MEMBER,
+        status=InviteStatus.PENDING,
+        token_hash="old",
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    _prepare_authorised_resend_service(
+        service,
+        invite=invite,
+        actor_user_id=actor_user_id,
+        organisation_id=organisation_id,
+    )
+
+    async def _expire_invite_during_rate_limit() -> None:
+        invite.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    business_rate_limiter = AsyncMock(side_effect=_expire_invite_during_rate_limit)
+
+    with pytest.raises(ConflictError, match="Invite has expired"):
+        run_async(
+            service.resend_invite(
+                organisation_id=organisation_id,
+                invite_id=uuid4(),
+                actor_user_id=actor_user_id,
+                audit_context=AuditContext(actor_user_id=actor_user_id),
+                business_rate_limiter=business_rate_limiter,
+            )
+        )
+
+    business_rate_limiter.assert_awaited_once()
+    service.invite_repository.rotate_pending_invite_token.assert_not_awaited()
     service.invite_repository.mark_pending_invite_expired_by_id.assert_awaited_once()
     service.outbox_service.publish_event.assert_not_awaited()
     assert invite.token_hash == "old"

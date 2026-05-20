@@ -7,6 +7,7 @@ from app.core.rate_limit.policies import (
     AUDIT_READ_POLICY,
     AUTHENTICATED_DEFAULT_POLICY,
     INVITE_ACCEPT_POLICY,
+    INVITE_ACCEPT_TOKEN_POLICY,
     INVITE_CREATE_ORGANISATION_DAILY_POLICY,
     INVITE_CREATE_ORGANISATION_POLICY,
     INVITE_CREATE_POLICY,
@@ -39,6 +40,7 @@ EXPECTED_POLICIES = {
     "tenant_write": TENANT_WRITE_POLICY,
     "organisation_create": ORGANISATION_CREATE_POLICY,
     "invite_accept": INVITE_ACCEPT_POLICY,
+    "invite_accept_token": INVITE_ACCEPT_TOKEN_POLICY,
     "invite_create": INVITE_CREATE_POLICY,
     "invite_create_organisation": INVITE_CREATE_ORGANISATION_POLICY,
     "invite_create_organisation_daily": INVITE_CREATE_ORGANISATION_DAILY_POLICY,
@@ -132,6 +134,11 @@ def test_default_effective_policies_preserve_current_behaviour() -> None:
     assert registry["invite_accept"].item.multiples == 5
     assert registry["invite_accept"].item.get_expiry() == 300
     assert registry["invite_accept"].fail_open is False
+
+    assert registry["invite_accept_token"].item.amount == 5
+    assert registry["invite_accept_token"].item.multiples == 5
+    assert registry["invite_accept_token"].item.get_expiry() == 300
+    assert registry["invite_accept_token"].fail_open is False
 
     assert registry["invite_create"].item.amount == 20
     assert registry["invite_create"].item.get_expiry() == 3600

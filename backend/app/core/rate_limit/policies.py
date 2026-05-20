@@ -106,6 +106,16 @@ INVITE_ACCEPT_POLICY = RateLimitPolicySpec(
     sensitivity="critical",
 )
 
+
+INVITE_ACCEPT_TOKEN_POLICY = RateLimitPolicySpec(
+    name="invite_accept_token",
+    default_limit=5,
+    default_window_seconds=300,
+    default_fail_open=False,
+    sensitivity="critical",
+)
+
+
 INVITE_CREATE_POLICY = RateLimitPolicySpec(
     name="invite_create",
     default_limit=20,
@@ -113,6 +123,7 @@ INVITE_CREATE_POLICY = RateLimitPolicySpec(
     default_fail_open=False,
     sensitivity="sensitive",
 )
+
 
 INVITE_CREATE_ORGANISATION_POLICY = RateLimitPolicySpec(
     name="invite_create_organisation",
@@ -122,6 +133,7 @@ INVITE_CREATE_ORGANISATION_POLICY = RateLimitPolicySpec(
     sensitivity="sensitive",
 )
 
+
 INVITE_CREATE_ORGANISATION_DAILY_POLICY = RateLimitPolicySpec(
     name="invite_create_organisation_daily",
     default_limit=200,
@@ -129,6 +141,7 @@ INVITE_CREATE_ORGANISATION_DAILY_POLICY = RateLimitPolicySpec(
     default_fail_open=False,
     sensitivity="critical",
 )
+
 
 INVITE_CREATE_TARGET_EMAIL_POLICY = RateLimitPolicySpec(
     name="invite_create_target_email",
@@ -138,6 +151,7 @@ INVITE_CREATE_TARGET_EMAIL_POLICY = RateLimitPolicySpec(
     sensitivity="critical",
 )
 
+
 INVITE_CREATE_TARGET_DOMAIN_POLICY = RateLimitPolicySpec(
     name="invite_create_target_domain",
     default_limit=50,
@@ -146,6 +160,7 @@ INVITE_CREATE_TARGET_DOMAIN_POLICY = RateLimitPolicySpec(
     sensitivity="sensitive",
 )
 
+
 INVITE_RESEND_INVITE_POLICY = RateLimitPolicySpec(
     name="invite_resend_invite",
     default_limit=5,
@@ -153,6 +168,7 @@ INVITE_RESEND_INVITE_POLICY = RateLimitPolicySpec(
     default_fail_open=False,
     sensitivity="sensitive",
 )
+
 
 INVITE_RESEND_ORGANISATION_DAILY_POLICY = RateLimitPolicySpec(
     name="invite_resend_organisation_daily",
@@ -170,6 +186,7 @@ PLATFORM_WRITE_POLICY = RateLimitPolicySpec(
     default_fail_open=False,
     sensitivity="critical",
 )
+
 
 PLATFORM_STAFF_WRITE_POLICY = RateLimitPolicySpec(
     name="platform_staff_write",
