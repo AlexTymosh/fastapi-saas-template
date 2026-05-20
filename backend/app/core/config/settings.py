@@ -73,6 +73,10 @@ def _url_query_value(value: str | None, key: str) -> str | None:
     return None
 
 
+def _is_sqlite_database_url(value: str | None) -> bool:
+    return _url_scheme(value).startswith("sqlite")
+
+
 def _is_secure_database_transport(database: DatabaseSettings) -> bool:
     if not database.url:
         return True
@@ -154,6 +158,7 @@ class DatabaseSettings(BaseModel):
         | None
     ) = None
     allow_plaintext_private_network: bool = False
+    allow_sqlite_in_prod: bool = False
 
     @field_validator("ssl_mode", mode="before")
     @classmethod
@@ -570,6 +575,15 @@ class Settings(BaseSettings):
             )
 
     def _validate_production_transport_security(self) -> None:
+        if (
+            _is_sqlite_database_url(self.database.url)
+            and not self.database.allow_sqlite_in_prod
+        ):
+            raise ValueError(
+                "SQLite DATABASE__URL is not allowed in prod unless "
+                "DATABASE__ALLOW_SQLITE_IN_PROD=true"
+            )
+
         if (
             not self.database.allow_plaintext_private_network
             and not _is_secure_database_transport(self.database)

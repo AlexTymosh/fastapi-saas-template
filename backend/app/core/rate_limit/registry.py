@@ -116,6 +116,28 @@ def _apply_override(
     )
 
 
+def _force_policy_fail_closed(policy: RateLimitPolicy) -> RateLimitPolicy:
+    if not policy.fail_open:
+        return policy
+
+    return RateLimitPolicy(
+        name=policy.name,
+        item=policy.item,
+        fail_open=False,
+        sensitivity=policy.sensitivity,
+        override_applied=policy.override_applied,
+    )
+
+
+def _should_force_fail_closed_in_environment(
+    *, settings: Settings, spec: RateLimitPolicySpec
+) -> bool:
+    return (
+        settings.app.environment in {"staging", "prod"}
+        and spec.name == PRE_AUTH_POLICY.name
+    )
+
+
 _REGISTERED_POLICY_SPECS: tuple[RateLimitPolicySpec, ...] = (
     PRE_AUTH_POLICY,
     AUTHENTICATED_DEFAULT_POLICY,
@@ -163,14 +185,18 @@ def build_effective_policy_registry(settings: Settings) -> dict[str, RateLimitPo
             "Unknown rate limit policy override name(s): " + ", ".join(unknown_names)
         )
 
-    return {
-        spec.name: _apply_override(
+    registry: dict[str, RateLimitPolicy] = {}
+    for spec in _REGISTERED_POLICY_SPECS:
+        policy = _apply_override(
             spec=spec,
             mode=settings.rate_limiting.mode,
             override=overrides.get(spec.name),
         )
-        for spec in _REGISTERED_POLICY_SPECS
-    }
+        if _should_force_fail_closed_in_environment(settings=settings, spec=spec):
+            policy = _force_policy_fail_closed(policy)
+        registry[spec.name] = policy
+
+    return registry
 
 
 def get_effective_rate_limit_policy(app: FastAPI, policy_name: str) -> RateLimitPolicy:
