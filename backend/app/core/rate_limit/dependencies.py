@@ -4,6 +4,7 @@ import asyncio
 import math
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -33,6 +34,14 @@ from app.core.rate_limit.policies import (
 from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
 log = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _PreparedRateLimitCheck:
+    policy: RateLimitPolicy
+    identifier: RateLimitIdentifier
+    namespace: str
+    started_at: float
 
 
 async def _await_with_timeout(awaitable: Awaitable[Any], timeout_seconds: float) -> Any:
@@ -73,6 +82,134 @@ def _record_rate_limit_outcome(
     )
 
 
+def _rate_limit_namespace(
+    *,
+    redis_prefix: str,
+    policy: RateLimitPolicy,
+    identifier: RateLimitIdentifier,
+) -> str:
+    return f"{redis_prefix}:{policy.name}:{identifier.kind}"
+
+
+def _record_runtime_unavailable(
+    *,
+    policy_name: str,
+    started_at: float,
+) -> None:
+    record_rate_limit_backend_error(
+        policy_name=policy_name,
+        identifier_kind="unknown",
+        error_type="RuntimeUnavailable",
+    )
+    _record_rate_limit_outcome(
+        policy_name=policy_name,
+        result="runtime_unavailable",
+        identifier_kind="unknown",
+        started_at=started_at,
+    )
+
+
+def _raise_runtime_unavailable(
+    *,
+    policy_name: str,
+    started_at: float,
+    detail: str = "Rate limiter is unavailable.",
+) -> None:
+    _record_runtime_unavailable(policy_name=policy_name, started_at=started_at)
+    raise RateLimiterUnavailableError(detail=detail)
+
+
+async def _retry_after_for_identifier(
+    *,
+    request: Request,
+    policy: RateLimitPolicy,
+    namespace: str,
+    identifier: RateLimitIdentifier,
+) -> str:
+    settings = _settings_from_request(request)
+    try:
+        window = await _await_with_timeout(
+            _runtime_from_request(request).limiter.get_window_stats(
+                policy.item,
+                namespace,
+                identifier.bucket_key,
+            ),
+            timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
+        )
+        return _build_retry_after(window.reset_time)
+    except (
+        RedisConnectionError,
+        RedisTimeoutError,
+        TimeoutError,
+        RuntimeError,
+        AttributeError,
+    ):
+        return str(policy.item.get_expiry())
+
+
+async def _raise_too_many_requests(
+    *,
+    request: Request,
+    policy: RateLimitPolicy,
+    namespace: str,
+    identifier: RateLimitIdentifier,
+) -> None:
+    retry_after = await _retry_after_for_identifier(
+        request=request,
+        policy=policy,
+        namespace=namespace,
+        identifier=identifier,
+    )
+    raise TooManyRequestsError(
+        detail="Too many requests.",
+        headers={
+            "Retry-After": retry_after,
+            "Access-Control-Expose-Headers": "Retry-After",
+        },
+    )
+
+
+async def _handle_rate_limit_backend_error(
+    *,
+    request: Request,
+    policy: RateLimitPolicy,
+    identifier: RateLimitIdentifier,
+    started_at: float,
+    exc: Exception,
+) -> bool:
+    record_rate_limit_backend_error(
+        policy_name=policy.name,
+        identifier_kind=identifier.kind,
+        error_type=exc.__class__.__name__,
+    )
+
+    if policy.fail_open:
+        _record_rate_limit_outcome(
+            policy_name=policy.name,
+            result="fail_open",
+            identifier_kind=identifier.kind,
+            started_at=started_at,
+        )
+        log.warning(
+            "rate_limiter_fail_open",
+            policy=policy.name,
+            identifier_kind=identifier.kind,
+            reason=exc.__class__.__name__,
+            category="security",
+        )
+        return True
+
+    _record_rate_limit_outcome(
+        policy_name=policy.name,
+        result="backend_error",
+        identifier_kind=identifier.kind,
+        started_at=started_at,
+    )
+    raise RateLimiterUnavailableError(
+        detail="Rate limiter is temporarily unavailable.",
+    ) from exc
+
+
 async def _check_rate_limit_for_identifier(
     *,
     request: Request,
@@ -84,27 +221,20 @@ async def _check_rate_limit_for_identifier(
     runtime = _runtime_from_request(request)
 
     if runtime is None or runtime.limiter is None:
-        record_rate_limit_backend_error(
+        _raise_runtime_unavailable(
             policy_name=policy.name,
-            identifier_kind="unknown",
-            error_type="RuntimeUnavailable",
-        )
-        _record_rate_limit_outcome(
-            policy_name=policy.name,
-            result="runtime_unavailable",
-            identifier_kind="unknown",
             started_at=started_at,
         )
-        raise RateLimiterUnavailableError(
-            detail="Rate limiter is unavailable.",
-        )
 
-    namespace = f"{settings.rate_limiting.redis_prefix}:{policy.name}:{identifier.kind}"
-    item = policy.item
+    namespace = _rate_limit_namespace(
+        redis_prefix=settings.rate_limiting.redis_prefix,
+        policy=policy,
+        identifier=identifier,
+    )
 
     try:
         allowed = await _await_with_timeout(
-            runtime.limiter.hit(item, namespace, identifier.bucket_key),
+            runtime.limiter.hit(policy.item, namespace, identifier.bucket_key),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
     except (
@@ -113,37 +243,15 @@ async def _check_rate_limit_for_identifier(
         TimeoutError,
         RuntimeError,
     ) as exc:
-        record_rate_limit_backend_error(
-            policy_name=policy.name,
-            identifier_kind=identifier.kind,
-            error_type=exc.__class__.__name__,
-        )
-
-        if policy.fail_open:
-            _record_rate_limit_outcome(
-                policy_name=policy.name,
-                result="fail_open",
-                identifier_kind=identifier.kind,
-                started_at=started_at,
-            )
-            log.warning(
-                "rate_limiter_fail_open",
-                policy=policy.name,
-                identifier_kind=identifier.kind,
-                reason=exc.__class__.__name__,
-                category="security",
-            )
-            return
-
-        _record_rate_limit_outcome(
-            policy_name=policy.name,
-            result="backend_error",
-            identifier_kind=identifier.kind,
+        if await _handle_rate_limit_backend_error(
+            request=request,
+            policy=policy,
+            identifier=identifier,
             started_at=started_at,
-        )
-        raise RateLimiterUnavailableError(
-            detail="Rate limiter is temporarily unavailable.",
-        ) from exc
+            exc=exc,
+        ):
+            return
+        raise  # pragma: no cover
 
     if allowed:
         _record_rate_limit_outcome(
@@ -160,31 +268,83 @@ async def _check_rate_limit_for_identifier(
         identifier_kind=identifier.kind,
         started_at=started_at,
     )
+    await _raise_too_many_requests(
+        request=request,
+        policy=policy,
+        namespace=namespace,
+        identifier=identifier,
+    )
+
+
+async def _test_rate_limit_for_identifier(
+    *,
+    request: Request,
+    policy: RateLimitPolicy,
+    identifier: RateLimitIdentifier,
+    namespace: str,
+    started_at: float,
+) -> None:
+    """Check a bucket without consuming quota.
+
+    This is used for grouped business buckets so a later depleted bucket cannot
+    burn earlier buckets before the request is denied. The production `limits`
+    async strategies expose `test()`. Some lightweight test doubles may not; in
+    that case we fall back to the historical behaviour for compatibility.
+    """
+    settings = _settings_from_request(request)
+    runtime = _runtime_from_request(request)
+
+    if runtime is None or runtime.limiter is None:
+        _raise_runtime_unavailable(
+            policy_name=policy.name,
+            started_at=started_at,
+        )
+
+    test_method = getattr(runtime.limiter, "test", None)
+    if not callable(test_method):
+        return
 
     try:
-        window = await _await_with_timeout(
-            runtime.limiter.get_window_stats(
-                item,
-                namespace,
-                identifier.bucket_key,
-            ),
+        allowed = await _await_with_timeout(
+            test_method(policy.item, namespace, identifier.bucket_key),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
-        retry_after = _build_retry_after(window.reset_time)
     except (
         RedisConnectionError,
         RedisTimeoutError,
         TimeoutError,
         RuntimeError,
-    ):
-        retry_after = str(policy.item.get_expiry())
+    ) as exc:
+        if await _handle_rate_limit_backend_error(
+            request=request,
+            policy=policy,
+            identifier=identifier,
+            started_at=started_at,
+            exc=exc,
+        ):
+            return
+        raise  # pragma: no cover
 
-    raise TooManyRequestsError(
-        detail="Too many requests.",
-        headers={
-            "Retry-After": retry_after,
-            "Access-Control-Expose-Headers": "Retry-After",
-        },
+    if allowed:
+        _record_rate_limit_outcome(
+            policy_name=policy.name,
+            result="preflight_allowed",
+            identifier_kind=identifier.kind,
+            started_at=started_at,
+        )
+        return
+
+    _record_rate_limit_outcome(
+        policy_name=policy.name,
+        result="preflight_blocked",
+        identifier_kind=identifier.kind,
+        started_at=started_at,
+    )
+    await _raise_too_many_requests(
+        request=request,
+        policy=policy,
+        namespace=namespace,
+        identifier=identifier,
     )
 
 
@@ -224,17 +384,13 @@ def _identifier_secret_or_error(
     return str(identifier_secret)
 
 
-async def check_rate_limit_for_bucket(
+def _prepare_bucket_rate_limit_check(
     *,
     request: Request,
     bucket: RateLimitBucket,
     policy: RateLimitPolicy | RateLimitPolicySpec,
-) -> None:
+) -> _PreparedRateLimitCheck:
     settings = _settings_from_request(request)
-
-    if not settings.rate_limiting.enabled:
-        return
-
     effective_policy = _effective_policy(request=request, policy=policy)
     started_at = time.perf_counter()
     identifier_secret = _identifier_secret_or_error(
@@ -246,11 +402,40 @@ async def check_rate_limit_for_bucket(
         bucket=bucket,
         identifier_secret=identifier_secret,
     )
-    await _check_rate_limit_for_identifier(
-        request=request,
+    namespace = _rate_limit_namespace(
+        redis_prefix=settings.rate_limiting.redis_prefix,
         policy=effective_policy,
         identifier=identifier,
+    )
+    return _PreparedRateLimitCheck(
+        policy=effective_policy,
+        identifier=identifier,
+        namespace=namespace,
         started_at=started_at,
+    )
+
+
+async def check_rate_limit_for_bucket(
+    *,
+    request: Request,
+    bucket: RateLimitBucket,
+    policy: RateLimitPolicy | RateLimitPolicySpec,
+) -> None:
+    settings = _settings_from_request(request)
+
+    if not settings.rate_limiting.enabled:
+        return
+
+    prepared = _prepare_bucket_rate_limit_check(
+        request=request,
+        bucket=bucket,
+        policy=policy,
+    )
+    await _check_rate_limit_for_identifier(
+        request=request,
+        policy=prepared.policy,
+        identifier=prepared.identifier,
+        started_at=prepared.started_at,
     )
 
 
@@ -259,11 +444,40 @@ async def check_rate_limits_for_buckets(
     request: Request,
     checks: list[tuple[RateLimitPolicy | RateLimitPolicySpec, RateLimitBucket]],
 ) -> None:
-    for policy, bucket in checks:
-        await check_rate_limit_for_bucket(
+    settings = _settings_from_request(request)
+
+    if not settings.rate_limiting.enabled:
+        return
+    if not checks:
+        return
+
+    prepared_checks = [
+        _prepare_bucket_rate_limit_check(
             request=request,
             bucket=bucket,
             policy=policy,
+        )
+        for policy, bucket in checks
+    ]
+
+    # All grouped business buckets are preflighted first. Only if every bucket
+    # can be consumed do we mutate any quota via hit(). This prevents earlier
+    # buckets from being burned when a later bucket rejects the request.
+    for prepared in prepared_checks:
+        await _test_rate_limit_for_identifier(
+            request=request,
+            policy=prepared.policy,
+            identifier=prepared.identifier,
+            namespace=prepared.namespace,
+            started_at=prepared.started_at,
+        )
+
+    for prepared in prepared_checks:
+        await _check_rate_limit_for_identifier(
+            request=request,
+            policy=prepared.policy,
+            identifier=prepared.identifier,
+            started_at=prepared.started_at,
         )
 
 
