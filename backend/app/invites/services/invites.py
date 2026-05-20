@@ -304,12 +304,9 @@ class InviteService:
                 raise ForbiddenError(detail="Admin can resend member invites only")
 
             now = datetime.now(UTC)
-            if self._is_expired(expires_at=invite.expires_at):
-                mark_expired_by_id = (
-                    self.invite_repository.mark_pending_invite_expired_by_id
-                )
-                expired = await mark_expired_by_id(
-                    invite_id=invite.id,
+            if self._is_expired_at(expires_at=invite.expires_at, now=now):
+                expired = await self._mark_pending_invite_expired_by_id(
+                    invite=invite,
                     organisation_id=organisation_id,
                     now=now,
                 )
@@ -320,6 +317,21 @@ class InviteService:
             # Consume invite/organisation resend buckets only after the actor is
             # authorised and the invite is a valid mutable pending invite.
             await self._run_business_rate_limiter(business_rate_limiter)
+
+            # Recompute the decision timestamp after every awaited pre-mutation
+            # operation. The repository predicate compares expires_at to this
+            # timestamp, so reusing the pre-rate-limit value can rotate an invite
+            # that expired while Redis/rate-limit checks were in progress.
+            now = datetime.now(UTC)
+            if self._is_expired_at(expires_at=invite.expires_at, now=now):
+                expired = await self._mark_pending_invite_expired_by_id(
+                    invite=invite,
+                    organisation_id=organisation_id,
+                    now=now,
+                )
+                if expired is not None:
+                    raise ConflictError(detail="Invite has expired")
+                raise ConflictError(detail="Only pending invite can be resent")
 
             token = token_urlsafe(32)
             token_hash = self._token_hash(token)
@@ -332,10 +344,11 @@ class InviteService:
                 now=now,
             )
             if rotated is None:
-                expired = (
-                    await self.invite_repository.mark_pending_invite_expired_by_id(
-                        invite_id=invite.id, organisation_id=organisation_id, now=now
-                    )
+                retry_now = datetime.now(UTC)
+                expired = await self._mark_pending_invite_expired_by_id(
+                    invite=invite,
+                    organisation_id=organisation_id,
+                    now=retry_now,
                 )
                 if expired is not None:
                     raise ConflictError(detail="Invite has expired")
@@ -366,6 +379,20 @@ class InviteService:
             )
         return rotated
 
+    async def _mark_pending_invite_expired_by_id(
+        self,
+        *,
+        invite: Invite,
+        organisation_id: UUID,
+        now: datetime,
+    ) -> Invite | None:
+        mark_expired_by_id = self.invite_repository.mark_pending_invite_expired_by_id
+        return await mark_expired_by_id(
+            invite_id=invite.id,
+            organisation_id=organisation_id,
+            now=now,
+        )
+
     @staticmethod
     def _normalize_utc(value: datetime | None) -> datetime | None:
         if value is None:
@@ -375,11 +402,19 @@ class InviteService:
         )
 
     @staticmethod
-    def _is_expired(*, expires_at: datetime | None) -> bool:
+    def _is_expired_at(*, expires_at: datetime | None, now: datetime) -> bool:
         normalized_expires_at = InviteService._normalize_utc(expires_at)
+        normalized_now = InviteService._normalize_utc(now)
         return (
             normalized_expires_at is not None
-            and normalized_expires_at <= datetime.now(UTC)
+            and normalized_expires_at <= normalized_now
+        )
+
+    @staticmethod
+    def _is_expired(*, expires_at: datetime | None) -> bool:
+        return InviteService._is_expired_at(
+            expires_at=expires_at,
+            now=datetime.now(UTC),
         )
 
 
