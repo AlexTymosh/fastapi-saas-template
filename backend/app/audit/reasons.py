@@ -19,21 +19,27 @@ class OperationalReasonCode(StrEnum):
 
 
 def normalise_legacy_reason(
-    value: str | None,
+    value: object | None,
     *,
     required: bool,
 ) -> OperationalReasonCode | None:
-    """Map legacy free-text reason payloads to a safe persisted reason code.
+    """Map submitted reason payloads to a safe persisted reason code.
 
-    Existing clients may still submit the old ``reason`` field. The raw value is
-    accepted only as input compatibility and is never returned to service code for
-    persistence.
+    New clients should submit ``reason_code``. Existing clients may still submit
+    the old ``reason`` field, but arbitrary free text is accepted only as input
+    compatibility and is never returned to service code for persistence.
     """
+
+    if isinstance(value, OperationalReasonCode):
+        return value
 
     if value is None:
         if required:
             raise ValueError("reason_code is required")
         return None
+
+    if not isinstance(value, str):
+        raise ValueError("reason_code must be a string")
 
     normalised = value.strip()
     if not normalised:

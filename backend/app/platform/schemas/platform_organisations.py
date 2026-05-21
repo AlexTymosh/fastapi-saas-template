@@ -1,7 +1,14 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason
 from app.organisations.models.organisation import OrganisationStatus
@@ -34,17 +41,17 @@ class PlatformOrganisationPatchRequest(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
-    reason_code: OperationalReasonCode | None = None
-    legacy_reason: str | None = Field(
-        default=None,
-        validation_alias="reason",
-        exclude=True,
-        max_length=500,
+    reason_code: OperationalReasonCode = Field(
+        validation_alias=AliasChoices("reason_code", "reason"),
+        description=(
+            "Structured operational reason code. The legacy 'reason' input "
+            "field is accepted for backward compatibility and arbitrary legacy "
+            "free text is persisted as 'other'."
+        ),
     )
 
     @property
     def reason(self) -> str:
-        assert self.reason_code is not None
         return self.reason_code.value
 
     @field_validator("name")
@@ -64,16 +71,17 @@ class PlatformOrganisationPatchRequest(BaseModel):
             return None
         return normalize_and_validate_slug(value)
 
+    @field_validator("reason_code", mode="before")
+    @classmethod
+    def normalise_reason_code(cls, value: object) -> OperationalReasonCode:
+        reason_code = normalise_legacy_reason(value, required=True)
+        assert reason_code is not None
+        return reason_code
+
     @model_validator(mode="after")
     def check_any_profile_field(self):
         if self.name is None and self.slug is None:
             raise ValueError("At least one of 'name' or 'slug' must be provided")
-        if self.reason_code is None:
-            reason_code = normalise_legacy_reason(
-                self.legacy_reason,
-                required=True,
-            )
-            object.__setattr__(self, "reason_code", reason_code)
         return self
 
 

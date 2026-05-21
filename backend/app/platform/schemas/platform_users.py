@@ -1,7 +1,14 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+)
 
 from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason
 from app.users.models.user import UserStatus
@@ -10,27 +17,24 @@ from app.users.models.user import UserStatus
 class ReasonRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reason_code: OperationalReasonCode | None = None
-    legacy_reason: str | None = Field(
-        default=None,
-        validation_alias="reason",
-        exclude=True,
-        max_length=500,
+    reason_code: OperationalReasonCode = Field(
+        validation_alias=AliasChoices("reason_code", "reason"),
+        description=(
+            "Structured operational reason code. The legacy 'reason' input "
+            "field is accepted for backward compatibility and arbitrary legacy "
+            "free text is persisted as 'other'."
+        ),
     )
 
-    @model_validator(mode="after")
-    def require_reason_code(self):
-        if self.reason_code is None:
-            reason_code = normalise_legacy_reason(
-                self.legacy_reason,
-                required=True,
-            )
-            object.__setattr__(self, "reason_code", reason_code)
-        return self
+    @field_validator("reason_code", mode="before")
+    @classmethod
+    def normalise_reason_code(cls, value: object) -> OperationalReasonCode:
+        reason_code = normalise_legacy_reason(value, required=True)
+        assert reason_code is not None
+        return reason_code
 
     @property
     def reason(self) -> str:
-        assert self.reason_code is not None
         return self.reason_code.value
 
 

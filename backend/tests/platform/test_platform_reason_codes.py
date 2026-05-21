@@ -15,6 +15,12 @@ def test_reason_request_requires_structured_reason_code() -> None:
     assert payload.reason == "security_incident"
 
 
+def test_reason_request_schema_marks_reason_code_required() -> None:
+    schema = ReasonRequest.model_json_schema(mode="validation")
+
+    assert schema["required"] == ["reason_code"]
+
+
 def test_legacy_free_text_reason_is_never_persisted_as_raw_text() -> None:
     payload = ReasonRequest(reason="patient asked to pause treatment")
 
@@ -39,6 +45,12 @@ def test_platform_organisation_patch_uses_reason_code_property() -> None:
     )
 
     assert payload.reason == "data_correction"
+
+
+def test_platform_organisation_patch_schema_marks_reason_code_required() -> None:
+    schema = PlatformOrganisationPatchRequest.model_json_schema(mode="validation")
+
+    assert schema["required"] == ["reason_code"]
 
 
 def test_revoke_invite_reason_code_is_optional_but_structured_when_present() -> None:
