@@ -7,6 +7,7 @@ from sqlalchemy import inspect, select
 from starlette.requests import Request
 
 from app.audit.context import AuditContext, build_audit_context_from_request
+from app.audit.minimisation import minimise_ip_address, normalise_user_agent
 from app.audit.models.audit_event import (
     AuditAction,
     AuditCategory,
@@ -19,12 +20,16 @@ from tests.helpers.asyncio_runner import run_async
 pytestmark = [pytest.mark.security]
 
 
-def test_audit_service_persists_event(migrated_session_factory) -> None:
+def test_audit_service_persists_minimised_network_context(
+    migrated_session_factory,
+) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:
             event = await AuditEventService(session).record_event(
                 audit_context=AuditContext(
-                    actor_user_id=None, ip_address="127.0.0.1", user_agent="pytest"
+                    actor_user_id=None,
+                    ip_address="127.0.0.1",
+                    user_agent="pytest",
                 ),
                 category=AuditCategory.TENANT,
                 action=AuditAction.ORGANISATION_UPDATED,
@@ -36,7 +41,8 @@ def test_audit_service_persists_event(migrated_session_factory) -> None:
             assert event.id is not None
             assert event.category == "tenant"
             assert event.metadata_json == {"changed_fields": ["slug"]}
-            assert event.ip_address == "127.0.0.1"
+            assert event.ip_address == "127.0.0.0/24"
+            assert event.user_agent == "client:test"
 
     run_async(_run())
 
@@ -64,11 +70,43 @@ def test_build_audit_context_uses_client_host_and_ignores_xff() -> None:
     assert context.user_agent == "pytest-agent"
 
 
-def test_audit_service_truncates_user_agent_to_512(migrated_session_factory) -> None:
+def test_audit_ip_minimisation_supports_hmac_identifier() -> None:
+    minimised = minimise_ip_address("203.0.113.42", secret="x" * 32)
+
+    assert minimised is not None
+    assert minimised.startswith("hmac:v1:")
+    assert len(minimised) == 40
+    assert "203.0.113.42" not in minimised
+
+
+def test_audit_ip_minimisation_uses_network_without_secret() -> None:
+    assert minimise_ip_address("203.0.113.42") == "203.0.113.0/24"
+    assert (
+        minimise_ip_address("2001:db8:abcd:1234:ffff::1") == "2001:db8:abcd:1234::/64"
+    )
+
+
+def test_user_agent_normalisation_does_not_store_full_header() -> None:
+    raw = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+    )
+
+    assert normalise_user_agent(raw) == "browser:chrome"
+    assert normalise_user_agent(raw) != raw
+
+
+def test_audit_service_normalises_user_agent_family(migrated_session_factory) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:
             event = await AuditEventService(session).record_event(
-                audit_context=AuditContext(actor_user_id=None, user_agent="x" * 600),
+                audit_context=AuditContext(
+                    actor_user_id=None,
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                ),
                 category=AuditCategory.TENANT,
                 action=AuditAction.ORGANISATION_UPDATED,
                 target_type=AuditTargetType.ORGANISATION,
@@ -79,26 +117,27 @@ def test_audit_service_truncates_user_agent_to_512(migrated_session_factory) -> 
                 select(AuditEvent).where(AuditEvent.id == event.id)
             )
             saved = result.scalar_one()
-            assert len(saved.user_agent) == 512
+            assert saved.user_agent == "browser:chrome"
 
     run_async(_run())
 
 
-def test_ip_address_too_long_raises_and_does_not_persist(
-    migrated_session_factory,
-) -> None:
+def test_invalid_ip_address_is_not_persisted(migrated_session_factory) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:
-            with pytest.raises(ValueError, match="Audit IP address exceeds max length"):
-                await AuditEventService(session).record_event(
-                    audit_context=AuditContext(actor_user_id=None, ip_address="x" * 46),
-                    category=AuditCategory.TENANT,
-                    action=AuditAction.ORGANISATION_UPDATED,
-                    target_type=AuditTargetType.ORGANISATION,
-                    target_id=uuid4(),
-                )
-            result = await session.execute(select(AuditEvent))
-            assert list(result.scalars().all()) == []
+            event = await AuditEventService(session).record_event(
+                audit_context=AuditContext(actor_user_id=None, ip_address="not-an-ip"),
+                category=AuditCategory.TENANT,
+                action=AuditAction.ORGANISATION_UPDATED,
+                target_type=AuditTargetType.ORGANISATION,
+                target_id=uuid4(),
+            )
+            await session.commit()
+            result = await session.execute(
+                select(AuditEvent).where(AuditEvent.id == event.id)
+            )
+            saved = result.scalar_one()
+            assert saved.ip_address is None
 
     run_async(_run())
 

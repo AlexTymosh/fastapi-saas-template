@@ -132,8 +132,8 @@ def test_full_audit_reader_receives_sensitive_fields(
     payload = next(row for row in rows if row["id"] == str(event.id))
     assert payload["actor_user_id"] == str(admin.id)
     assert payload["metadata_json"] == {"case_id": "SEC-123"}
-    assert payload["ip_address"] == "203.0.113.10"
-    assert payload["user_agent"] == "SensitiveBrowser/1.0"
+    assert payload["ip_address"] == "203.0.113.0/24"
+    assert payload["user_agent"] == "client:other"
     assert payload["reason"] == "Sensitive free-text reason"
 
 
