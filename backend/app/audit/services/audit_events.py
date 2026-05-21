@@ -14,7 +14,6 @@ from app.audit.models.audit_event import (
     AuditTargetType,
 )
 from app.audit.repositories.audit_events import AuditEventRepository
-from app.core.config.settings import get_settings
 
 _FORBIDDEN_KEYS = {
     "token",
@@ -66,10 +65,9 @@ class AuditEventService:
         metadata_json: dict[str, object] | None = None,
     ) -> AuditEvent:
         validated_metadata = self._validate_metadata_json(metadata_json)
-        settings = get_settings()
         ip_address = minimise_ip_address(
             audit_context.ip_address,
-            secret=settings.audit.network_identifier_secret,
+            secret=audit_context.network_identifier_secret,
         )
         user_agent = normalise_user_agent(audit_context.user_agent)
 

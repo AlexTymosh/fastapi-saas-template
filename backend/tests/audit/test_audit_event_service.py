@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,7 @@ from app.audit.models.audit_event import (
     AuditTargetType,
 )
 from app.audit.services.audit_events import AuditEventService
+from app.core.config.settings import AuditSettings
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.security]
@@ -68,6 +70,66 @@ def test_build_audit_context_uses_client_host_and_ignores_xff() -> None:
     assert context.actor_user_id == actor_user_id
     assert context.ip_address == "127.0.0.1"
     assert context.user_agent == "pytest-agent"
+
+
+def test_build_audit_context_uses_injected_app_audit_settings() -> None:
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/example",
+        "headers": [(b"user-agent", b"pytest-agent")],
+        "client": ("203.0.113.42", 32100),
+        "app": SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(
+                    audit=AuditSettings(network_identifier_secret="x" * 32)
+                )
+            )
+        ),
+    }
+    request = Request(scope)
+
+    context = build_audit_context_from_request(actor_user_id=None, request=request)
+
+    assert context.network_identifier_secret is not None
+    minimised = minimise_ip_address(
+        context.ip_address,
+        secret=context.network_identifier_secret,
+    )
+    assert minimised is not None
+    assert minimised.startswith("hmac:v1:")
+    assert minimised != "203.0.113.0/24"
+
+
+def test_audit_service_uses_context_network_identifier_secret(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            event = await AuditEventService(session).record_event(
+                audit_context=AuditContext(
+                    actor_user_id=None,
+                    ip_address="203.0.113.42",
+                    user_agent="pytest",
+                    network_identifier_secret=AuditSettings(
+                        network_identifier_secret="x" * 32
+                    ).network_identifier_secret,
+                ),
+                category=AuditCategory.TENANT,
+                action=AuditAction.ORGANISATION_UPDATED,
+                target_type=AuditTargetType.ORGANISATION,
+                target_id=uuid4(),
+            )
+            await session.commit()
+            result = await session.execute(
+                select(AuditEvent).where(AuditEvent.id == event.id)
+            )
+            saved = result.scalar_one()
+            assert saved.ip_address is not None
+            assert saved.ip_address.startswith("hmac:v1:")
+            assert saved.ip_address != "203.0.113.0/24"
+
+    run_async(_run())
 
 
 def test_audit_ip_minimisation_supports_hmac_identifier() -> None:
