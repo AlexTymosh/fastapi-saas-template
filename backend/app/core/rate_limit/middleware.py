@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hmac
+import time
+from dataclasses import dataclass
+from hashlib import sha256
 from http import HTTPStatus
 
 from fastapi.responses import JSONResponse
@@ -24,6 +27,16 @@ _DEFAULT_EXCLUDED_PATH_SUFFIXES = (
     "/health/live",
     "/health/ready",
 )
+_EDGE_ASSERTION_MAX_AGE_SECONDS = 300
+_EDGE_ASSERTION_MAX_FUTURE_SKEW_SECONDS = 60
+_EDGE_ASSERTION_SIGNATURE_VERSION = "v1"
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+@dataclass(frozen=True, slots=True)
+class _EdgeAssertion:
+    timestamp: int
+    signature: str
 
 
 class RateLimitIngressMiddleware:
@@ -175,7 +188,76 @@ def _has_valid_edge_assertion(*, request: Request, settings: Settings) -> bool:
     if provided_value is None:
         return False
 
-    return hmac.compare_digest(provided_value, secret.get_secret_value())
+    assertion = _parse_edge_assertion_header(provided_value)
+    if assertion is None:
+        return False
+    if not _is_edge_assertion_timestamp_fresh(assertion.timestamp):
+        return False
+
+    expected_signature = _build_edge_assertion_signature(
+        timestamp=assertion.timestamp,
+        method=request.method,
+        target=_canonical_request_target(request),
+        secret=secret.get_secret_value(),
+    )
+    return hmac.compare_digest(assertion.signature, expected_signature)
+
+
+def _parse_edge_assertion_header(value: str) -> _EdgeAssertion | None:
+    values: dict[str, str] = {}
+    for raw_part in value.split(","):
+        key, separator, raw_value = raw_part.strip().partition("=")
+        if not separator or not key or not raw_value:
+            return None
+        values[key] = raw_value
+
+    raw_timestamp = values.get("t")
+    signature = values.get(_EDGE_ASSERTION_SIGNATURE_VERSION)
+    if raw_timestamp is None or signature is None:
+        return None
+    if not raw_timestamp.isdigit():
+        return None
+    if len(signature) != 64 or any(char not in _HEX_DIGITS for char in signature):
+        return None
+
+    return _EdgeAssertion(timestamp=int(raw_timestamp), signature=signature.lower())
+
+
+def _is_edge_assertion_timestamp_fresh(timestamp: int) -> bool:
+    now = int(time.time())
+    if timestamp < now - _EDGE_ASSERTION_MAX_AGE_SECONDS:
+        return False
+    return timestamp <= now + _EDGE_ASSERTION_MAX_FUTURE_SKEW_SECONDS
+
+
+def _canonical_request_target(request: Request) -> str:
+    raw_path = request.scope.get("raw_path")
+    if isinstance(raw_path, bytes):
+        path = raw_path.decode("ascii", errors="surrogateescape")
+    else:
+        path = str(request.scope.get("path") or request.url.path)
+
+    query_string = request.scope.get("query_string") or b""
+    if isinstance(query_string, bytes) and query_string:
+        return f"{path}?{query_string.decode('ascii', errors='surrogateescape')}"
+    if isinstance(query_string, str) and query_string:
+        return f"{path}?{query_string}"
+    return path
+
+
+def _build_edge_assertion_signature(
+    *,
+    timestamp: int,
+    method: str,
+    target: str,
+    secret: str,
+) -> str:
+    message = f"{timestamp}.{method.upper()}.{target}"
+    return hmac.new(
+        secret.encode("utf-8"),
+        message.encode("utf-8"),
+        sha256,
+    ).hexdigest()
 
 
 async def _send_app_error_response(
