@@ -33,6 +33,11 @@ def test_legacy_reason_can_submit_existing_reason_code_value() -> None:
     assert payload.reason == "compliance_review"
 
 
+def test_invalid_explicit_reason_code_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        ReasonRequest(reason_code="compliance_reveiw")
+
+
 def test_missing_required_reason_is_rejected() -> None:
     with pytest.raises(ValidationError):
         ReasonRequest()
@@ -53,6 +58,14 @@ def test_platform_organisation_patch_schema_marks_reason_code_required() -> None
     assert schema["required"] == ["reason_code"]
 
 
+def test_platform_organisation_patch_rejects_invalid_reason_code() -> None:
+    with pytest.raises(ValidationError):
+        PlatformOrganisationPatchRequest(
+            name="Updated",
+            reason_code="data_corection",
+        )
+
+
 def test_revoke_invite_reason_code_is_optional_but_structured_when_present() -> None:
     empty_payload = RevokeInviteRequest()
     structured_payload = RevokeInviteRequest(
@@ -63,3 +76,8 @@ def test_revoke_invite_reason_code_is_optional_but_structured_when_present() -> 
     assert empty_payload.reason is None
     assert structured_payload.reason == "compliance_review"
     assert legacy_payload.reason == "other"
+
+
+def test_revoke_invite_rejects_invalid_explicit_reason_code() -> None:
+    with pytest.raises(ValidationError):
+        RevokeInviteRequest(reason_code="compliance_reveiw")
