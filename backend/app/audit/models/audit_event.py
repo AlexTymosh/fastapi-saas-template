@@ -56,6 +56,7 @@ class AuditEvent(UUIDMixin, Base):
         Index("ix_audit_events_action", "action"),
         Index("ix_audit_events_target", "target_type", "target_id"),
         Index("ix_audit_events_created_at", "created_at"),
+        Index("ix_audit_events_legal_hold_until", "legal_hold_until"),
     )
 
     actor_user_id: Mapped[UUID | None] = mapped_column(
@@ -69,6 +70,10 @@ class AuditEvent(UUIDMixin, Base):
     metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    legal_hold_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=text("CURRENT_TIMESTAMP"),
