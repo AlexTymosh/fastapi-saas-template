@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import AuditContext
+from app.audit.minimisation import minimise_ip_address, normalise_user_agent
 from app.audit.models.audit_event import (
     AuditAction,
     AuditCategory,
@@ -64,12 +65,11 @@ class AuditEventService:
         metadata_json: dict[str, object] | None = None,
     ) -> AuditEvent:
         validated_metadata = self._validate_metadata_json(metadata_json)
-        user_agent = audit_context.user_agent
-        if user_agent is not None:
-            user_agent = user_agent[:512]
-        ip_address = audit_context.ip_address
-        if ip_address is not None and len(ip_address) > 45:
-            raise ValueError("Audit IP address exceeds max length")
+        ip_address = minimise_ip_address(
+            audit_context.ip_address,
+            secret=audit_context.network_identifier_secret,
+        )
+        user_agent = normalise_user_agent(audit_context.user_agent)
 
         return await self.repository.create(
             actor_user_id=audit_context.actor_user_id,

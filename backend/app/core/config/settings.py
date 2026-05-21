@@ -355,6 +355,26 @@ class OutboxSettings(BaseModel):
     recovery_batch_size: int = Field(default=100, gt=0)
 
 
+class AuditSettings(BaseModel):
+    network_identifier_secret: SecretStr | None = None
+
+    @field_validator("network_identifier_secret")
+    @classmethod
+    def validate_network_identifier_secret(
+        cls, value: SecretStr | None
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value().strip()
+        if not secret:
+            return None
+        if len(secret) < 32:
+            raise ValueError(
+                "AUDIT__NETWORK_IDENTIFIER_SECRET must be at least 32 characters"
+            )
+        return SecretStr(secret)
+
+
 class CorsSettings(BaseModel):
     enabled: bool = False
     allow_origins: list[str] = Field(default_factory=list)
@@ -444,6 +464,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
     outbox: OutboxSettings = Field(default_factory=OutboxSettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
 
