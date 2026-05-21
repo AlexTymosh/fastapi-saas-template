@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, not_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.invites.models.invite import Invite, InviteStatus
@@ -217,9 +217,12 @@ class InviteRepository:
     ) -> int:
         """Replace completed invite PII/secrets with deterministic tombstones.
 
-        The current schema keeps ``email`` and ``token_hash`` non-null and unique,
-        so the safest backward-compatible retention step is irreversible in-place
-        anonymisation rather than deletion or nullable-column migration.
+        The current schema keeps ``email`` and ``token_hash`` non-null and
+        unique, so the
+        safest backward-compatible retention step is irreversible in-place
+        anonymisation rather than deletion or nullable-column migration. Already
+        scrubbed tombstone rows are excluded in SQL so they cannot starve later
+        eligible unsanitized rows when the batch is capped.
         """
 
         stmt = (
@@ -238,7 +241,15 @@ class InviteRepository:
                         (Invite.status == InviteStatus.REVOKED)
                         & (Invite.updated_at < revoked_before)
                     ),
-                )
+                ),
+                not_(
+                    and_(
+                        Invite.email.endswith(f"@{_SCRUBBED_INVITE_EMAIL_DOMAIN}"),
+                        Invite.token_hash.startswith(
+                            f"{_SCRUBBED_INVITE_TOKEN_PREFIX}:"
+                        ),
+                    )
+                ),
             )
             .order_by(Invite.updated_at.asc(), Invite.id.asc())
             .limit(batch_size)

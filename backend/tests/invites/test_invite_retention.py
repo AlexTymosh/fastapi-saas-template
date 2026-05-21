@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -27,7 +28,8 @@ def test_invite_retention_anonymises_only_old_completed_invites(
     async def scenario() -> None:
         async with migrated_session_factory() as session:
             organisation = Organisation(
-                name="Retention Clinic", slug="retention-clinic"
+                name="Retention Clinic",
+                slug="retention-clinic",
             )
             session.add(organisation)
             await session.flush()
@@ -119,7 +121,8 @@ def test_invite_retention_is_idempotent(migrated_session_factory, monkeypatch) -
     async def scenario() -> None:
         async with migrated_session_factory() as session:
             organisation = Organisation(
-                name="Retention Clinic", slug="retention-clinic"
+                name="Retention Clinic",
+                slug="retention-clinic",
             )
             session.add(organisation)
             await session.flush()
@@ -147,5 +150,69 @@ def test_invite_retention_is_idempotent(migrated_session_factory, monkeypatch) -
             assert second_count == 0
             assert invite.email == f"deleted-invite-{invite.id}@anonymous.invalid"
             assert invite.token_hash == f"scrubbed-invite:{invite.id}"
+
+    run_async(scenario())
+
+
+def test_invite_retention_excludes_scrubbed_rows_from_limited_batch(
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("INVITE_RETENTION__ACCEPTED_DAYS", "30")
+    monkeypatch.setenv("INVITE_RETENTION__BATCH_SIZE", "1")
+
+    now = datetime(2026, 5, 21, tzinfo=UTC)
+    very_old = now - timedelta(days=60)
+    old = now - timedelta(days=31)
+
+    async def scenario() -> None:
+        async with migrated_session_factory() as session:
+            organisation = Organisation(
+                name="Retention Clinic",
+                slug="retention-clinic",
+            )
+            session.add(organisation)
+            await session.flush()
+
+            scrubbed_id = uuid4()
+            unsanitized_id = uuid4()
+            already_scrubbed = Invite(
+                id=scrubbed_id,
+                email=f"deleted-invite-{scrubbed_id}@anonymous.invalid",
+                organisation_id=organisation.id,
+                role=MembershipRole.MEMBER,
+                status=InviteStatus.ACCEPTED,
+                token_hash=f"scrubbed-invite:{scrubbed_id}",
+                expires_at=very_old,
+                updated_at=very_old,
+            )
+            unsanitized = Invite(
+                id=unsanitized_id,
+                email="later.unsanitized@example.com",
+                organisation_id=organisation.id,
+                role=MembershipRole.MEMBER,
+                status=InviteStatus.ACCEPTED,
+                token_hash="later-unsanitized-token-hash",
+                expires_at=old,
+                updated_at=old,
+            )
+            session.add_all([already_scrubbed, unsanitized])
+            await session.commit()
+
+            anonymised_count = await InviteService(session).anonymise_completed_invites(
+                now=now
+            )
+
+            assert anonymised_count == 1
+            await session.refresh(already_scrubbed)
+            await session.refresh(unsanitized)
+            assert already_scrubbed.email == (
+                f"deleted-invite-{scrubbed_id}@anonymous.invalid"
+            )
+            assert already_scrubbed.token_hash == f"scrubbed-invite:{scrubbed_id}"
+            assert unsanitized.email == (
+                f"deleted-invite-{unsanitized_id}@anonymous.invalid"
+            )
+            assert unsanitized.token_hash == f"scrubbed-invite:{unsanitized_id}"
 
     run_async(scenario())
