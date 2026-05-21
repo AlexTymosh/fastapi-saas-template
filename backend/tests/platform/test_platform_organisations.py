@@ -81,7 +81,7 @@ def test_platform_admin_can_suspend_organisation(
                 )
             ).first()
             assert event is not None
-            assert event._mapping["reason"] == "compliance incident"
+            assert event._mapping["reason"] == "other"
 
     run_async(_verify())
 
@@ -134,7 +134,7 @@ def test_platform_admin_can_restore_suspended_organisation(
                 )
             ).first()
             assert event is not None
-            assert event._mapping["reason"] == "issue resolved"
+            assert event._mapping["reason"] == "other"
 
     run_async(_verify())
 
@@ -213,7 +213,7 @@ def test_platform_org_correction_updates_and_audits(
                 )
             ).first()
             assert event is not None
-            assert event._mapping["reason"] == "correct typo"
+            assert event._mapping["reason"] == "other"
             assert event._mapping["metadata_json"] == {
                 "correction_type": "platform_profile_correction",
                 "changed_fields": ["name", "slug"],

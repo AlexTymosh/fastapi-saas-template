@@ -1,21 +1,31 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason_payload
 from app.users.models.user import UserStatus
 
 
 class ReasonRequest(BaseModel):
-    reason: str = Field(min_length=1, max_length=500)
+    model_config = ConfigDict(extra="forbid")
 
-    @field_validator("reason")
+    reason_code: OperationalReasonCode = Field(
+        description=(
+            "Structured operational reason code. The legacy 'reason' input "
+            "field is accepted for backward compatibility and arbitrary legacy "
+            "free text is persisted as 'other'."
+        ),
+    )
+
+    @model_validator(mode="before")
     @classmethod
-    def trim_reason(cls, value: str) -> str:
-        trimmed = value.strip()
-        if not trimmed:
-            raise ValueError("Reason cannot be blank")
-        return trimmed
+    def normalise_legacy_reason_alias(cls, data: object) -> object:
+        return normalise_legacy_reason_payload(data, required=True)
+
+    @property
+    def reason(self) -> str:
+        return self.reason_code.value
 
 
 class PlatformUserResponse(BaseModel):

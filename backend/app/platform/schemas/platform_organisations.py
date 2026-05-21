@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason_payload
 from app.organisations.models.organisation import OrganisationStatus
 from app.organisations.schemas.organisations import normalize_and_validate_slug
 
@@ -29,9 +30,26 @@ class PlatformLimitedOrganisationResponse(BaseModel):
 
 
 class PlatformOrganisationPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
-    reason: str = Field(min_length=1, max_length=500)
+    reason_code: OperationalReasonCode = Field(
+        description=(
+            "Structured operational reason code. The legacy 'reason' input "
+            "field is accepted for backward compatibility and arbitrary legacy "
+            "free text is persisted as 'other'."
+        ),
+    )
+
+    @property
+    def reason(self) -> str:
+        return self.reason_code.value
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalise_legacy_reason_alias(cls, data: object) -> object:
+        return normalise_legacy_reason_payload(data, required=True)
 
     @field_validator("name")
     @classmethod
@@ -49,14 +67,6 @@ class PlatformOrganisationPatchRequest(BaseModel):
         if value is None:
             return None
         return normalize_and_validate_slug(value)
-
-    @field_validator("reason")
-    @classmethod
-    def trim_reason(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Reason cannot be blank")
-        return value
 
     @model_validator(mode="after")
     def check_any_profile_field(self):

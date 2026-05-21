@@ -3,8 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
+from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason_payload
 from app.invites.models.invite import InviteStatus
 from app.memberships.models.membership import MembershipRole
 
@@ -55,12 +63,24 @@ class AcceptInviteResponse(BaseModel):
 
 
 class RevokeInviteRequest(BaseModel):
-    reason: str | None = Field(default=None, max_length=500)
+    model_config = ConfigDict(extra="forbid")
 
-    @field_validator("reason")
+    reason_code: OperationalReasonCode | None = Field(
+        default=None,
+        description=(
+            "Optional structured operational reason code. The legacy 'reason' "
+            "input field is accepted for backward compatibility and arbitrary "
+            "legacy free text is persisted as 'other'."
+        ),
+    )
+
+    @model_validator(mode="before")
     @classmethod
-    def normalize_reason(cls, value: str | None) -> str | None:
-        if value is None:
+    def normalise_legacy_reason_alias(cls, data: object) -> object:
+        return normalise_legacy_reason_payload(data, required=False)
+
+    @property
+    def reason(self) -> str | None:
+        if self.reason_code is None:
             return None
-        normalized = value.strip()
-        return normalized or None
+        return self.reason_code.value
