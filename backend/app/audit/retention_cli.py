@@ -22,10 +22,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show how many audit events would be anonymised without changing data.",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress stdout output. The command still emits structured logs.",
+    )
     return parser
 
 
-async def run_once() -> int:
+async def run_once(*, dry_run: bool = False) -> int:
     settings = get_settings()
     session_factory = get_session_factory()
 
@@ -34,20 +39,25 @@ async def run_once() -> int:
             session,
             settings=settings.audit,
         )
-        await session.commit()
+        if dry_run:
+            await session.rollback()
+        else:
+            await session.commit()
 
     return anonymised_count
 
 
-async def _amain(*, quiet: bool) -> int:
+async def _amain(*, quiet: bool, dry_run: bool) -> int:
     try:
-        anonymised_count = await run_once()
+        anonymised_count = await run_once(dry_run=dry_run)
+        action = "would anonymise" if dry_run else "anonymised"
         logger.info(
-            "Audit retention anonymised %s expired event(s)",
+            "Audit retention %s %s expired event(s)",
+            action,
             anonymised_count,
         )
         if not quiet:
-            print(f"Audit retention anonymised {anonymised_count} expired event(s)")
+            print(f"Audit retention {action} {anonymised_count} expired event(s)")
         return 0
     finally:
         await dispose_engine()
@@ -58,7 +68,7 @@ def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
-    return asyncio.run(_amain(quiet=args.quiet))
+    return asyncio.run(_amain(quiet=args.quiet, dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

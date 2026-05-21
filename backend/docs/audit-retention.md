@@ -58,6 +58,18 @@ Quiet mode, suitable for scheduler logs that already capture process status:
 uv run python -m app.audit.retention_cli --quiet
 ```
 
+Dry-run mode counts the rows that would be anonymised and rolls the transaction back:
+
+```bash
+uv run python -m app.audit.retention_cli --dry-run
+```
+
+Quiet dry-run mode:
+
+```bash
+uv run python -m app.audit.retention_cli --dry-run --quiet
+```
+
 ## Scheduling guidance
 
 Run this as an explicit maintenance job rather than during API startup.
@@ -68,14 +80,16 @@ Recommended options:
 - staging: daily or on-demand before privacy/security test cycles;
 - local development: manual execution only.
 
-The job commits once per run. If anonymisation fails, the transaction is not committed and the process exits with a non-zero error.
+The normal job commits once per run. If anonymisation fails, the transaction is not committed and the process exits with a non-zero error.
+
+In `--dry-run` mode, the command executes the same selection/anonymisation path to calculate the affected row count, then rolls the transaction back before exit.
 
 ## Verification
 
 Targeted test command:
 
 ```bash
-uv run pytest tests/audit/test_audit_retention.py tests/audit/test_audit_retention_maintenance.py -q
+uv run pytest tests/audit/test_audit_event_service.py tests/audit/test_audit_retention_maintenance.py tests/audit/test_audit_retention_cli.py -q
 ```
 
 Full backend gate:
