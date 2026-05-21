@@ -93,25 +93,31 @@ class AuditEventRepository:
         across PostgreSQL and SQLite. Legal-hold records are skipped until their
         hold expires. Already anonymised rows are excluded so repeated runs are
         idempotent and do not consume future batches.
+
+        The UPDATE repeats the eligibility predicates instead of filtering only
+        by selected ids. This prevents a race where another transaction sets
+        ``legal_hold_until`` after candidate selection but before anonymisation.
         """
+
+        eligibility_predicates = (
+            AuditEvent.category == category.value,
+            AuditEvent.created_at < created_before,
+            or_(
+                AuditEvent.legal_hold_until.is_(None),
+                AuditEvent.legal_hold_until <= now,
+            ),
+            or_(
+                AuditEvent.actor_user_id.is_not(None),
+                AuditEvent.reason.is_not(None),
+                AuditEvent.metadata_json.is_not(None),
+                AuditEvent.ip_address.is_not(None),
+                AuditEvent.user_agent.is_not(None),
+            ),
+        )
 
         candidate_stmt = (
             select(AuditEvent.id)
-            .where(
-                AuditEvent.category == category.value,
-                AuditEvent.created_at < created_before,
-                or_(
-                    AuditEvent.legal_hold_until.is_(None),
-                    AuditEvent.legal_hold_until < now,
-                ),
-                or_(
-                    AuditEvent.actor_user_id.is_not(None),
-                    AuditEvent.reason.is_not(None),
-                    AuditEvent.metadata_json.is_not(None),
-                    AuditEvent.ip_address.is_not(None),
-                    AuditEvent.user_agent.is_not(None),
-                ),
-            )
+            .where(*eligibility_predicates)
             .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
             .limit(batch_size)
         )
@@ -119,9 +125,12 @@ class AuditEventRepository:
         if not event_ids:
             return 0
 
-        await self.session.execute(
+        result = await self.session.execute(
             update(AuditEvent)
-            .where(AuditEvent.id.in_(event_ids))
+            .where(
+                AuditEvent.id.in_(event_ids),
+                *eligibility_predicates,
+            )
             .values(
                 actor_user_id=None,
                 reason=None,
@@ -132,4 +141,4 @@ class AuditEventRepository:
             .execution_options(synchronize_session=False)
         )
         await self.session.flush()
-        return len(event_ids)
+        return int(result.rowcount or 0)
