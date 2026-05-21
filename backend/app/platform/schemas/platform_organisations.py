@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason
 from app.organisations.models.organisation import OrganisationStatus
 from app.organisations.schemas.organisations import normalize_and_validate_slug
 
@@ -29,9 +30,22 @@ class PlatformLimitedOrganisationResponse(BaseModel):
 
 
 class PlatformOrganisationPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
-    reason: str = Field(min_length=1, max_length=500)
+    reason_code: OperationalReasonCode | None = None
+    legacy_reason: str | None = Field(
+        default=None,
+        validation_alias="reason",
+        exclude=True,
+        max_length=500,
+    )
+
+    @property
+    def reason(self) -> str:
+        assert self.reason_code is not None
+        return self.reason_code.value
 
     @field_validator("name")
     @classmethod
@@ -50,18 +64,16 @@ class PlatformOrganisationPatchRequest(BaseModel):
             return None
         return normalize_and_validate_slug(value)
 
-    @field_validator("reason")
-    @classmethod
-    def trim_reason(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Reason cannot be blank")
-        return value
-
     @model_validator(mode="after")
     def check_any_profile_field(self):
         if self.name is None and self.slug is None:
             raise ValueError("At least one of 'name' or 'slug' must be provided")
+        if self.reason_code is None:
+            reason_code = normalise_legacy_reason(
+                self.legacy_reason,
+                required=True,
+            )
+            object.__setattr__(self, "reason_code", reason_code)
         return self
 
 

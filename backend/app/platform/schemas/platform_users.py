@@ -1,21 +1,37 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason
 from app.users.models.user import UserStatus
 
 
 class ReasonRequest(BaseModel):
-    reason: str = Field(min_length=1, max_length=500)
+    model_config = ConfigDict(extra="forbid")
 
-    @field_validator("reason")
-    @classmethod
-    def trim_reason(cls, value: str) -> str:
-        trimmed = value.strip()
-        if not trimmed:
-            raise ValueError("Reason cannot be blank")
-        return trimmed
+    reason_code: OperationalReasonCode | None = None
+    legacy_reason: str | None = Field(
+        default=None,
+        validation_alias="reason",
+        exclude=True,
+        max_length=500,
+    )
+
+    @model_validator(mode="after")
+    def require_reason_code(self):
+        if self.reason_code is None:
+            reason_code = normalise_legacy_reason(
+                self.legacy_reason,
+                required=True,
+            )
+            object.__setattr__(self, "reason_code", reason_code)
+        return self
+
+    @property
+    def reason(self) -> str:
+        assert self.reason_code is not None
+        return self.reason_code.value
 
 
 class PlatformUserResponse(BaseModel):
