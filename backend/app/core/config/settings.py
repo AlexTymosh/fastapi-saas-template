@@ -355,6 +355,13 @@ class OutboxSettings(BaseModel):
     recovery_batch_size: int = Field(default=100, gt=0)
 
 
+class InviteRetentionSettings(BaseModel):
+    accepted_days: int = Field(default=30, ge=1)
+    expired_days: int = Field(default=30, ge=1)
+    revoked_days: int = Field(default=30, ge=1)
+    batch_size: int = Field(default=500, gt=0, le=5000)
+
+
 class AuditSettings(BaseModel):
     network_identifier_secret: SecretStr | None = None
 
@@ -464,6 +471,9 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     rate_limiting: RateLimitingSettings = Field(default_factory=RateLimitingSettings)
     outbox: OutboxSettings = Field(default_factory=OutboxSettings)
+    invite_retention: InviteRetentionSettings = Field(
+        default_factory=InviteRetentionSettings
+    )
     audit: AuditSettings = Field(default_factory=AuditSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)

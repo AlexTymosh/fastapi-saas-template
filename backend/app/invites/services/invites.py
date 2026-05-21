@@ -379,6 +379,40 @@ class InviteService:
             )
         return rotated
 
+    async def anonymise_completed_invites(self, *, now: datetime | None = None) -> int:
+        """Anonymise completed invite rows after configured retention windows.
+
+        This method is intentionally side-effect narrow: it does not delete rows,
+        change invite status, or touch pending invites. It only removes delivery-only
+        PII/secrets from accepted, expired, and revoked invites that are older than
+        their configured retention window.
+        """
+
+        settings = get_settings().invite_retention
+        decision_time = now or datetime.now(UTC)
+        async with (
+            self.session.begin()
+            if not self.session.in_transaction()
+            else _NoopContext()
+        ):
+            anonymised_count = (
+                await self.invite_repository.anonymise_completed_invites_older_than(
+                    accepted_before=decision_time
+                    - timedelta(days=settings.accepted_days),
+                    expired_before=decision_time
+                    - timedelta(days=settings.expired_days),
+                    revoked_before=decision_time
+                    - timedelta(days=settings.revoked_days),
+                    batch_size=settings.batch_size,
+                )
+            )
+        if anonymised_count:
+            self.log.info(
+                "invite_retention_anonymised_completed_invites",
+                anonymised_count=anonymised_count,
+            )
+        return anonymised_count
+
     async def _mark_pending_invite_expired_by_id(
         self,
         *,

@@ -3,11 +3,28 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, not_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import MembershipRole
+
+_SCRUBBED_INVITE_EMAIL_DOMAIN = "anonymous.invalid"
+_SCRUBBED_INVITE_TOKEN_PREFIX = "scrubbed-invite"
+
+
+def _scrubbed_invite_email(invite_id: UUID) -> str:
+    return f"deleted-invite-{invite_id}@{_SCRUBBED_INVITE_EMAIL_DOMAIN}"
+
+
+def _scrubbed_invite_token_hash(invite_id: UUID) -> str:
+    return f"{_SCRUBBED_INVITE_TOKEN_PREFIX}:{invite_id}"
+
+
+def _is_scrubbed_invite(invite: Invite) -> bool:
+    return invite.email.endswith(
+        f"@{_SCRUBBED_INVITE_EMAIL_DOMAIN}"
+    ) and invite.token_hash.startswith(f"{_SCRUBBED_INVITE_TOKEN_PREFIX}:")
 
 
 class InviteRepository:
@@ -189,3 +206,64 @@ class InviteRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def anonymise_completed_invites_older_than(
+        self,
+        *,
+        accepted_before: datetime,
+        expired_before: datetime,
+        revoked_before: datetime,
+        batch_size: int,
+    ) -> int:
+        """Replace completed invite PII/secrets with deterministic tombstones.
+
+        The current schema keeps ``email`` and ``token_hash`` non-null and
+        unique, so the
+        safest backward-compatible retention step is irreversible in-place
+        anonymisation rather than deletion or nullable-column migration. Already
+        scrubbed tombstone rows are excluded in SQL so they cannot starve later
+        eligible unsanitized rows when the batch is capped.
+        """
+
+        stmt = (
+            select(Invite)
+            .where(
+                or_(
+                    (
+                        (Invite.status == InviteStatus.ACCEPTED)
+                        & (Invite.updated_at < accepted_before)
+                    ),
+                    (
+                        (Invite.status == InviteStatus.EXPIRED)
+                        & (Invite.updated_at < expired_before)
+                    ),
+                    (
+                        (Invite.status == InviteStatus.REVOKED)
+                        & (Invite.updated_at < revoked_before)
+                    ),
+                ),
+                not_(
+                    and_(
+                        Invite.email.endswith(f"@{_SCRUBBED_INVITE_EMAIL_DOMAIN}"),
+                        Invite.token_hash.startswith(
+                            f"{_SCRUBBED_INVITE_TOKEN_PREFIX}:"
+                        ),
+                    )
+                ),
+            )
+            .order_by(Invite.updated_at.asc(), Invite.id.asc())
+            .limit(batch_size)
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+
+        anonymised_count = 0
+        for invite in rows:
+            if _is_scrubbed_invite(invite):
+                continue
+            invite.email = _scrubbed_invite_email(invite.id)
+            invite.token_hash = _scrubbed_invite_token_hash(invite.id)
+            anonymised_count += 1
+
+        if anonymised_count:
+            await self.session.flush()
+        return anonymised_count
