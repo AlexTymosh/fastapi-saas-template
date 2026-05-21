@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from app.audit.models.audit_event import (
     AuditTargetType,
 )
 from app.audit.repositories.audit_events import AuditEventRepository
+from app.core.config.settings import AuditSettings
 
 _FORBIDDEN_KEYS = {
     "token",
@@ -63,6 +65,7 @@ class AuditEventService:
         target_id: UUID | None,
         reason: str | None = None,
         metadata_json: dict[str, object] | None = None,
+        legal_hold_until: datetime | None = None,
     ) -> AuditEvent:
         validated_metadata = self._validate_metadata_json(metadata_json)
         ip_address = minimise_ip_address(
@@ -81,7 +84,40 @@ class AuditEventService:
             metadata_json=validated_metadata,
             ip_address=ip_address,
             user_agent=user_agent,
+            legal_hold_until=legal_hold_until,
         )
+
+    async def anonymise_expired_events(
+        self,
+        *,
+        settings: AuditSettings,
+        now: datetime | None = None,
+    ) -> int:
+        """Apply settings-driven audit retention anonymisation.
+
+        Audit rows remain present as an event trail, but long-retained direct
+        identifiers and free-form context are removed after the category-specific
+        retention window. This method is intentionally batch-friendly so a
+        scheduler, worker, or maintenance command can call it safely.
+        """
+
+        reference_now = now or datetime.now(UTC)
+        retention_windows = {
+            AuditCategory.TENANT: settings.retention_days,
+            AuditCategory.PLATFORM: settings.retention_days,
+            AuditCategory.SECURITY: settings.security_retention_days,
+            AuditCategory.COMPLIANCE: settings.compliance_retention_days,
+        }
+
+        anonymised_count = 0
+        for category, days in retention_windows.items():
+            anonymised_count += await self.repository.anonymise_events_older_than(
+                category=category,
+                created_before=reference_now - timedelta(days=days),
+                now=reference_now,
+                batch_size=settings.anonymisation_batch_size,
+            )
+        return anonymised_count
 
     def _validate_metadata_json(
         self, metadata_json: dict[str, object] | None

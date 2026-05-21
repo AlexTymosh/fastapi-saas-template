@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from app.audit.models.audit_event import (
 )
 from app.audit.services.audit_events import AuditEventService
 from app.core.config.settings import AuditSettings
+from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.security]
@@ -209,11 +211,15 @@ def test_audit_events_table_exists(migrated_session_factory) -> None:
         async with migrated_session_factory() as session:
 
             def _inspect(sync_conn):
-                return inspect(sync_conn).has_table("audit_events")
+                inspector = inspect(sync_conn)
+                audit_columns = inspector.get_columns("audit_events")
+                columns = {column["name"] for column in audit_columns}
+                return inspector.has_table("audit_events"), columns
 
             exists = await session.connection()
-            has_table = await exists.run_sync(_inspect)
+            has_table, columns = await exists.run_sync(_inspect)
             assert has_table is True
+            assert "legal_hold_until" in columns
 
     run_async(_run())
 
@@ -240,6 +246,102 @@ def test_metadata_validation_rejects_invalid(
                     target_id=None,
                     metadata_json=metadata,
                 )
+
+    run_async(_run())
+
+
+def test_audit_retention_anonymises_expired_identifiers(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        now = datetime(2026, 5, 21, tzinfo=UTC)
+        async with migrated_session_factory() as session:
+            actor = User(
+                external_auth_id=f"auth-{uuid4()}",
+                email="actor@example.com",
+                email_verified=True,
+            )
+            session.add(actor)
+            await session.flush()
+
+            old_event = AuditEvent(
+                actor_user_id=actor.id,
+                category=AuditCategory.TENANT.value,
+                action=AuditAction.ORGANISATION_UPDATED.value,
+                target_type=AuditTargetType.ORGANISATION.value,
+                target_id=uuid4(),
+                reason="legacy support note",
+                metadata_json={"changed_fields": ["slug"]},
+                ip_address="hmac:v1:legacyidentifier",
+                user_agent="browser:chrome",
+                created_at=now - timedelta(days=366),
+            )
+            recent_event = AuditEvent(
+                actor_user_id=actor.id,
+                category=AuditCategory.TENANT.value,
+                action=AuditAction.ORGANISATION_UPDATED.value,
+                target_type=AuditTargetType.ORGANISATION.value,
+                target_id=uuid4(),
+                ip_address="hmac:v1:recentidentifier",
+                created_at=now - timedelta(days=30),
+            )
+            session.add_all([old_event, recent_event])
+            await session.flush()
+
+            count = await AuditEventService(session).anonymise_expired_events(
+                settings=AuditSettings(retention_days=365),
+                now=now,
+            )
+            await session.commit()
+            await session.refresh(old_event)
+            await session.refresh(recent_event)
+
+            assert count == 1
+            saved_old = old_event
+            saved_recent = recent_event
+            assert saved_old.actor_user_id is None
+            assert saved_old.reason is None
+            assert saved_old.metadata_json is None
+            assert saved_old.ip_address is None
+            assert saved_old.user_agent is None
+            assert saved_old.category == AuditCategory.TENANT.value
+            assert saved_old.action == AuditAction.ORGANISATION_UPDATED.value
+            assert saved_recent.ip_address == "hmac:v1:recentidentifier"
+
+    run_async(_run())
+
+
+def test_audit_retention_respects_legal_hold(migrated_session_factory) -> None:
+    async def _run() -> None:
+        now = datetime(2026, 5, 21, tzinfo=UTC)
+        async with migrated_session_factory() as session:
+            held_event = AuditEvent(
+                actor_user_id=None,
+                category=AuditCategory.SECURITY.value,
+                action=AuditAction.USER_SUSPENDED.value,
+                target_type=AuditTargetType.USER.value,
+                target_id=uuid4(),
+                reason="held security investigation",
+                ip_address="hmac:v1:heldidentifier",
+                user_agent="browser:firefox",
+                legal_hold_until=now + timedelta(days=30),
+                created_at=now - timedelta(days=731),
+            )
+            session.add(held_event)
+            await session.flush()
+
+            count = await AuditEventService(session).anonymise_expired_events(
+                settings=AuditSettings(security_retention_days=730),
+                now=now,
+            )
+            await session.commit()
+            await session.refresh(held_event)
+
+            assert count == 0
+            saved_event = held_event
+            assert saved_event.reason == "held security investigation"
+            assert saved_event.ip_address == "hmac:v1:heldidentifier"
+            assert saved_event.user_agent == "browser:firefox"
 
     run_async(_run())
 
