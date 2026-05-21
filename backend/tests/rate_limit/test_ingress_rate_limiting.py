@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
+from hashlib import sha256
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,6 +23,9 @@ from app.main import create_app
 from tests.helpers.settings import reset_settings_cache
 
 pytestmark = [pytest.mark.security]
+
+_EDGE_ASSERTION_SECRET = "e" * 32
+_EDGE_ASSERTION_NOW = 1_900_000_000
 
 
 @dataclass
@@ -59,6 +64,22 @@ async def _principal_user_a() -> AuthenticatedPrincipal:
     )
 
 
+def _edge_assertion_header(
+    *,
+    method: str = "GET",
+    target: str = "/api/v1/users/me",
+    timestamp: int = _EDGE_ASSERTION_NOW,
+    secret: str = _EDGE_ASSERTION_SECRET,
+) -> str:
+    message = f"{timestamp}.{method.upper()}.{target}"
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        message.encode("utf-8"),
+        sha256,
+    ).hexdigest()
+    return f"t={timestamp},v1={signature}"
+
+
 def _build_app(
     monkeypatch,
     *,
@@ -90,6 +111,17 @@ def _build_app(
     if client_host is not None:
         return TestClient(app, client=(client_host, 12345))
     return TestClient(app)
+
+
+def _enable_edge_enforced_mode(monkeypatch) -> None:
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", _EDGE_ASSERTION_SECRET)
+    monkeypatch.setattr(
+        "app.core.rate_limit.middleware.time.time",
+        lambda: float(_EDGE_ASSERTION_NOW),
+    )
 
 
 def test_invalid_token_request_can_be_pre_auth_rate_limited(monkeypatch) -> None:
@@ -228,10 +260,7 @@ def test_health_endpoints_are_not_pre_auth_rate_limited(monkeypatch) -> None:
 
 def test_health_endpoints_are_not_rejected_by_edge_assertion(monkeypatch) -> None:
     fake = FakeLimiter(allow=True)
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
-    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
-    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
-    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", "e" * 32)
+    _enable_edge_enforced_mode(monkeypatch)
     client = _build_app(monkeypatch, limiter=fake, enabled=False)
 
     with client as api_client:
@@ -255,10 +284,7 @@ def test_health_endpoints_are_not_rejected_by_edge_assertion(monkeypatch) -> Non
 
 def test_direct_origin_request_is_rejected_in_edge_enforced_mode(monkeypatch) -> None:
     fake = FakeLimiter(allow=True)
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
-    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
-    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
-    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", "e" * 32)
+    _enable_edge_enforced_mode(monkeypatch)
     client = _build_app(monkeypatch, limiter=fake, enabled=False)
 
     with client as api_client:
@@ -272,10 +298,7 @@ def test_direct_origin_request_is_rejected_in_edge_enforced_mode(monkeypatch) ->
 
 def test_valid_edge_assertion_allows_edge_enforced_request(monkeypatch) -> None:
     fake = FakeLimiter(allow=True)
-    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
-    monkeypatch.setenv("RATE_LIMITING__TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
-    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
-    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", "e" * 32)
+    _enable_edge_enforced_mode(monkeypatch)
     client = _build_app(
         monkeypatch,
         limiter=fake,
@@ -286,7 +309,107 @@ def test_valid_edge_assertion_allows_edge_enforced_request(monkeypatch) -> None:
     with client as api_client:
         response = api_client.get(
             "/api/v1/users/me",
-            headers={"X-Edge-Assertion": "e" * 32},
+            headers={"X-Edge-Assertion": _edge_assertion_header()},
+        )
+
+    assert response.status_code == 401
+    assert fake.hit_calls == []
+
+
+def test_static_edge_assertion_secret_is_rejected_in_edge_enforced_mode(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=True)
+    _enable_edge_enforced_mode(monkeypatch)
+    client = _build_app(
+        monkeypatch,
+        limiter=fake,
+        enabled=False,
+        client_host="10.1.2.3",
+    )
+
+    with client as api_client:
+        response = api_client.get(
+            "/api/v1/users/me",
+            headers={"X-Edge-Assertion": _EDGE_ASSERTION_SECRET},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "forbidden"
+    assert fake.hit_calls == []
+
+
+def test_expired_edge_assertion_is_rejected_in_edge_enforced_mode(
+    monkeypatch,
+) -> None:
+    fake = FakeLimiter(allow=True)
+    _enable_edge_enforced_mode(monkeypatch)
+    client = _build_app(
+        monkeypatch,
+        limiter=fake,
+        enabled=False,
+        client_host="10.1.2.3",
+    )
+
+    with client as api_client:
+        response = api_client.get(
+            "/api/v1/users/me",
+            headers={
+                "X-Edge-Assertion": _edge_assertion_header(
+                    timestamp=_EDGE_ASSERTION_NOW - 301,
+                ),
+            },
+        )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "forbidden"
+    assert fake.hit_calls == []
+
+
+def test_edge_assertion_is_bound_to_method_and_request_target(monkeypatch) -> None:
+    fake = FakeLimiter(allow=True)
+    _enable_edge_enforced_mode(monkeypatch)
+    client = _build_app(
+        monkeypatch,
+        limiter=fake,
+        enabled=False,
+        client_host="10.1.2.3",
+    )
+
+    with client as api_client:
+        response = api_client.get(
+            "/api/v1/users/me?probe=actual",
+            headers={
+                "X-Edge-Assertion": _edge_assertion_header(
+                    method="POST",
+                    target="/api/v1/users/me?probe=signed",
+                ),
+            },
+        )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "forbidden"
+    assert fake.hit_calls == []
+
+
+def test_edge_assertion_allows_exact_signed_query_target(monkeypatch) -> None:
+    fake = FakeLimiter(allow=True)
+    _enable_edge_enforced_mode(monkeypatch)
+    client = _build_app(
+        monkeypatch,
+        limiter=fake,
+        enabled=False,
+        client_host="10.1.2.3",
+    )
+
+    with client as api_client:
+        response = api_client.get(
+            "/api/v1/users/me?probe=signed",
+            headers={
+                "X-Edge-Assertion": _edge_assertion_header(
+                    target="/api/v1/users/me?probe=signed",
+                ),
+            },
         )
 
     assert response.status_code == 401
