@@ -364,6 +364,10 @@ class InviteRetentionSettings(BaseModel):
 
 class AuditSettings(BaseModel):
     network_identifier_secret: SecretStr | None = None
+    retention_days: int = Field(default=365, ge=1)
+    security_retention_days: int = Field(default=730, ge=1)
+    compliance_retention_days: int = Field(default=2555, ge=1)
+    anonymisation_batch_size: int = Field(default=500, gt=0, le=5000)
 
     @field_validator("network_identifier_secret")
     @classmethod

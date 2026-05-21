@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.models.audit_event import (
@@ -59,6 +60,7 @@ class AuditEventRepository:
         metadata_json: dict[str, object] | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        legal_hold_until: datetime | None = None,
     ) -> AuditEvent:
         audit_event = AuditEvent(
             actor_user_id=actor_user_id,
@@ -70,8 +72,64 @@ class AuditEventRepository:
             metadata_json=metadata_json,
             ip_address=ip_address,
             user_agent=user_agent,
+            legal_hold_until=legal_hold_until,
         )
         self.session.add(audit_event)
         await self.session.flush()
         await self.session.refresh(audit_event)
         return audit_event
+
+    async def anonymise_events_older_than(
+        self,
+        *,
+        category: AuditCategory,
+        created_before: datetime,
+        now: datetime,
+        batch_size: int,
+    ) -> int:
+        """Remove long-retained audit identifiers while keeping event integrity.
+
+        The method selects a capped batch before updating so it remains portable
+        across PostgreSQL and SQLite. Legal-hold records are skipped until their
+        hold expires. Already anonymised rows are excluded so repeated runs are
+        idempotent and do not consume future batches.
+        """
+
+        candidate_stmt = (
+            select(AuditEvent.id)
+            .where(
+                AuditEvent.category == category.value,
+                AuditEvent.created_at < created_before,
+                or_(
+                    AuditEvent.legal_hold_until.is_(None),
+                    AuditEvent.legal_hold_until < now,
+                ),
+                or_(
+                    AuditEvent.actor_user_id.is_not(None),
+                    AuditEvent.reason.is_not(None),
+                    AuditEvent.metadata_json.is_not(None),
+                    AuditEvent.ip_address.is_not(None),
+                    AuditEvent.user_agent.is_not(None),
+                ),
+            )
+            .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+            .limit(batch_size)
+        )
+        event_ids = list((await self.session.execute(candidate_stmt)).scalars().all())
+        if not event_ids:
+            return 0
+
+        await self.session.execute(
+            update(AuditEvent)
+            .where(AuditEvent.id.in_(event_ids))
+            .values(
+                actor_user_id=None,
+                reason=None,
+                metadata_json=None,
+                ip_address=None,
+                user_agent=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.flush()
+        return len(event_ids)
