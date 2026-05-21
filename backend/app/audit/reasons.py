@@ -66,18 +66,28 @@ def normalise_legacy_reason_payload(
 ) -> Any:
     """Translate legacy ``reason`` payloads before normal model validation.
 
-    Explicit ``reason_code`` input is left untouched so invalid enum values are
-    rejected normally with 422. Only legacy ``reason`` is mapped to ``other`` for
-    backward compatibility with old clients.
+    Explicit non-null ``reason_code`` input is preserved so invalid enum values
+    are rejected normally with 422. Legacy ``reason`` is always removed before
+    ``extra='forbid'`` validation. If a compatibility serializer sends
+    ``reason_code: null`` together with legacy ``reason``, the legacy value is
+    used.
     """
 
     if not isinstance(data, dict):
         return data
-    if "reason_code" in data or "reason" not in data:
+
+    has_reason = "reason" in data
+    has_reason_code = "reason_code" in data
+
+    if not has_reason:
         return data
 
     updated = dict(data)
     legacy_reason = updated.pop("reason")
+
+    if has_reason_code and updated.get("reason_code") is not None:
+        return updated
+
     updated["reason_code"] = normalise_legacy_reason(
         legacy_reason,
         required=required,
