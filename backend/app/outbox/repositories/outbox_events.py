@@ -6,7 +6,33 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.outbox.models.outbox_event import OutboxEvent, OutboxStatus
+from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
+
+_INVITE_OUTBOX_EVENT_TYPES = frozenset(
+    {
+        OutboxEventType.INVITE_CREATED.value,
+        OutboxEventType.INVITE_RESEND.value,
+    }
+)
+_SENSITIVE_INVITE_PAYLOAD_KEYS = frozenset({"email", "encrypted_raw_token"})
+
+
+def _scrub_sensitive_delivery_payload(event: OutboxEvent) -> None:
+    """Remove delivery-only secrets from terminal invite outbox events."""
+    if event.event_type not in _INVITE_OUTBOX_EVENT_TYPES:
+        return
+
+    payload = event.payload_json
+    if not isinstance(payload, dict):
+        return
+
+    scrubbed_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in _SENSITIVE_INVITE_PAYLOAD_KEYS
+    }
+    scrubbed_payload["sensitive_payload_scrubbed"] = True
+    event.payload_json = scrubbed_payload
 
 
 class OutboxEventRepository:
@@ -82,6 +108,7 @@ class OutboxEventRepository:
         event.locked_at = None
         event.last_error = None
         event.updated_at = now
+        _scrub_sensitive_delivery_payload(event)
         await self.session.flush()
 
     async def mark_failed_attempt(self, *, event: OutboxEvent, error: str) -> None:
@@ -93,6 +120,7 @@ class OutboxEventRepository:
         if attempts >= event.max_attempts:
             event.status = OutboxStatus.FAILED.value
             event.next_attempt_at = None
+            _scrub_sensitive_delivery_payload(event)
         else:
             event.status = OutboxStatus.PENDING.value
             event.next_attempt_at = now + timedelta(seconds=2**attempts)

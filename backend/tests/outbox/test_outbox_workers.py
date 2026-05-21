@@ -6,6 +6,7 @@ from uuid import UUID
 
 import pytest
 from cryptography.fernet import Fernet
+from sqlalchemy import select
 
 from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import MembershipRole
@@ -153,6 +154,16 @@ def test_claimed_processing_events_are_delivered(
             )
             assert processed == []
 
+            result = await session.execute(select(OutboxEvent))
+            saved_events = list(result.scalars().all())
+            assert len(saved_events) == 1
+            processed_event = saved_events[0]
+            assert processed_event.status == OutboxStatus.PROCESSED.value
+            processed_payload = processed_event.payload_json
+            assert "email" not in processed_payload
+            assert "encrypted_raw_token" not in processed_payload
+            assert processed_payload["sensitive_payload_scrubbed"] is True
+
     run_async(_assert_processed())
     assert sink.token_for_email("worker@example.com")
 
@@ -271,6 +282,7 @@ def test_process_outbox_event_failure_commits_attempts(
                 aggregate_id=UUID("00000000-0000-0000-0000-000000000111"),
                 payload_json={
                     "invite_id": "00000000-0000-0000-0000-000000000111",
+                    "email": "failure@example.com",
                     "encrypted_raw_token": "secret-token",
                 },
                 max_attempts=1,
@@ -288,6 +300,9 @@ def test_process_outbox_event_failure_commits_attempts(
             assert saved.status == OutboxStatus.FAILED.value
             assert saved.attempts == 1
             assert saved.last_error == "invite_not_found"
+            assert "email" not in saved.payload_json
+            assert "encrypted_raw_token" not in saved.payload_json
+            assert saved.payload_json["sensitive_payload_scrubbed"] is True
 
     run_async(_assert_failure())
 
@@ -358,6 +373,8 @@ def test_process_outbox_event_marks_decryption_failure_with_wrong_key(
             assert saved is not None
             assert saved.status == OutboxStatus.FAILED.value
             assert saved.last_error == "outbox_payload_decryption_failed"
+            assert "encrypted_raw_token" not in saved.payload_json
+            assert saved.payload_json["sensitive_payload_scrubbed"] is True
 
     run_async(_run())
 
