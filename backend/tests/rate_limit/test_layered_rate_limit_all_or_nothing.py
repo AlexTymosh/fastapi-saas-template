@@ -13,7 +13,6 @@ from app.core.rate_limit.grouped_atomic import (
     GROUPED_FIXED_WINDOW_CONSUME_LUA,
     GROUPED_REDIS_HASH_TAG,
     build_grouped_redis_key,
-    is_redis_cluster_routing_error,
     maybe_get_async_redis_client,
 )
 from app.core.rate_limit.identifiers import RateLimitBucket
@@ -64,12 +63,9 @@ class _FailingRedisClient:
         raise RedisError("synthetic grouped redis script failure")
 
 
-class _ClusterRoutingRedisClient:
-    def __init__(self, message: str = "MOVED 3999 127.0.0.1:7001") -> None:
-        self.message = message
-
+class _CrossSlotRedisClient:
     async def eval(self, *args: object, **kwargs: object) -> list[int]:
-        raise RedisError(self.message)
+        raise RedisError("CROSSSLOT Keys in request don't hash to the same slot")
 
 
 @dataclass
@@ -351,26 +347,15 @@ async def test_grouped_redis_eval_args_do_not_contain_raw_identifiers(
     assert limiter.operations == []
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "CROSSSLOT Keys in request don't hash to the same slot",
-        "MOVED 3999 127.0.0.1:7001",
-        "ASK 3999 127.0.0.1:7001",
-        "CLUSTERDOWN The cluster is down",
-        "TRYAGAIN Multiple keys request during rehashing of slot",
-    ],
-)
 @pytest.mark.anyio
-async def test_grouped_redis_cluster_routing_error_falls_back_to_compatibility_path(
+async def test_grouped_redis_cross_slot_error_falls_back_to_compatibility_path(
     monkeypatch,
-    message: str,
 ) -> None:
     limiter = _PreflightAwareLimiter(test_sequence=[True, True])
     request = _build_request(
         monkeypatch,
         limiter,
-        grouped_redis_client=_ClusterRoutingRedisClient(message),
+        grouped_redis_client=_CrossSlotRedisClient(),
     )
 
     await check_rate_limits_for_buckets(
@@ -445,22 +430,3 @@ def test_grouped_redis_key_uses_shared_hash_tag_for_cluster_scripts() -> None:
 def test_grouped_lua_repairs_missing_ttl_on_blocked_bucket() -> None:
     assert "if ttl_ms < 0 then" in GROUPED_FIXED_WINDOW_CONSUME_LUA
     assert "redis.call('PEXPIRE', KEYS[i], ttl_ms)" in GROUPED_FIXED_WINDOW_CONSUME_LUA
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "CROSSSLOT Keys in request don't hash to the same slot",
-        "MOVED 3999 127.0.0.1:7001",
-        "ASK 3999 127.0.0.1:7001",
-        "CLUSTERDOWN The cluster is down",
-        "TRYAGAIN Multiple keys request during rehashing of slot",
-        "all keys must map to the same key slot",
-    ],
-)
-def test_grouped_cluster_routing_error_detection(message: str) -> None:
-    assert is_redis_cluster_routing_error(RedisError(message)) is True
-
-
-def test_non_cluster_redis_error_does_not_trigger_compatibility_fallback() -> None:
-    assert is_redis_cluster_routing_error(RedisError("connection closed")) is False

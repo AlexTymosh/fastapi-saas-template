@@ -25,32 +25,65 @@ def _build_async_redis_uri(redis_url: str) -> str:
     return f"async+{redis_url}"
 
 
-def _build_grouped_redis_url(redis_url: str) -> str:
-    """Return a redis-py compatible URL for the grouped Lua client.
-
-    `limits` async storage accepts URLs prefixed with `async+redis://` or
-    `async+rediss://`. The raw `redis.asyncio.Redis.from_url()` client does not
-    understand that adapter prefix, so strip only the `async+` marker while
-    preserving the underlying Redis scheme and all URL components.
-    """
-
+def _strip_limits_async_prefix(redis_url: str) -> str:
     if redis_url.startswith("async+"):
         return redis_url.removeprefix("async+")
     return redis_url
 
 
-def _build_grouped_redis_client(redis_url: str) -> Any:
+def _is_grouped_redis_cluster_url(redis_url: str) -> bool:
+    normalised = _strip_limits_async_prefix(redis_url)
+    return normalised.startswith(("redis+cluster://", "rediss+cluster://"))
+
+
+def _build_grouped_redis_url(redis_url: str) -> str:
+    """Return a redis-py compatible URL for the grouped Lua client.
+
+    `limits` async storage accepts adapter-style URLs such as
+    `async+redis://`, `async+rediss://`, `redis+cluster://`, and sometimes
+    their combined async cluster forms. Raw redis-py clients do not understand
+    the `async+` marker or the `+cluster` scheme marker, so strip those markers
+    while preserving the underlying Redis transport scheme and all URL parts.
+    """
+
+    normalised = _strip_limits_async_prefix(redis_url)
+    if normalised.startswith("redis+cluster://"):
+        return "redis://" + normalised.removeprefix("redis+cluster://")
+    if normalised.startswith("rediss+cluster://"):
+        return "rediss://" + normalised.removeprefix("rediss+cluster://")
+    return normalised
+
+
+def _build_grouped_redis_client(redis_url: str) -> Any | None:
     """Create the explicit Redis client used by grouped Lua checks.
 
     The `limits` async Redis storage hides its backend behind bridge-specific
     internals (`coredis`, `redispy`, `valkey`). Grouped rate limits need a raw
     `EVAL` client, so keep that dependency explicit instead of relying on
     fragile introspection of the `limits` storage object.
+
+    Cluster-style URLs need a RedisCluster client. If the installed redis-py
+    version cannot construct one from the normalised URL, startup should not fail
+    solely because the grouped atomic optimisation is unavailable: the existing
+    storage/limiter path can still serve requests through the compatibility
+    fallback in `check_rate_limits_for_buckets()`.
     """
+
+    grouped_url = _build_grouped_redis_url(redis_url)
+    if _is_grouped_redis_cluster_url(redis_url):
+        try:
+            from redis.asyncio.cluster import RedisCluster
+        except (ImportError, AttributeError):
+            return None
+
+        try:
+            return RedisCluster.from_url(grouped_url)
+        except (TypeError, ValueError):
+            return None
 
     from redis.asyncio import Redis
 
-    return Redis.from_url(_build_grouped_redis_url(redis_url))
+    return Redis.from_url(grouped_url)
 
 
 def _select_rate_limiter_strategy(storage: Any) -> tuple[Any, str]:
@@ -151,7 +184,11 @@ async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
         strategy=strategy_name,
         backend=settings.rate_limiting.backend,
         mode=settings.rate_limiting.mode,
-        grouped_atomic_backend="redis_lua",
+        grouped_atomic_backend=(
+            "redis_lua"
+            if grouped_redis_client is not None
+            else "compatibility_fallback"
+        ),
         policies={
             name: _serialise_effective_policy(policy)
             for name, policy in policy_registry.items()

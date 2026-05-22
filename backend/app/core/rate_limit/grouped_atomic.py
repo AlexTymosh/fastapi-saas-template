@@ -56,66 +56,24 @@ def build_grouped_redis_key(*, namespace: str, bucket_key: str) -> str:
     return f"{GROUPED_REDIS_HASH_TAG}:{namespace}:{bucket_key}"
 
 
-def is_redis_cluster_routing_error(exc: Exception) -> bool:
-    """Return True for Redis Cluster routing errors safe to degrade from Lua.
-
-    The grouped Lua path uses an explicit raw Redis client. In Redis Cluster
-    deployments a non-cluster-aware client can receive redirection/routing
-    failures such as MOVED or ASK before Redis evaluates the script. These are
-    not rate-limiter backend outages in the same sense as connection loss: the
-    safer behaviour is to preserve availability by degrading to the existing
-    compatibility path.
+def is_redis_cross_slot_error(exc: Exception) -> bool:
+    """Return True for Redis Cluster same-slot/CROSSSLOT failures.
 
     redis-py exception class names differ between clients and versions, so this
     deliberately checks both class name and message text instead of importing a
-    version-specific cluster exception class.
+    version-specific ClusterCrossSlotError class.
     """
 
-    error_name = exc.__class__.__name__.lower().replace("_", "").replace("-", "")
+    error_name = exc.__class__.__name__.lower().replace("_", "")
     error_text = str(exc).lower()
-    compact_text = (
-        error_text.replace("_", "").replace("-", "").replace(" ", "").replace(":", "")
-    )
-
-    cluster_error_names = (
-        "crossslot",
-        "moved",
-        "ask",
-        "clusterdown",
-        "tryagain",
-    )
-    if any(token in error_name for token in cluster_error_names):
-        return True
-
+    compact_text = error_text.replace("_", "")
     return (
-        "crossslot" in compact_text
-        or error_text.startswith("moved ")
-        or " moved " in error_text
-        or "movederror" in compact_text
-        or error_text.startswith("ask ")
-        or " ask " in error_text
-        or "askerror" in compact_text
-        or "clusterdown" in compact_text
-        or "cluster down" in error_text
-        or "tryagain" in compact_text
-        or "try again" in error_text
+        "crossslot" in error_name
+        or "crossslot" in compact_text
+        or "cross slot" in error_text
         or "same slot" in error_text
         or "same key slot" in error_text
-        or "hash slot" in error_text
-        or ("cluster" in error_text and "slot" in error_text)
-        or ("cluster" in error_text and "redirection" in error_text)
     )
-
-
-def is_redis_cross_slot_error(exc: Exception) -> bool:
-    """Backward-compatible alias for older tests/imports.
-
-    The actual grouped fallback condition is broader than CROSSSLOT because a
-    single-node raw Redis client can also receive Redis Cluster routing errors
-    such as MOVED/ASK.
-    """
-
-    return is_redis_cluster_routing_error(exc)
 
 
 def maybe_get_async_redis_client(storage: Any) -> Any | None:
