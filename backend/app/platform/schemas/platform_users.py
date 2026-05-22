@@ -13,8 +13,9 @@ class ReasonRequest(BaseModel):
     reason_code: OperationalReasonCode = Field(
         description=(
             "Structured operational reason code. The legacy 'reason' input "
-            "field is accepted for backward compatibility and arbitrary legacy "
-            "free text is persisted as 'other'."
+            "field is accepted for backward compatibility only when it does "
+            "not contain obvious secrets, contact details, or clinical/patient "
+            "details; arbitrary legacy free text is persisted as 'other'."
         ),
     )
 

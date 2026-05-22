@@ -1,9 +1,31 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Any
 
 _REASON_MAX_LENGTH = 500
+
+_SENSITIVE_REASON_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b("
+        r"password|passwd|pwd|secret|api[_-]?key|access[_-]?token|"
+        r"refresh[_-]?token|jwt"
+        r")\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bbearer\s+[a-z0-9._~+/=-]{16,}\b", re.IGNORECASE),
+    re.compile(
+        r"\b("
+        r"diagnosis|diagnosed|clinical|clinic notes|x-?ray|xray|"
+        r"medical|medication|treatment plan|nhs(?:\s+number)?"
+        r")\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
+    re.compile(r"\b(?:postgres(?:ql)?|mysql|redis|mongodb)://\S+", re.IGNORECASE),
+    re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9])"),
+)
 
 
 class OperationalReasonCode(StrEnum):
@@ -21,6 +43,20 @@ class OperationalReasonCode(StrEnum):
     OTHER = "other"
 
 
+def _contains_sensitive_reason_detail(value: str) -> bool:
+    return any(
+        pattern.search(value) is not None for pattern in _SENSITIVE_REASON_PATTERNS
+    )
+
+
+def _ensure_reason_has_no_sensitive_detail(value: str) -> None:
+    if _contains_sensitive_reason_detail(value):
+        raise ValueError(
+            "reason must not contain secrets, tokens, contact details, "
+            "or clinical/patient details"
+        )
+
+
 def normalise_legacy_reason(
     value: object | None,
     *,
@@ -31,6 +67,9 @@ def normalise_legacy_reason(
     This helper is intentionally for the old ``reason`` input field only. New
     ``reason_code`` input must be validated strictly by Pydantic's enum handling
     so typos return 422 instead of being silently persisted as ``other``.
+
+    Legacy free text is discarded and stored as ``other`` only after a narrow
+    privacy guard rejects obvious secrets, contact details, and clinical details.
     """
 
     if isinstance(value, OperationalReasonCode):
@@ -56,6 +95,7 @@ def normalise_legacy_reason(
     try:
         return OperationalReasonCode(normalised)
     except ValueError:
+        _ensure_reason_has_no_sensitive_detail(normalised)
         return OperationalReasonCode.OTHER
 
 
@@ -70,7 +110,7 @@ def normalise_legacy_reason_payload(
     are rejected normally with 422. Legacy ``reason`` is always removed before
     ``extra='forbid'`` validation. If a compatibility serializer sends
     ``reason_code: null`` together with legacy ``reason``, the legacy value is
-    used.
+    used after the privacy guard in :func:`normalise_legacy_reason`.
     """
 
     if not isinstance(data, dict):
