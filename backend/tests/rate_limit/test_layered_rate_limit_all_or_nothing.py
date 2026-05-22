@@ -154,6 +154,47 @@ def _custom_grouped_checks(
     ]
 
 
+def _sensitive_identifier_checks() -> list[tuple[RateLimitPolicy, RateLimitBucket]]:
+    return [
+        (
+            RateLimitPolicy(
+                name="test_grouped_organisation",
+                item=RateLimitItemPerMinute(10),
+                fail_open=False,
+            ),
+            RateLimitBucket(
+                kind="organisation",
+                raw_value="organisation:00000000-0000-4000-8000-0000000000aa",
+            ),
+        ),
+        (
+            RateLimitPolicy(
+                name="test_grouped_email",
+                item=RateLimitItemPerMinute(10),
+                fail_open=False,
+            ),
+            RateLimitBucket(
+                kind="organisation_target_email",
+                raw_value=(
+                    "organisation:00000000-0000-4000-8000-0000000000aa:"
+                    "email:patient@example.invalid"
+                ),
+            ),
+        ),
+        (
+            RateLimitPolicy(
+                name="test_grouped_invite_token",
+                item=RateLimitItemPerMinute(10),
+                fail_open=False,
+            ),
+            RateLimitBucket(
+                kind="invite_token",
+                raw_value="raw-invite-token-that-must-not-leak",
+            ),
+        ),
+    ]
+
+
 @pytest.mark.anyio
 async def test_grouped_bucket_later_denial_does_not_consume_earlier_bucket(
     monkeypatch,
@@ -215,6 +256,83 @@ async def test_runtime_grouped_redis_client_uses_lua_path_and_skips_fallback(
     )
 
     assert len(redis_client.calls) == 1
+    assert limiter.operations == []
+
+
+@pytest.mark.anyio
+async def test_grouped_redis_blocked_result_uses_blocking_bucket_retry_after(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    redis_client = _RecordingRedisClient(result=[0, 2, 1500])
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        grouped_redis_client=redis_client,
+    )
+    decisions: list[tuple[str, str, str]] = []
+
+    def _record_rate_limit_decision(
+        *, policy_name: str, result: str, identifier_kind: str
+    ) -> None:
+        decisions.append((policy_name, result, identifier_kind))
+
+    monkeypatch.setattr(
+        "app.core.rate_limit.dependencies.record_rate_limit_decision",
+        _record_rate_limit_decision,
+    )
+
+    with pytest.raises(TooManyRequestsError) as exc_info:
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=_organisation_checks(),
+        )
+
+    assert exc_info.value.headers["Retry-After"] == "2"
+    assert len(redis_client.calls) == 1
+    assert limiter.operations == []
+    assert (
+        INVITE_CREATE_ORGANISATION_DAILY_POLICY.name,
+        "blocked",
+        "organisation",
+    ) in decisions
+    assert (
+        INVITE_CREATE_ORGANISATION_POLICY.name,
+        "blocked",
+        "organisation",
+    ) not in decisions
+
+
+@pytest.mark.anyio
+async def test_grouped_redis_eval_args_do_not_contain_raw_identifiers(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True, True])
+    redis_client = _RecordingRedisClient()
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        grouped_redis_client=redis_client,
+    )
+
+    await check_rate_limits_for_buckets(
+        request=request,
+        checks=_sensitive_identifier_checks(),
+    )
+
+    assert len(redis_client.calls) == 1
+    eval_call = redis_client.calls[0]
+    eval_payload = repr(eval_call)
+
+    for raw_value in (
+        "00000000-0000-4000-8000-0000000000aa",
+        "patient@example.invalid",
+        "example.invalid",
+        "raw-invite-token-that-must-not-leak",
+    ):
+        assert raw_value not in eval_payload
+
+    assert "rlid:v1:hmac-sha256" in eval_payload
     assert limiter.operations == []
 
 
