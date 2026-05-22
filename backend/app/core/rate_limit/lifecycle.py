@@ -25,6 +25,20 @@ def _build_async_redis_uri(redis_url: str) -> str:
     return f"async+{redis_url}"
 
 
+def _build_grouped_redis_url(redis_url: str) -> str:
+    """Return a redis-py compatible URL for the grouped Lua client.
+
+    `limits` async storage accepts URLs prefixed with `async+redis://` or
+    `async+rediss://`. The raw `redis.asyncio.Redis.from_url()` client does not
+    understand that adapter prefix, so strip only the `async+` marker while
+    preserving the underlying Redis scheme and all URL components.
+    """
+
+    if redis_url.startswith("async+"):
+        return redis_url.removeprefix("async+")
+    return redis_url
+
+
 def _build_grouped_redis_client(redis_url: str) -> Any:
     """Create the explicit Redis client used by grouped Lua checks.
 
@@ -36,7 +50,7 @@ def _build_grouped_redis_client(redis_url: str) -> Any:
 
     from redis.asyncio import Redis
 
-    return Redis.from_url(redis_url)
+    return Redis.from_url(_build_grouped_redis_url(redis_url))
 
 
 def _select_rate_limiter_strategy(storage: Any) -> tuple[Any, str]:
