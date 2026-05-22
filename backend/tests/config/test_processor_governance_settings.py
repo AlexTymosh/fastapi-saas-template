@@ -44,6 +44,23 @@ def _set_keycloak_processor_governance(monkeypatch) -> None:
     )
 
 
+def _set_redis_processor_governance(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "PROCESSOR_GOVERNANCE__PROCESSORS__redis__PURPOSE",
+        "cache_broker_and_rate_limit_storage",
+    )
+    monkeypatch.setenv(
+        "PROCESSOR_GOVERNANCE__PROCESSORS__redis__DATA_CATEGORIES",
+        "rate_limit_identifiers,broker_metadata,healthcheck_metadata",
+    )
+    monkeypatch.setenv("PROCESSOR_GOVERNANCE__PROCESSORS__redis__REGION", "uk")
+    monkeypatch.setenv("PROCESSOR_GOVERNANCE__PROCESSORS__redis__DPA_SIGNED", "true")
+    monkeypatch.setenv(
+        "PROCESSOR_GOVERNANCE__PROCESSORS__redis__TRANSFER_MECHANISM",
+        "not_restricted",
+    )
+
+
 @pytest.mark.security
 @pytest.mark.privacy
 def test_prod_requires_keycloak_processor_governance_when_enabled(monkeypatch) -> None:
@@ -78,6 +95,58 @@ def test_prod_accepts_required_keycloak_processor_governance(monkeypatch) -> Non
     ]
     assert processor.region == "uk"
     assert processor.dpa_signed is True
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.privacy
+def test_prod_requires_redis_processor_governance_when_redis_url_is_configured(
+    monkeypatch,
+) -> None:
+    _set_prod_with_processor_governance_enabled(monkeypatch)
+    _set_keycloak_processor_governance(monkeypatch)
+    monkeypatch.setenv("PROCESSOR_GOVERNANCE__DATA_RESIDENCY_REGION", "uk")
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", "e" * 32)
+    monkeypatch.setenv("REDIS__URL", "rediss://redis.example:6379/0")
+
+    reset_settings_cache()
+    with pytest.raises(
+        ValueError,
+        match="PROCESSOR_GOVERNANCE__PROCESSORS__REDIS",
+    ):
+        get_settings()
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+@pytest.mark.privacy
+def test_prod_accepts_redis_processor_governance_without_app_rate_limiting(
+    monkeypatch,
+) -> None:
+    _set_prod_with_processor_governance_enabled(monkeypatch)
+    _set_keycloak_processor_governance(monkeypatch)
+    _set_redis_processor_governance(monkeypatch)
+    monkeypatch.setenv("PROCESSOR_GOVERNANCE__DATA_RESIDENCY_REGION", "uk")
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "false")
+    monkeypatch.setenv("RATE_LIMITING__ENFORCED_BY_EDGE", "true")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_HEADER_NAME", "X-Edge-Assertion")
+    monkeypatch.setenv("RATE_LIMITING__EDGE_ASSERTION_SECRET", "e" * 32)
+    monkeypatch.setenv("REDIS__URL", "rediss://redis.example:6379/0")
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.redis.url == "rediss://redis.example:6379/0"
+    assert "redis" in settings.processor_governance.processors
+    assert (
+        settings.processor_governance.processors["redis"].purpose
+        == "cache_broker_and_rate_limit_storage"
+    )
 
     reset_settings_cache()
 

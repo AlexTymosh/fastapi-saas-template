@@ -746,7 +746,7 @@ class Settings(BaseSettings):
         required_processors: set[str] = set()
         if self.auth.enabled:
             required_processors.add("keycloak")
-        if self.rate_limiting.enabled and self.redis.url:
+        if self.redis.url:
             required_processors.add("redis")
         if self.vault.enabled:
             required_processors.add("vault")
