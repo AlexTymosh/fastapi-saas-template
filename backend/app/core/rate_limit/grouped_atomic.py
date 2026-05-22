@@ -56,24 +56,46 @@ def build_grouped_redis_key(*, namespace: str, bucket_key: str) -> str:
     return f"{GROUPED_REDIS_HASH_TAG}:{namespace}:{bucket_key}"
 
 
-def is_redis_cross_slot_error(exc: Exception) -> bool:
-    """Return True for Redis Cluster same-slot/CROSSSLOT failures.
+_CLUSTER_FALLBACK_PREFIXES = frozenset({"moved", "ask", "tryagain", "clusterdown"})
 
-    redis-py exception class names differ between clients and versions, so this
-    deliberately checks both class name and message text instead of importing a
-    version-specific ClusterCrossSlotError class.
+
+def is_redis_cluster_fallback_error(exc: Exception) -> bool:
+    """Return True for Redis Cluster errors that should degrade to fallback.
+
+    Redis Cluster may reject or redirect a grouped Lua request during normal
+    cluster operation and resharding. Some clients expose dedicated exception
+    classes, while others surface plain RedisError instances with server error
+    text. Detect the stable server error prefixes and same-slot failures without
+    importing version-specific redis-py cluster exception classes.
     """
 
-    error_name = exc.__class__.__name__.lower().replace("_", "")
-    error_text = str(exc).lower()
-    compact_text = error_text.replace("_", "")
-    return (
+    error_name = exc.__class__.__name__.lower().replace("_", "").replace("-", "")
+    error_text = str(exc).strip().lower()
+    compact_text = error_text.replace("_", "").replace("-", "")
+    first_token = error_text.split(maxsplit=1)[0].lstrip("-") if error_text else ""
+
+    if (
         "crossslot" in error_name
         or "crossslot" in compact_text
         or "cross slot" in error_text
         or "same slot" in error_text
         or "same key slot" in error_text
+    ):
+        return True
+
+    if first_token in _CLUSTER_FALLBACK_PREFIXES:
+        return True
+
+    return any(
+        marker in error_name
+        for marker in ("moved", "askerror", "tryagain", "clusterdown")
     )
+
+
+def is_redis_cross_slot_error(exc: Exception) -> bool:
+    """Backward-compatible alias for older imports/tests."""
+
+    return is_redis_cluster_fallback_error(exc)
 
 
 def maybe_get_async_redis_client(storage: Any) -> Any | None:

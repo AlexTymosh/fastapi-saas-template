@@ -13,6 +13,7 @@ from app.core.rate_limit.grouped_atomic import (
     GROUPED_FIXED_WINDOW_CONSUME_LUA,
     GROUPED_REDIS_HASH_TAG,
     build_grouped_redis_key,
+    is_redis_cluster_fallback_error,
     maybe_get_async_redis_client,
 )
 from app.core.rate_limit.identifiers import RateLimitBucket
@@ -63,9 +64,12 @@ class _FailingRedisClient:
         raise RedisError("synthetic grouped redis script failure")
 
 
-class _CrossSlotRedisClient:
+class _ClusterFallbackRedisClient:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
     async def eval(self, *args: object, **kwargs: object) -> list[int]:
-        raise RedisError("CROSSSLOT Keys in request don't hash to the same slot")
+        raise RedisError(self.message)
 
 
 @dataclass
@@ -347,15 +351,26 @@ async def test_grouped_redis_eval_args_do_not_contain_raw_identifiers(
     assert limiter.operations == []
 
 
+@pytest.mark.parametrize(
+    "cluster_error",
+    [
+        "CROSSSLOT Keys in request don't hash to the same slot",
+        "MOVED 3999 127.0.0.1:6381",
+        "ASK 3999 127.0.0.1:6381",
+        "TRYAGAIN Multiple keys request during rehashing of slot",
+        "CLUSTERDOWN Hash slot not served",
+    ],
+)
 @pytest.mark.anyio
-async def test_grouped_redis_cross_slot_error_falls_back_to_compatibility_path(
+async def test_grouped_redis_cluster_errors_fall_back_to_compatibility_path(
     monkeypatch,
+    cluster_error: str,
 ) -> None:
     limiter = _PreflightAwareLimiter(test_sequence=[True, True])
     request = _build_request(
         monkeypatch,
         limiter,
-        grouped_redis_client=_CrossSlotRedisClient(),
+        grouped_redis_client=_ClusterFallbackRedisClient(cluster_error),
     )
 
     await check_rate_limits_for_buckets(
@@ -369,6 +384,24 @@ async def test_grouped_redis_cross_slot_error_falls_back_to_compatibility_path(
         "hit",
         "hit",
     ]
+
+
+def test_grouped_redis_cluster_fallback_error_detection() -> None:
+    for cluster_error in (
+        RedisError("CROSSSLOT Keys in request don't hash to the same slot"),
+        RedisError("MOVED 3999 127.0.0.1:6381"),
+        RedisError("ASK 3999 127.0.0.1:6381"),
+        RedisError("TRYAGAIN Multiple keys request during rehashing of slot"),
+        RedisError("CLUSTERDOWN Hash slot not served"),
+    ):
+        assert is_redis_cluster_fallback_error(cluster_error) is True
+
+    assert (
+        is_redis_cluster_fallback_error(
+            RedisError("synthetic grouped redis script failure")
+        )
+        is False
+    )
 
 
 @pytest.mark.anyio

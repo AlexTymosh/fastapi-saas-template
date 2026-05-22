@@ -25,7 +25,7 @@ from app.core.rate_limit.grouped_atomic import (
     GroupedBucketSpec,
     atomic_consume_grouped_buckets,
     build_grouped_redis_key,
-    is_redis_cross_slot_error,
+    is_redis_cluster_fallback_error,
     maybe_get_async_redis_client,
 )
 from app.core.rate_limit.identifiers import (
@@ -527,7 +527,7 @@ async def check_rate_limits_for_buckets(
                 timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
             )
         except Exception as exc:
-            if is_redis_cross_slot_error(exc):
+            if is_redis_cluster_fallback_error(exc):
                 strictest = _strictest_prepared_check(prepared_checks)
                 record_rate_limit_backend_error(
                     policy_name=strictest.policy.name,
@@ -535,7 +535,7 @@ async def check_rate_limits_for_buckets(
                     error_type=exc.__class__.__name__,
                 )
                 log.warning(
-                    "rate_limiter_grouped_cross_slot_fallback",
+                    "rate_limiter_grouped_cluster_fallback",
                     policy=strictest.policy.name,
                     identifier_kind=strictest.identifier.kind,
                     reason=exc.__class__.__name__,
