@@ -14,6 +14,9 @@ _SECURE_DATABASE_SSL_MODES = frozenset({"require", "verify-ca", "verify-full"})
 _HTTP_HEADER_NAME_CHARS = frozenset(
     "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
+_RESTRICTED_TRANSFER_MECHANISMS = frozenset(
+    {"adequacy", "uk_idta", "uk_addendum", "bcr", "derogation"}
+)
 
 
 def _normalise_string_list(
@@ -454,6 +457,67 @@ class ObservabilitySettings(BaseModel):
         return self
 
 
+class ProcessorSettings(BaseModel):
+    """Governance metadata for an external processor/subprocessor."""
+
+    purpose: str
+    data_categories: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    region: str | None = None
+    country: str | None = None
+    dpa_signed: bool = False
+    restricted_transfer: bool = False
+    transfer_mechanism: Literal[
+        "not_restricted",
+        "adequacy",
+        "uk_idta",
+        "uk_addendum",
+        "bcr",
+        "derogation",
+    ] = "not_restricted"
+    subprocessors: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("purpose", "region", "country", mode="before")
+    @classmethod
+    def normalise_optional_text(cls, value: str | None) -> str | None:
+        return _normalise_optional_string(value)
+
+    @field_validator("data_categories", "subprocessors", mode="before")
+    @classmethod
+    def normalise_processor_lists(
+        cls, value: list[str] | tuple[str, ...] | str | None
+    ) -> list[str]:
+        return _normalise_string_list(value)
+
+
+class ProcessorGovernanceSettings(BaseModel):
+    """Deployment-time processor and transfer governance guardrail.
+
+    The guardrail is intentionally opt-in for this incremental slice. Existing
+    prod/staging settings tests create production Settings objects for unrelated
+    security checks; enforcing processor metadata globally would mask those
+    more specific validations and make configuration tests brittle. A later
+    issue slice can switch this from opt-in to mandatory after deployment docs,
+    environment examples, and all prod fixtures are updated consistently.
+    """
+
+    enabled: bool = False
+    required: bool = True
+    data_residency_region: str | None = None
+    processors: dict[str, ProcessorSettings] = Field(default_factory=dict)
+
+    @field_validator("data_residency_region")
+    @classmethod
+    def normalise_data_residency_region(cls, value: str | None) -> str | None:
+        return _normalise_optional_string(value)
+
+    @field_validator("processors", mode="before")
+    @classmethod
+    def normalise_processor_keys(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        return {str(key).strip().lower(): item for key, item in value.items()}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -480,6 +544,9 @@ class Settings(BaseSettings):
     )
     audit: AuditSettings = Field(default_factory=AuditSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+    processor_governance: ProcessorGovernanceSettings = Field(
+        default_factory=ProcessorGovernanceSettings
+    )
     cors: CorsSettings = Field(default_factory=CorsSettings)
 
     @model_validator(mode="after")
@@ -507,6 +574,7 @@ class Settings(BaseSettings):
             self._validate_trusted_proxy_header_policy(env=env)
             self._validate_pre_auth_policy(env=env)
             self._validate_edge_enforced_mode(env=env)
+            self._validate_processor_governance(env=env)
 
         if env == "prod":
             if not self.auth.issuer_url.startswith("https://"):
@@ -608,6 +676,83 @@ class Settings(BaseSettings):
                 "RATE_LIMITING__ENFORCED_BY_EDGE=true requires trusted edge "
                 f"controls in {env}: " + ", ".join(missing)
             )
+
+    def _validate_processor_governance(self, *, env: str) -> None:
+        if not self.processor_governance.enabled:
+            return
+
+        required_processors = self._required_processor_names()
+        if not required_processors:
+            return
+
+        if not self.processor_governance.required:
+            raise ValueError(
+                "PROCESSOR_GOVERNANCE__REQUIRED=false is not allowed in "
+                f"{env} when processor governance is enabled and external "
+                "processors are enabled"
+            )
+
+        if not self.processor_governance.data_residency_region:
+            raise ValueError(
+                "PROCESSOR_GOVERNANCE__DATA_RESIDENCY_REGION is required in "
+                f"{env} when external processors are enabled"
+            )
+
+        processors = self.processor_governance.processors
+        missing_processors = sorted(required_processors - set(processors))
+        if missing_processors:
+            missing_envs = ", ".join(
+                f"PROCESSOR_GOVERNANCE__PROCESSORS__{name.upper()}"
+                for name in missing_processors
+            )
+            raise ValueError(
+                f"Missing processor governance metadata in {env}: {missing_envs}"
+            )
+
+        invalid_processors: list[str] = []
+        invalid_transfers: list[str] = []
+        for name in sorted(required_processors):
+            processor = processors[name]
+            missing_fields = []
+            if not processor.purpose:
+                missing_fields.append("PURPOSE")
+            if not processor.data_categories:
+                missing_fields.append("DATA_CATEGORIES")
+            if not processor.region and not processor.country:
+                missing_fields.append("REGION or COUNTRY")
+            if not processor.dpa_signed:
+                missing_fields.append("DPA_SIGNED")
+            if missing_fields:
+                invalid_processors.append(f"{name} ({', '.join(missing_fields)})")
+            if (
+                processor.restricted_transfer
+                and processor.transfer_mechanism not in _RESTRICTED_TRANSFER_MECHANISMS
+            ):
+                invalid_transfers.append(name)
+
+        if invalid_processors:
+            raise ValueError(
+                "Incomplete processor governance metadata in "
+                f"{env}: " + "; ".join(invalid_processors)
+            )
+        if invalid_transfers:
+            raise ValueError(
+                "Restricted processor transfers require an approved transfer "
+                "mechanism in "
+                f"{env}: " + ", ".join(invalid_transfers)
+            )
+
+    def _required_processor_names(self) -> set[str]:
+        required_processors: set[str] = set()
+        if self.auth.enabled:
+            required_processors.add("keycloak")
+        if self.rate_limiting.enabled and self.redis.url:
+            required_processors.add("redis")
+        if self.vault.enabled:
+            required_processors.add("vault")
+        if self.observability.metrics_enabled and self.observability.exporter == "otlp":
+            required_processors.add("otlp")
+        return required_processors
 
     def _validate_production_transport_security(self) -> None:
         if (
