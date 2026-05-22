@@ -9,7 +9,12 @@ from redis.exceptions import RedisError
 
 from app.core.errors import RateLimiterUnavailableError, TooManyRequestsError
 from app.core.rate_limit.dependencies import check_rate_limits_for_buckets
-from app.core.rate_limit.grouped_atomic import maybe_get_async_redis_client
+from app.core.rate_limit.grouped_atomic import (
+    GROUPED_FIXED_WINDOW_CONSUME_LUA,
+    GROUPED_REDIS_HASH_TAG,
+    build_grouped_redis_key,
+    maybe_get_async_redis_client,
+)
 from app.core.rate_limit.identifiers import RateLimitBucket
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
@@ -56,6 +61,11 @@ class _PreflightAwareLimiter:
 class _FailingRedisClient:
     async def eval(self, *args: object, **kwargs: object) -> list[int]:
         raise RedisError("synthetic grouped redis script failure")
+
+
+class _CrossSlotRedisClient:
+    async def eval(self, *args: object, **kwargs: object) -> list[int]:
+        raise RedisError("CROSSSLOT Keys in request don't hash to the same slot")
 
 
 @dataclass
@@ -332,8 +342,33 @@ async def test_grouped_redis_eval_args_do_not_contain_raw_identifiers(
     ):
         assert raw_value not in eval_payload
 
+    assert GROUPED_REDIS_HASH_TAG in eval_payload
     assert "rlid:v1:hmac-sha256" in eval_payload
     assert limiter.operations == []
+
+
+@pytest.mark.anyio
+async def test_grouped_redis_cross_slot_error_falls_back_to_compatibility_path(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        grouped_redis_client=_CrossSlotRedisClient(),
+    )
+
+    await check_rate_limits_for_buckets(
+        request=request,
+        checks=_organisation_checks(),
+    )
+
+    assert [operation[0] for operation in limiter.operations] == [
+        "test",
+        "test",
+        "hit",
+        "hit",
+    ]
 
 
 @pytest.mark.anyio
@@ -380,3 +415,18 @@ def test_grouped_redis_client_discovery_supports_limits_bridge_shape() -> None:
     storage = _BridgeBackedStorage(bridge=SimpleNamespace(client=redis_client))
 
     assert maybe_get_async_redis_client(storage) is redis_client
+
+
+def test_grouped_redis_key_uses_shared_hash_tag_for_cluster_scripts() -> None:
+    key = build_grouped_redis_key(
+        namespace="test-rl:invite_create_organisation:organisation",
+        bucket_key="rlid:v1:hmac-sha256:abc123",
+    )
+
+    assert key.startswith(f"{GROUPED_REDIS_HASH_TAG}:")
+    assert "rlid:v1:hmac-sha256:abc123" in key
+
+
+def test_grouped_lua_repairs_missing_ttl_on_blocked_bucket() -> None:
+    assert "if ttl_ms < 0 then" in GROUPED_FIXED_WINDOW_CONSUME_LUA
+    assert "redis.call('PEXPIRE', KEYS[i], ttl_ms)" in GROUPED_FIXED_WINDOW_CONSUME_LUA

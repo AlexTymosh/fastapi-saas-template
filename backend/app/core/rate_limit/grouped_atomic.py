@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+GROUPED_REDIS_HASH_TAG = "{rl-grouped-v1}"
+
 GROUPED_FIXED_WINDOW_CONSUME_LUA = """
 local n = tonumber(ARGV[1])
 for i = 1, n do
@@ -12,6 +14,7 @@ for i = 1, n do
     local ttl_ms = redis.call('PTTL', KEYS[i])
     if ttl_ms < 0 then
       ttl_ms = tonumber(ARGV[1 + n + i])
+      redis.call('PEXPIRE', KEYS[i], ttl_ms)
     end
     return {0, i, ttl_ms}
   end
@@ -39,6 +42,38 @@ class GroupedConsumeResult:
     allowed: bool
     blocked_index: int | None
     retry_after_seconds: int | None
+
+
+def build_grouped_redis_key(*, namespace: str, bucket_key: str) -> str:
+    """Build a grouped rate-limit key that is safe for Redis Cluster Lua.
+
+    Redis Cluster requires all keys touched by one script invocation to live in
+    the same hash slot. A shared hash tag preserves the all-or-nothing Lua path
+    for grouped checks while keeping the existing HMAC identifier as the only
+    per-subject key material.
+    """
+
+    return f"{GROUPED_REDIS_HASH_TAG}:{namespace}:{bucket_key}"
+
+
+def is_redis_cross_slot_error(exc: Exception) -> bool:
+    """Return True for Redis Cluster same-slot/CROSSSLOT failures.
+
+    redis-py exception class names differ between clients and versions, so this
+    deliberately checks both class name and message text instead of importing a
+    version-specific ClusterCrossSlotError class.
+    """
+
+    error_name = exc.__class__.__name__.lower().replace("_", "")
+    error_text = str(exc).lower()
+    compact_text = error_text.replace("_", "")
+    return (
+        "crossslot" in error_name
+        or "crossslot" in compact_text
+        or "cross slot" in error_text
+        or "same slot" in error_text
+        or "same key slot" in error_text
+    )
 
 
 def maybe_get_async_redis_client(storage: Any) -> Any | None:

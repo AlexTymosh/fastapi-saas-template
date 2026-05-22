@@ -314,15 +314,19 @@ Implementation notes:
 
 - Keys are passed via Lua `KEYS`; limits and window metadata are passed via `ARGV`.
 - The script is static and parameterised (no per-request Lua source generation).
+- Grouped Redis keys are prefixed with the shared `{rl-grouped-v1}` hash tag so all keys touched by one grouped Lua invocation are mapped to the same Redis Cluster hash slot while still keeping HMAC bucket identifiers as the only per-subject key material.
 - The grouped atomic path uses simple Redis counters plus TTL, so its grouped semantics are fixed-window style even when the single-bucket limiter strategy is moving-window or sliding-window.
 - A compatibility fallback path remains for non-Redis runtimes and lightweight test doubles.
+- If Redis Cluster still returns a CROSSSLOT/same-slot script error, the request falls back to the compatibility `test()` + `hit()` path instead of turning fail-closed invite create/resend checks into rate-limiter-unavailable responses.
 - Redis script/backend errors, including script response errors, are routed through the strictest grouped policy's fail-open/fail-closed setting.
+- A blocked bucket without TTL is repaired defensively by setting its expected expiry before returning `Retry-After`.
 
 Redis Cluster caveat:
 
 - Grouped Lua evaluation requires all grouped keys to be in the same Redis hash slot.
-- This template currently targets single-node Redis for grouped atomic limits.
-- Redis Cluster is not supported for grouped limits unless key design uses hash tags that force same-slot grouping.
+- The default grouped key builder uses a shared hash tag for this purpose.
+- This keeps grouped Lua atomicity available in Redis Cluster, but concentrates grouped limiter keys into one hash slot. For higher-volume clustered deployments, introduce a deliberate hash-tag sharding strategy and prove that every logical grouped bucket still uses one stable Redis key.
+- The CROSSSLOT fallback preserves availability and previous behaviour, but it is not atomic and should be treated as degraded mode.
 
 ## Retry-After contract
 
