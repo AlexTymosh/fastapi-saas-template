@@ -270,3 +270,6 @@ Start here:
 - Use environment-driven configuration; never commit secrets.
 - Use `uv` and Taskfile commands for backend dependency, lint, and test workflows.
 - Read `AGENTS.md` before AI-agent or Codex work.
+
+
+- Grouped business bucket checks execute atomically via a Redis Lua all-or-nothing operation in Redis-backed mode; the template targets single-node Redis for this grouped atomic path.

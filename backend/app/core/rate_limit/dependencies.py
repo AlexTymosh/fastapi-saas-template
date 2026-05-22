@@ -20,6 +20,11 @@ from app.core.observability import (
     record_rate_limit_check_duration,
     record_rate_limit_decision,
 )
+from app.core.rate_limit.grouped_atomic import (
+    GroupedBucketSpec,
+    atomic_consume_grouped_buckets,
+    maybe_get_async_redis_client,
+)
 from app.core.rate_limit.identifiers import (
     RateLimitBucket,
     RateLimitIdentifier,
@@ -460,9 +465,73 @@ async def check_rate_limits_for_buckets(
         for policy, bucket in checks
     ]
 
-    # All grouped business buckets are preflighted first. Only if every bucket
-    # can be consumed do we mutate any quota via hit(). This prevents earlier
-    # buckets from being burned when a later bucket rejects the request.
+    runtime = _runtime_from_request(request)
+    redis_client = None
+    if runtime is not None and runtime.storage is not None:
+        redis_client = maybe_get_async_redis_client(runtime.storage)
+
+    if redis_client is not None:
+        bucket_specs = [
+            GroupedBucketSpec(
+                key=f"{prepared.namespace}:{prepared.identifier.bucket_key}",
+                limit=prepared.policy.item.amount,
+                expiry_seconds=prepared.policy.item.get_expiry(),
+            )
+            for prepared in prepared_checks
+        ]
+        try:
+            grouped_result = await _await_with_timeout(
+                atomic_consume_grouped_buckets(
+                    redis_client=redis_client,
+                    buckets=bucket_specs,
+                ),
+                timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
+            )
+        except (
+            RedisConnectionError,
+            RedisTimeoutError,
+            TimeoutError,
+            RuntimeError,
+        ) as exc:
+            strictest = min(
+                prepared_checks, key=lambda prepared: prepared.policy.fail_open
+            )
+            if await _handle_rate_limit_backend_error(
+                request=request,
+                policy=strictest.policy,
+                identifier=strictest.identifier,
+                started_at=strictest.started_at,
+                exc=exc,
+            ):
+                return
+            raise
+
+        if grouped_result.allowed:
+            for prepared in prepared_checks:
+                _record_rate_limit_outcome(
+                    policy_name=prepared.policy.name,
+                    result="allowed",
+                    identifier_kind=prepared.identifier.kind,
+                    started_at=prepared.started_at,
+                )
+            return
+
+        blocked = prepared_checks[grouped_result.blocked_index or 0]
+        _record_rate_limit_outcome(
+            policy_name=blocked.policy.name,
+            result="blocked",
+            identifier_kind=blocked.identifier.kind,
+            started_at=blocked.started_at,
+        )
+        raise TooManyRequestsError(
+            detail="Too many requests.",
+            headers={
+                "Retry-After": str(grouped_result.retry_after_seconds or 1),
+                "Access-Control-Expose-Headers": "Retry-After",
+            },
+        )
+
+    # Compatibility fallback for non-Redis runtimes and lightweight test doubles.
     for prepared in prepared_checks:
         await _test_rate_limit_for_identifier(
             request=request,

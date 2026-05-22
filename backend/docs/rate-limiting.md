@@ -297,6 +297,28 @@ Runtime/backend failures follow policy fail mode.
 
 In all backend failure paths, observability metrics are emitted.
 
+## Grouped business bucket atomicity
+
+Grouped business bucket checks use a Redis Lua script with all-or-nothing semantics in one round-trip for Redis-backed execution:
+
+- all grouped bucket keys are checked first;
+- if any bucket is already at/over limit, no grouped bucket is incremented;
+- grouped increments happen only when every bucket can be consumed.
+
+This closes concurrent TOCTOU preflight/hit races for grouped business checks.
+
+Implementation notes:
+
+- Keys are passed via Lua `KEYS`; limits and window metadata are passed via `ARGV`.
+- The script is static and parameterised (no per-request Lua source generation).
+- A compatibility fallback path remains for non-Redis runtimes and lightweight test doubles.
+
+Redis Cluster caveat:
+
+- Grouped Lua evaluation requires all grouped keys to be in the same Redis hash slot.
+- This template currently targets single-node Redis for grouped atomic limits.
+- Redis Cluster is not supported for grouped limits unless key design uses hash tags that force same-slot grouping.
+
 ## Retry-After contract
 
 Over-limit responses must:
