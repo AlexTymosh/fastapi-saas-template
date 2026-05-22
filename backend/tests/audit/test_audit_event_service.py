@@ -107,6 +107,50 @@ def test_build_audit_context_uses_forwarded_ip_from_trusted_proxy() -> None:
     assert context.user_agent == "pytest-agent"
 
 
+def test_build_audit_context_drops_invalid_peer_host() -> None:
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/example",
+        "headers": [(b"user-agent", b"pytest-agent")],
+        "client": ("local-test-socket", 32100),
+    }
+    request = Request(scope)
+
+    context = build_audit_context_from_request(actor_user_id=None, request=request)
+
+    assert context.ip_address is None
+    assert minimise_ip_address(context.ip_address) is None
+
+
+def test_build_audit_context_ignores_forwarded_ip_when_peer_host_is_invalid() -> None:
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/example",
+        "headers": [
+            (b"user-agent", b"pytest-agent"),
+            (b"x-forwarded-for", b"203.0.113.1"),
+        ],
+        "client": ("local-test-socket", 32100),
+        "app": SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(
+                    rate_limiting=SimpleNamespace(
+                        trust_proxy_headers=True,
+                        trusted_proxy_cidrs=["127.0.0.1/32"],
+                    )
+                )
+            )
+        ),
+    }
+    request = Request(scope)
+
+    context = build_audit_context_from_request(actor_user_id=None, request=request)
+
+    assert context.ip_address is None
+
+
 def test_build_audit_context_uses_injected_app_audit_settings() -> None:
     scope = {
         "type": "http",
