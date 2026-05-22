@@ -125,6 +125,39 @@ VAULT__FAIL_FAST=true
 
 Exact production authentication strategy can later be replaced with AppRole, Kubernetes auth, cloud IAM auth, or another supported Vault auth method.
 
+## Processor governance
+
+`PROCESSOR_GOVERNANCE__ENABLED` is an optional staging/prod deployment guardrail. When it is enabled, startup validation checks configured external processors and requires governance metadata for each active processor.
+
+The current required processor keys are derived from actual runtime settings:
+
+- `keycloak` when `AUTH__ENABLED=true`;
+- `redis` whenever `REDIS__URL` is set, regardless of whether app rate limiting or edge-enforced rate limiting is used;
+- `vault` when `VAULT__ENABLED=true`;
+- `otlp` when `OBSERVABILITY__METRICS_ENABLED=true` and `OBSERVABILITY__EXPORTER=otlp`.
+
+This rule is deliberate. Redis can be used outside the rate limiter path, for example as a task broker or health-checked infrastructure dependency. Do not couple Redis processor governance to `RATE_LIMITING__ENABLED`.
+
+Minimum metadata per configured processor:
+
+```env
+PROCESSOR_GOVERNANCE__ENABLED=true
+PROCESSOR_GOVERNANCE__REQUIRED=true
+PROCESSOR_GOVERNANCE__DATA_RESIDENCY_REGION=uk
+
+PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__PURPOSE=cache_rate_limit_storage_and_async_task_broker
+PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__DATA_CATEGORIES=rate_limit_identifiers,healthcheck_metadata
+PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__REGION=uk
+PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__COUNTRY=GB
+PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__DPA_SIGNED=true
+PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__RESTRICTED_TRANSFER=false
+PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__TRANSFER_MECHANISM=not_restricted
+```
+
+For restricted transfers, `TRANSFER_MECHANISM` must be one of the approved mechanisms implemented in settings validation: `adequacy`, `uk_idta`, `uk_addendum`, `bcr`, or `derogation`.
+
+This is not a complete data-protection impact assessment, DPA registry, or clinical cross-border transfer policy. It is a startup guardrail that prevents obvious undocumented processor use while the broader GDPR/privacy module is still planned.
+
 ## Database migrations
 
 Local Docker Compose migrations are explicit:
@@ -160,6 +193,7 @@ Production/staging should provide:
 - real authentication settings
 - real rate-limit secret or edge-enforced rate limiting
 - real secret provider configuration if Vault is enabled
+- processor governance metadata when `PROCESSOR_GOVERNANCE__ENABLED=true`
 
 Production validation should reject known local/dev placeholders such as:
 
@@ -177,4 +211,5 @@ Do not:
 - commit `.env`;
 - use Docker Compose local defaults in staging or production;
 - run migrations implicitly inside every app container startup;
-- treat Vault dev mode as production-ready.
+- treat Vault dev mode as production-ready;
+- treat `PROCESSOR_GOVERNANCE__ENABLED=false` as evidence that processors are governed.
