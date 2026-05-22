@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
@@ -39,6 +40,15 @@ from app.core.rate_limit.policies import (
 from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
 log = get_logger(__name__)
+
+_RATE_LIMIT_BACKEND_ERRORS = (
+    RedisConnectionError,
+    RedisTimeoutError,
+    RedisError,
+    TimeoutError,
+    RuntimeError,
+)
+_RATE_LIMIT_STATS_FALLBACK_ERRORS = (*_RATE_LIMIT_BACKEND_ERRORS, AttributeError)
 
 
 @dataclass(frozen=True)
@@ -142,13 +152,7 @@ async def _retry_after_for_identifier(
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
         return _build_retry_after(window.reset_time)
-    except (
-        RedisConnectionError,
-        RedisTimeoutError,
-        TimeoutError,
-        RuntimeError,
-        AttributeError,
-    ):
+    except _RATE_LIMIT_STATS_FALLBACK_ERRORS:
         return str(policy.item.get_expiry())
 
 
@@ -242,12 +246,7 @@ async def _check_rate_limit_for_identifier(
             runtime.limiter.hit(policy.item, namespace, identifier.bucket_key),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
-    except (
-        RedisConnectionError,
-        RedisTimeoutError,
-        TimeoutError,
-        RuntimeError,
-    ) as exc:
+    except _RATE_LIMIT_BACKEND_ERRORS as exc:
         if await _handle_rate_limit_backend_error(
             request=request,
             policy=policy,
@@ -314,12 +313,7 @@ async def _test_rate_limit_for_identifier(
             test_method(policy.item, namespace, identifier.bucket_key),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
-    except (
-        RedisConnectionError,
-        RedisTimeoutError,
-        TimeoutError,
-        RuntimeError,
-    ) as exc:
+    except _RATE_LIMIT_BACKEND_ERRORS as exc:
         if await _handle_rate_limit_backend_error(
             request=request,
             policy=policy,
@@ -487,12 +481,7 @@ async def check_rate_limits_for_buckets(
                 ),
                 timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
             )
-        except (
-            RedisConnectionError,
-            RedisTimeoutError,
-            TimeoutError,
-            RuntimeError,
-        ) as exc:
+        except _RATE_LIMIT_BACKEND_ERRORS as exc:
             strictest = min(
                 prepared_checks, key=lambda prepared: prepared.policy.fail_open
             )

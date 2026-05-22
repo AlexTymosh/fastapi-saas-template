@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -240,16 +241,16 @@ async def test_real_redis_grouped_rate_limit_is_atomic_under_concurrency(
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            start = __import__("asyncio").Event()
+            start = asyncio.Event()
 
             async def _fire() -> int:
                 await start.wait()
                 response = await client.post("/api/v1/integration/grouped-atomic")
                 return response.status_code
 
-            tasks = [__import__("asyncio").create_task(_fire()) for _ in range(30)]
+            tasks = [asyncio.create_task(_fire()) for _ in range(30)]
             start.set()
-            statuses = await __import__("asyncio").gather(*tasks)
+            statuses = await asyncio.gather(*tasks)
 
     assert statuses.count(200) == 1
     assert statuses.count(429) == 29

@@ -4,14 +4,17 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from limits import RateLimitItemPerMinute
+from redis.exceptions import RedisError
 
-from app.core.errors import TooManyRequestsError
+from app.core.errors import RateLimiterUnavailableError, TooManyRequestsError
 from app.core.rate_limit.dependencies import check_rate_limits_for_buckets
 from app.core.rate_limit.identifiers import RateLimitBucket
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
     INVITE_CREATE_ORGANISATION_DAILY_POLICY,
     INVITE_CREATE_ORGANISATION_POLICY,
+    RateLimitPolicy,
 )
 from app.core.rate_limit.registry import build_effective_policy_registry
 from app.main import create_app
@@ -49,7 +52,22 @@ class _PreflightAwareLimiter:
         return _WindowStats(reset_time=4_102_444_800.0)
 
 
-def _build_request(monkeypatch, limiter: _PreflightAwareLimiter):
+class _FailingRedisClient:
+    async def eval(self, *args, **kwargs):
+        raise RedisError("synthetic grouped redis script failure")
+
+
+@dataclass
+class _RedisBackedStorage:
+    client: object
+
+
+def _build_request(
+    monkeypatch,
+    limiter: _PreflightAwareLimiter,
+    *,
+    storage: object | None = None,
+):
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
     monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "false")
     monkeypatch.setenv(
@@ -65,7 +83,7 @@ def _build_request(monkeypatch, limiter: _PreflightAwareLimiter):
     )
     app.state.rate_limiter_runtime = RateLimiterRuntime(
         enabled=True,
-        storage=object(),
+        storage=storage if storage is not None else object(),
         limiter=limiter,
         strategy_name="moving-window",
     )
@@ -91,6 +109,29 @@ def _organisation_checks():
                 kind="organisation",
                 raw_value="organisation:00000000-0000-4000-8000-000000000001",
             ),
+        ),
+    ]
+
+
+def _custom_grouped_checks(
+    *, fail_open: bool
+) -> list[tuple[RateLimitPolicy, RateLimitBucket]]:
+    return [
+        (
+            RateLimitPolicy(
+                name="test_grouped_fail_open",
+                item=RateLimitItemPerMinute(10),
+                fail_open=True,
+            ),
+            RateLimitBucket(kind="organisation", raw_value="organisation:one"),
+        ),
+        (
+            RateLimitPolicy(
+                name="test_grouped_strictest",
+                item=RateLimitItemPerMinute(10),
+                fail_open=fail_open,
+            ),
+            RateLimitBucket(kind="organisation", raw_value="organisation:two"),
         ),
     ]
 
@@ -136,3 +177,42 @@ async def test_grouped_bucket_hits_run_only_after_all_preflight_checks_pass(
         "hit",
         "hit",
     ]
+
+
+@pytest.mark.anyio
+async def test_grouped_redis_errors_use_strictest_policy_fail_closed(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        storage=_RedisBackedStorage(client=_FailingRedisClient()),
+    )
+
+    with pytest.raises(RateLimiterUnavailableError):
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=_custom_grouped_checks(fail_open=False),
+        )
+
+    assert limiter.operations == []
+
+
+@pytest.mark.anyio
+async def test_grouped_redis_errors_fail_open_when_all_grouped_policies_allow_it(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        storage=_RedisBackedStorage(client=_FailingRedisClient()),
+    )
+
+    await check_rate_limits_for_buckets(
+        request=request,
+        checks=_custom_grouped_checks(fail_open=True),
+    )
+
+    assert limiter.operations == []
