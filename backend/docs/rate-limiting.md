@@ -317,7 +317,7 @@ Implementation notes:
 - Grouped Redis keys are prefixed with the shared `{rl-grouped-v1}` hash tag so all keys touched by one grouped Lua invocation are mapped to the same Redis Cluster hash slot while still keeping HMAC bucket identifiers as the only per-subject key material.
 - The grouped atomic path uses simple Redis counters plus TTL, so its grouped semantics are fixed-window style even when the single-bucket limiter strategy is moving-window or sliding-window.
 - A compatibility fallback path remains for non-Redis runtimes and lightweight test doubles.
-- If Redis Cluster still returns a CROSSSLOT/same-slot script error, the request falls back to the compatibility `test()` + `hit()` path instead of turning fail-closed invite create/resend checks into rate-limiter-unavailable responses.
+- If Redis Cluster returns CROSSSLOT, MOVED, ASK, CLUSTERDOWN, TRYAGAIN, or another recognised cluster routing/same-slot script error, the request falls back to the compatibility `test()` + `hit()` path instead of turning fail-closed invite create/resend checks into rate-limiter-unavailable responses.
 - Redis script/backend errors, including script response errors, are routed through the strictest grouped policy's fail-open/fail-closed setting.
 - A blocked bucket without TTL is repaired defensively by setting its expected expiry before returning `Retry-After`.
 

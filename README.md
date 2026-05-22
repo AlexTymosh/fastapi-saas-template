@@ -270,4 +270,4 @@ Start here:
 - Use environment-driven configuration; never commit secrets.
 - Use `uv` and Taskfile commands for backend dependency, lint, and test workflows.
 - Read `AGENTS.md` before AI-agent or Codex work.
-- Grouped business bucket checks execute atomically via Redis Lua in Redis-backed mode; grouped keys use a shared Redis Cluster hash tag and fall back to the compatibility path only if Redis still reports a CROSSSLOT/same-slot script error.
+- Grouped business bucket checks execute atomically via Redis Lua in Redis-backed mode; grouped keys use a shared Redis Cluster hash tag and fall back to the compatibility path only if Redis reports CROSSSLOT, MOVED, ASK, CLUSTERDOWN, TRYAGAIN, or related cluster routing errors.
