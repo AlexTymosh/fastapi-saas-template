@@ -18,7 +18,8 @@ for i = 1, n do
 end
 for i = 1, n do
   local next_value = redis.call('INCR', KEYS[i])
-  if next_value == 1 then
+  local ttl_ms = redis.call('PTTL', KEYS[i])
+  if next_value == 1 or ttl_ms < 0 then
     redis.call('PEXPIRE', KEYS[i], tonumber(ARGV[1 + n + i]))
   end
 end
@@ -41,18 +42,56 @@ class GroupedConsumeResult:
 
 
 def maybe_get_async_redis_client(storage: Any) -> Any | None:
-    for attr in ("storage", "_storage", "client", "_client", "redis"):
-        candidate = getattr(storage, attr, None)
-        if candidate is not None and callable(getattr(candidate, "eval", None)):
-            return candidate
-    get_conn = getattr(storage, "get_connection", None)
+    """Best-effort fallback discovery for non-standard Redis-backed runtimes.
+
+    Production initialisation now stores an explicit `grouped_redis_client` on
+    `RateLimiterRuntime`. This helper remains only as a compatibility fallback
+    for tests, custom runtimes, or older initialisation paths.
+    """
+
+    return _find_eval_client(storage, seen=set(), depth=0)
+
+
+def _find_eval_client(
+    candidate: Any,
+    *,
+    seen: set[int],
+    depth: int,
+) -> Any | None:
+    if candidate is None or depth > 4:
+        return None
+
+    candidate_id = id(candidate)
+    if candidate_id in seen:
+        return None
+    seen.add(candidate_id)
+
+    if callable(getattr(candidate, "eval", None)):
+        return candidate
+
+    for attr in (
+        "grouped_redis_client",
+        "bridge",
+        "storage",
+        "_storage",
+        "client",
+        "_client",
+        "redis",
+        "_redis",
+    ):
+        child = getattr(candidate, attr, None)
+        found = _find_eval_client(child, seen=seen, depth=depth + 1)
+        if found is not None:
+            return found
+
+    get_conn = getattr(candidate, "get_connection", None)
     if callable(get_conn):
         try:
-            candidate = get_conn()
+            child = get_conn()
         except Exception:
             return None
-        if candidate is not None and callable(getattr(candidate, "eval", None)):
-            return candidate
+        return _find_eval_client(child, seen=seen, depth=depth + 1)
+
     return None
 
 

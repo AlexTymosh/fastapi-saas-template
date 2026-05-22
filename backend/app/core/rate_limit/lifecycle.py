@@ -16,12 +16,27 @@ class RateLimiterRuntime:
     storage: Any | None
     limiter: Any | None
     strategy_name: str | None
+    grouped_redis_client: Any | None = None
 
 
 def _build_async_redis_uri(redis_url: str) -> str:
     if redis_url.startswith("async+"):
         return redis_url
     return f"async+{redis_url}"
+
+
+def _build_grouped_redis_client(redis_url: str) -> Any:
+    """Create the explicit Redis client used by grouped Lua checks.
+
+    The `limits` async Redis storage hides its backend behind bridge-specific
+    internals (`coredis`, `redispy`, `valkey`). Grouped rate limits need a raw
+    `EVAL` client, so keep that dependency explicit instead of relying on
+    fragile introspection of the `limits` storage object.
+    """
+
+    from redis.asyncio import Redis
+
+    return Redis.from_url(redis_url)
 
 
 def _select_rate_limiter_strategy(storage: Any) -> tuple[Any, str]:
@@ -53,6 +68,20 @@ def _serialise_effective_policy(policy: Any) -> dict[str, Any]:
         "sensitivity": policy.sensitivity,
         "override_applied": policy.override_applied,
     }
+
+
+async def _close_maybe_async(resource: Any | None) -> None:
+    if resource is None:
+        return
+
+    for method_name in ("aclose", "close"):
+        close_method = getattr(resource, method_name, None)
+        if not callable(close_method):
+            continue
+        maybe_awaitable = close_method()
+        if hasattr(maybe_awaitable, "__await__"):
+            await maybe_awaitable
+        return
 
 
 async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
@@ -93,12 +122,14 @@ async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
 
     storage = storage_from_string(_build_async_redis_uri(redis_url))
     limiter, strategy_name = _select_rate_limiter_strategy(storage)
+    grouped_redis_client = _build_grouped_redis_client(redis_url)
 
     app.state.rate_limiter_runtime = RateLimiterRuntime(
         enabled=True,
         storage=storage,
         limiter=limiter,
         strategy_name=strategy_name,
+        grouped_redis_client=grouped_redis_client,
     )
 
     log.info(
@@ -106,6 +137,7 @@ async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
         strategy=strategy_name,
         backend=settings.rate_limiting.backend,
         mode=settings.rate_limiting.mode,
+        grouped_atomic_backend="redis_lua",
         policies={
             name: _serialise_effective_policy(policy)
             for name, policy in policy_registry.items()
@@ -116,16 +148,8 @@ async def init_rate_limiter(app: FastAPI, settings: Settings) -> None:
 
 async def shutdown_rate_limiter(app: FastAPI) -> None:
     runtime = getattr(app.state, "rate_limiter_runtime", None)
-    if runtime is None or runtime.storage is None:
+    if runtime is None:
         return
 
-    close_method = getattr(runtime.storage, "aclose", None)
-    if callable(close_method):
-        await close_method()
-        return
-
-    close_method = getattr(runtime.storage, "close", None)
-    if callable(close_method):
-        maybe_awaitable = close_method()
-        if hasattr(maybe_awaitable, "__await__"):
-            await maybe_awaitable
+    await _close_maybe_async(getattr(runtime, "storage", None))
+    await _close_maybe_async(getattr(runtime, "grouped_redis_client", None))

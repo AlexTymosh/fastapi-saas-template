@@ -438,6 +438,20 @@ async def check_rate_limit_for_bucket(
     )
 
 
+def _grouped_redis_client_from_runtime(runtime: Any | None) -> Any | None:
+    if runtime is None:
+        return None
+
+    explicit_client = getattr(runtime, "grouped_redis_client", None)
+    if explicit_client is not None:
+        return explicit_client
+
+    storage = getattr(runtime, "storage", None)
+    if storage is None:
+        return None
+    return maybe_get_async_redis_client(storage)
+
+
 async def check_rate_limits_for_buckets(
     *,
     request: Request,
@@ -459,10 +473,7 @@ async def check_rate_limits_for_buckets(
         for policy, bucket in checks
     ]
 
-    runtime = _runtime_from_request(request)
-    redis_client = None
-    if runtime is not None and runtime.storage is not None:
-        redis_client = maybe_get_async_redis_client(runtime.storage)
+    redis_client = _grouped_redis_client_from_runtime(_runtime_from_request(request))
 
     if redis_client is not None:
         bucket_specs = [

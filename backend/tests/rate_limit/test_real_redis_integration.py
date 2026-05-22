@@ -239,6 +239,9 @@ async def test_real_redis_grouped_rate_limit_is_atomic_under_concurrency(
     app.include_router(router)
 
     async with app.router.lifespan_context(app):
+        runtime = app.state.rate_limiter_runtime
+        assert runtime.grouped_redis_client is not None
+
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             start = asyncio.Event()

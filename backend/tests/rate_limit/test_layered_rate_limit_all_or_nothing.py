@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +9,7 @@ from redis.exceptions import RedisError
 
 from app.core.errors import RateLimiterUnavailableError, TooManyRequestsError
 from app.core.rate_limit.dependencies import check_rate_limits_for_buckets
+from app.core.rate_limit.grouped_atomic import maybe_get_async_redis_client
 from app.core.rate_limit.identifiers import RateLimitBucket
 from app.core.rate_limit.lifecycle import RateLimiterRuntime
 from app.core.rate_limit.policies import (
@@ -53,8 +54,18 @@ class _PreflightAwareLimiter:
 
 
 class _FailingRedisClient:
-    async def eval(self, *args, **kwargs):
+    async def eval(self, *args: object, **kwargs: object) -> list[int]:
         raise RedisError("synthetic grouped redis script failure")
+
+
+@dataclass
+class _RecordingRedisClient:
+    result: list[int] = field(default_factory=lambda: [1, 0, 0])
+    calls: list[tuple[object, ...]] = field(default_factory=list)
+
+    async def eval(self, *args: object, **kwargs: object) -> list[int]:
+        self.calls.append(args)
+        return self.result
 
 
 @dataclass
@@ -62,11 +73,17 @@ class _RedisBackedStorage:
     client: object
 
 
+@dataclass
+class _BridgeBackedStorage:
+    bridge: object
+
+
 def _build_request(
     monkeypatch,
     limiter: _PreflightAwareLimiter,
     *,
     storage: object | None = None,
+    grouped_redis_client: object | None = None,
 ):
     monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
     monkeypatch.setenv("RATE_LIMITING__PRE_AUTH_ENABLED", "false")
@@ -86,6 +103,7 @@ def _build_request(
         storage=storage if storage is not None else object(),
         limiter=limiter,
         strategy_name="moving-window",
+        grouped_redis_client=grouped_redis_client,
     )
     return SimpleNamespace(
         app=app,
@@ -180,6 +198,27 @@ async def test_grouped_bucket_hits_run_only_after_all_preflight_checks_pass(
 
 
 @pytest.mark.anyio
+async def test_runtime_grouped_redis_client_uses_lua_path_and_skips_fallback(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[False, False])
+    redis_client = _RecordingRedisClient()
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        grouped_redis_client=redis_client,
+    )
+
+    await check_rate_limits_for_buckets(
+        request=request,
+        checks=_organisation_checks(),
+    )
+
+    assert len(redis_client.calls) == 1
+    assert limiter.operations == []
+
+
+@pytest.mark.anyio
 async def test_grouped_redis_errors_use_strictest_policy_fail_closed(
     monkeypatch,
 ) -> None:
@@ -216,3 +255,10 @@ async def test_grouped_redis_errors_fail_open_when_all_grouped_policies_allow_it
     )
 
     assert limiter.operations == []
+
+
+def test_grouped_redis_client_discovery_supports_limits_bridge_shape() -> None:
+    redis_client = _RecordingRedisClient()
+    storage = _BridgeBackedStorage(bridge=SimpleNamespace(client=redis_client))
+
+    assert maybe_get_async_redis_client(storage) is redis_client
