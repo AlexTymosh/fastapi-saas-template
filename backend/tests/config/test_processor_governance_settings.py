@@ -3,7 +3,7 @@ import pytest
 from app.core.config.settings import get_settings
 from tests.helpers.settings import reset_settings_cache
 
-pytestmark = [pytest.mark.security]
+pytestmark = [pytest.mark.security, pytest.mark.privacy]
 
 FERNET_TEST_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 RATE_LIMIT_SECRET = "test-rate-limit-identifier-secret-32chars"
