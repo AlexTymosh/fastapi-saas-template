@@ -196,17 +196,19 @@ class PrivacyGovernanceService:
             withdrawn_at=reference_now,
             withdrawal_reason_code=withdrawal_reason_code,
         )
-        await self.audit_events.record_event(
-            audit_context=audit_context,
-            category=AuditCategory.COMPLIANCE,
-            action=AuditAction.CONSENT_WITHDRAWN,
-            target_type=AuditTargetType.PRIVACY_CONSENT,
-            target_id=subject_user_id,
-            metadata_json={
-                "purpose_code": purpose.code,
-                "withdrawal_reason_code": withdrawal_reason_code,
-            },
-        )
+        consent_updates, authorization_updates = result
+        if consent_updates > 0 or authorization_updates > 0:
+            await self.audit_events.record_event(
+                audit_context=audit_context,
+                category=AuditCategory.COMPLIANCE,
+                action=AuditAction.CONSENT_WITHDRAWN,
+                target_type=AuditTargetType.PRIVACY_CONSENT,
+                target_id=subject_user_id,
+                metadata_json={
+                    "purpose_code": purpose.code,
+                    "withdrawal_reason_code": withdrawal_reason_code,
+                },
+            )
         return result
 
     async def accept_privacy_notice(
