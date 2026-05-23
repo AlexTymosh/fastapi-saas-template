@@ -188,7 +188,7 @@ def test_invite_revoke_writes_audit_event_without_sensitive_metadata(
         response = client.request(
             "DELETE",
             f"/api/v1/organisations/{organisation_id}/invites/{invite_id}",
-            json={"reason": "  stale request  "},
+            json={"reason": "duplicate_or_error"},
         )
         assert response.status_code == 204
 

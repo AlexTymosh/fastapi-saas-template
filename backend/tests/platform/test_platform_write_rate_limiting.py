@@ -160,7 +160,7 @@ def test_platform_user_suspend_over_limit_returns_429_and_does_not_suspend_user(
 
     response = bundle.client.post(
         f"/api/v1/platform/users/{target.id}/suspend",
-        json={"reason": "abuse investigation"},
+        json={"reason": "security_incident"},
     )
 
     assert response.status_code == 429
@@ -205,7 +205,7 @@ def test_platform_organisation_suspend_over_limit_returns_429_and_does_not_mutat
 
     response = bundle.client.post(
         f"/api/v1/platform/organisations/{org.id}/suspend",
-        json={"reason": "policy review"},
+        json={"reason": "compliance_review"},
     )
 
     assert response.status_code == 429
@@ -291,7 +291,7 @@ def test_platform_write_unauthenticated_request_returns_401_before_rate_limit(
 
     response = client.post(
         f"/api/v1/platform/users/{target.id}/suspend",
-        json={"reason": "probe"},
+        json={"reason": "security_incident"},
     )
 
     assert response.status_code == 401
@@ -326,7 +326,7 @@ def test_platform_write_forbidden_principal_remains_403_when_limit_allows(
 
     response = bundle.client.post(
         f"/api/v1/platform/users/{target.id}/suspend",
-        json={"reason": "probe"},
+        json={"reason": "security_incident"},
     )
 
     assert response.status_code == 403
@@ -360,7 +360,7 @@ def test_platform_write_rate_limiter_failure_is_fail_closed(
 
     response = bundle.client.post(
         f"/api/v1/platform/users/{target.id}/suspend",
-        json={"reason": "incident"},
+        json={"reason": "security_incident"},
     )
 
     assert response.status_code == 503
@@ -427,7 +427,7 @@ def test_platform_write_over_limit_does_not_enter_transaction_or_service_body(
 
     response = bundle.client.post(
         f"/api/v1/platform/users/{target.id}/suspend",
-        json={"reason": "boundary probe"},
+        json={"reason": "security_incident"},
     )
 
     assert response.status_code == 429

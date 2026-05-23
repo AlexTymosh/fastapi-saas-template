@@ -63,7 +63,7 @@ def test_platform_admin_can_suspend_organisation(
     )
     response = bundle.client.post(
         f"/api/v1/platform/organisations/{org.id}/suspend",
-        json={"reason": "compliance incident"},
+        json={"reason": "compliance_review"},
     )
     assert response.status_code == 200
 
@@ -81,7 +81,7 @@ def test_platform_admin_can_suspend_organisation(
                 )
             ).first()
             assert event is not None
-            assert event._mapping["reason"] == "other"
+            assert event._mapping["reason"] == "compliance_review"
 
     run_async(_verify())
 
@@ -114,7 +114,7 @@ def test_platform_admin_can_restore_suspended_organisation(
     )
     response = bundle.client.post(
         f"/api/v1/platform/organisations/{org.id}/restore",
-        json={"reason": "issue resolved"},
+        json={"reason": "compliance_review"},
     )
     assert response.status_code == 200
 
@@ -134,7 +134,7 @@ def test_platform_admin_can_restore_suspended_organisation(
                 )
             ).first()
             assert event is not None
-            assert event._mapping["reason"] == "other"
+            assert event._mapping["reason"] == "compliance_review"
 
     run_async(_verify())
 
@@ -153,7 +153,7 @@ def test_suspend_missing_organisation_returns_404(
     )
     response = bundle.client.post(
         "/api/v1/platform/organisations/00000000-0000-0000-0000-000000000001/suspend",
-        json={"reason": "reason"},
+        json={"reason": "security_incident"},
     )
     assert response.status_code == 404
 
@@ -173,7 +173,7 @@ def test_restore_active_organisation_is_idempotent(
     )
     response = bundle.client.post(
         f"/api/v1/platform/organisations/{org.id}/restore",
-        json={"reason": "reason"},
+        json={"reason": "compliance_review"},
     )
     assert response.status_code == 200
 
@@ -194,7 +194,7 @@ def test_platform_org_correction_updates_and_audits(
     )
     response = bundle.client.patch(
         f"/api/v1/platform/organisations/{org.id}",
-        json={"name": "New Name", "slug": "new-slug", "reason": "correct typo"},
+        json={"name": "New Name", "slug": "new-slug", "reason": "data_correction"},
     )
     assert response.status_code == 200
 
@@ -213,7 +213,7 @@ def test_platform_org_correction_updates_and_audits(
                 )
             ).first()
             assert event is not None
-            assert event._mapping["reason"] == "other"
+            assert event._mapping["reason"] == "data_correction"
             assert event._mapping["metadata_json"] == {
                 "correction_type": "platform_profile_correction",
                 "changed_fields": ["name", "slug"],
@@ -242,7 +242,7 @@ def test_platform_org_correction_duplicate_slug_returns_409(
     )
     response = bundle.client.patch(
         f"/api/v1/platform/organisations/{org.id}",
-        json={"slug": "foxtrot", "reason": "sync"},
+        json={"slug": "foxtrot", "reason": "data_correction"},
     )
     assert response.status_code == 409
 
@@ -262,7 +262,7 @@ def test_platform_org_correction_invalid_slug_returns_422(
     )
     response = bundle.client.patch(
         f"/api/v1/platform/organisations/{org.id}",
-        json={"slug": "INVALID SLUG", "reason": "sync"},
+        json={"slug": "INVALID SLUG", "reason": "data_correction"},
     )
     assert response.status_code == 422
 
@@ -282,7 +282,7 @@ def test_platform_org_correction_no_actual_change_returns_409(
     )
     response = bundle.client.patch(
         f"/api/v1/platform/organisations/{org.id}",
-        json={"name": "Hotel", "slug": "hotel", "reason": "sync"},
+        json={"name": "Hotel", "slug": "hotel", "reason": "data_correction"},
     )
     assert response.status_code == 409
 
@@ -312,7 +312,7 @@ def test_platform_org_suspend_rolls_back_on_audit_failure(
     with pytest.raises(RuntimeError, match="audit failed"):
         bundle.client.post(
             f"/api/v1/platform/organisations/{org.id}/suspend",
-            json={"reason": "incident"},
+            json={"reason": "security_incident"},
         )
 
     async def _verify():
