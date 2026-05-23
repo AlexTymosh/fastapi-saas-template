@@ -152,6 +152,75 @@ def _find_eval_client(
     return None
 
 
+def _redis_method(redis_client: Any, method_name: str) -> Any:
+    method = getattr(redis_client, method_name, None)
+    if not callable(method):
+        raise RuntimeError(
+            f"Grouped Redis fallback client does not expose {method_name}()"
+        )
+    return method
+
+
+def _redis_int(value: Any, *, default: int | None = None) -> int:
+    if value is None:
+        if default is None:
+            raise RuntimeError("Grouped Redis fallback received missing integer value")
+        return default
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Grouped Redis fallback received invalid integer value"
+        ) from exc
+
+
+async def compatibility_consume_grouped_buckets_with_same_keys(
+    *, redis_client: Any, buckets: list[GroupedBucketSpec]
+) -> GroupedConsumeResult:
+    """Best-effort non-atomic grouped fallback using the Lua keyspace.
+
+    This fallback is intentionally used only after Redis Cluster routing or
+    same-slot script errors. It preserves enforcement state by reading and
+    updating the exact same keys as the Lua grouped path, avoiding split
+    keyspaces between successful Lua calls and degraded fallback calls. It is
+    not all-or-nothing under concurrency; the Lua path remains the preferred
+    production path whenever Redis accepts the script.
+    """
+
+    get = _redis_method(redis_client, "get")
+    pttl = _redis_method(redis_client, "pttl")
+    incr = _redis_method(redis_client, "incr")
+    pexpire = _redis_method(redis_client, "pexpire")
+
+    for index, bucket in enumerate(buckets):
+        current = _redis_int(await get(bucket.key), default=0)
+        if current >= bucket.limit:
+            ttl_ms = _redis_int(await pttl(bucket.key), default=-1)
+            if ttl_ms < 1:
+                ttl_ms = bucket.expiry_seconds * 1000
+                await pexpire(bucket.key, ttl_ms)
+            retry_after = max(1, (ttl_ms + 999) // 1000)
+            return GroupedConsumeResult(
+                allowed=False,
+                blocked_index=index,
+                retry_after_seconds=retry_after,
+            )
+
+    for bucket in buckets:
+        next_value = _redis_int(await incr(bucket.key))
+        ttl_ms = _redis_int(await pttl(bucket.key), default=-1)
+        if next_value == 1 or ttl_ms < 1:
+            await pexpire(bucket.key, bucket.expiry_seconds * 1000)
+
+    return GroupedConsumeResult(
+        allowed=True,
+        blocked_index=None,
+        retry_after_seconds=None,
+    )
+
+
 async def atomic_consume_grouped_buckets(
     *, redis_client: Any, buckets: list[GroupedBucketSpec]
 ) -> GroupedConsumeResult:

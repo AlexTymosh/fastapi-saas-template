@@ -25,6 +25,7 @@ from app.core.rate_limit.grouped_atomic import (
     GroupedBucketSpec,
     atomic_consume_grouped_buckets,
     build_grouped_redis_key,
+    compatibility_consume_grouped_buckets_with_same_keys,
     is_redis_cluster_fallback_error,
     maybe_get_async_redis_client,
 )
@@ -492,6 +493,37 @@ async def _check_grouped_rate_limits_with_compatibility_fallback(
         )
 
 
+async def _handle_grouped_redis_result(
+    *,
+    prepared_checks: list[_PreparedRateLimitCheck],
+    grouped_result: Any,
+) -> None:
+    if grouped_result.allowed:
+        for prepared in prepared_checks:
+            _record_rate_limit_outcome(
+                policy_name=prepared.policy.name,
+                result="allowed",
+                identifier_kind=prepared.identifier.kind,
+                started_at=prepared.started_at,
+            )
+        return
+
+    blocked = prepared_checks[grouped_result.blocked_index or 0]
+    _record_rate_limit_outcome(
+        policy_name=blocked.policy.name,
+        result="blocked",
+        identifier_kind=blocked.identifier.kind,
+        started_at=blocked.started_at,
+    )
+    raise TooManyRequestsError(
+        detail="Too many requests.",
+        headers={
+            "Retry-After": str(grouped_result.retry_after_seconds or 1),
+            "Access-Control-Expose-Headers": "Retry-After",
+        },
+    )
+
+
 async def check_rate_limits_for_buckets(
     *,
     request: Request,
@@ -550,9 +582,29 @@ async def check_rate_limits_for_buckets(
                     reason=exc.__class__.__name__,
                     category="security",
                 )
-                await _check_grouped_rate_limits_with_compatibility_fallback(
-                    request=request,
+                try:
+                    fallback_result = await _await_with_timeout(
+                        compatibility_consume_grouped_buckets_with_same_keys(
+                            redis_client=redis_client,
+                            buckets=bucket_specs,
+                        ),
+                        timeout_seconds=(
+                            settings.rate_limiting.storage_timeout_seconds
+                        ),
+                    )
+                except _RATE_LIMIT_BACKEND_ERRORS as fallback_exc:
+                    if await _handle_rate_limit_backend_error(
+                        request=request,
+                        policy=strictest.policy,
+                        identifier=strictest.identifier,
+                        started_at=strictest.started_at,
+                        exc=fallback_exc,
+                    ):
+                        return
+                    raise
+                await _handle_grouped_redis_result(
                     prepared_checks=prepared_checks,
+                    grouped_result=fallback_result,
                 )
                 return
 
@@ -568,30 +620,11 @@ async def check_rate_limits_for_buckets(
                     return
             raise
 
-        if grouped_result.allowed:
-            for prepared in prepared_checks:
-                _record_rate_limit_outcome(
-                    policy_name=prepared.policy.name,
-                    result="allowed",
-                    identifier_kind=prepared.identifier.kind,
-                    started_at=prepared.started_at,
-                )
-            return
-
-        blocked = prepared_checks[grouped_result.blocked_index or 0]
-        _record_rate_limit_outcome(
-            policy_name=blocked.policy.name,
-            result="blocked",
-            identifier_kind=blocked.identifier.kind,
-            started_at=blocked.started_at,
+        await _handle_grouped_redis_result(
+            prepared_checks=prepared_checks,
+            grouped_result=grouped_result,
         )
-        raise TooManyRequestsError(
-            detail="Too many requests.",
-            headers={
-                "Retry-After": str(grouped_result.retry_after_seconds or 1),
-                "Access-Control-Expose-Headers": "Retry-After",
-            },
-        )
+        return
 
     # Compatibility fallback for non-Redis runtimes and lightweight test doubles.
     await _check_grouped_rate_limits_with_compatibility_fallback(

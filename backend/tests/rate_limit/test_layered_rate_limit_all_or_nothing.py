@@ -65,11 +65,40 @@ class _FailingRedisClient:
 
 
 class _ClusterFallbackRedisClient:
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        current_value: int = 0,
+        ttl_ms: int = 60_000,
+    ) -> None:
         self.message = message
+        self.current_value = current_value
+        self.ttl_ms = ttl_ms
+        self.eval_calls: list[tuple[object, ...]] = []
+        self.get_keys: list[str] = []
+        self.incr_keys: list[str] = []
+        self.pexpire_calls: list[tuple[str, int]] = []
 
     async def eval(self, *args: object, **kwargs: object) -> list[int]:
+        self.eval_calls.append(args)
         raise RedisError(self.message)
+
+    async def get(self, key: str) -> str:
+        self.get_keys.append(key)
+        return str(self.current_value)
+
+    async def pttl(self, key: str) -> int:
+        return self.ttl_ms
+
+    async def incr(self, key: str) -> int:
+        self.incr_keys.append(key)
+        self.current_value += 1
+        return self.current_value
+
+    async def pexpire(self, key: str, ttl_ms: int) -> bool:
+        self.pexpire_calls.append((key, ttl_ms))
+        return True
 
 
 class _IncompatibleEvalClient:
@@ -367,15 +396,16 @@ async def test_grouped_redis_eval_args_do_not_contain_raw_identifiers(
     ],
 )
 @pytest.mark.anyio
-async def test_grouped_redis_cluster_errors_fall_back_to_compatibility_path(
+async def test_grouped_redis_cluster_errors_fall_back_to_same_key_path(
     monkeypatch,
     cluster_error: str,
 ) -> None:
     limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    redis_client = _ClusterFallbackRedisClient(cluster_error)
     request = _build_request(
         monkeypatch,
         limiter,
-        grouped_redis_client=_ClusterFallbackRedisClient(cluster_error),
+        grouped_redis_client=redis_client,
     )
 
     await check_rate_limits_for_buckets(
@@ -383,12 +413,42 @@ async def test_grouped_redis_cluster_errors_fall_back_to_compatibility_path(
         checks=_organisation_checks(),
     )
 
-    assert [operation[0] for operation in limiter.operations] == [
-        "test",
-        "test",
-        "hit",
-        "hit",
-    ]
+    assert len(redis_client.eval_calls) == 1
+    assert len(redis_client.get_keys) == 2
+    assert len(redis_client.incr_keys) == 2
+    assert all(GROUPED_REDIS_HASH_TAG in key for key in redis_client.get_keys)
+    assert all(GROUPED_REDIS_HASH_TAG in key for key in redis_client.incr_keys)
+    assert limiter.operations == []
+
+
+@pytest.mark.anyio
+async def test_grouped_redis_cluster_fallback_uses_lua_keyspace_when_blocked(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    redis_client = _ClusterFallbackRedisClient(
+        "MOVED 3999 127.0.0.1:6381",
+        current_value=10,
+        ttl_ms=1_500,
+    )
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        grouped_redis_client=redis_client,
+    )
+
+    with pytest.raises(TooManyRequestsError) as exc_info:
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=_custom_grouped_checks(fail_open=False),
+        )
+
+    assert exc_info.value.headers["Retry-After"] == "2"
+    assert len(redis_client.eval_calls) == 1
+    assert len(redis_client.get_keys) == 1
+    assert redis_client.incr_keys == []
+    assert GROUPED_REDIS_HASH_TAG in redis_client.get_keys[0]
+    assert limiter.operations == []
 
 
 def test_grouped_redis_cluster_fallback_error_detection() -> None:
