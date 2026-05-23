@@ -109,3 +109,9 @@ task ci
 ```
 
 and the GitHub Actions `Backend quality gate` are green.
+
+
+## Latest update
+
+- grouped business rate-limit consume path now uses Redis Lua all-or-nothing semantics for Redis-backed execution to close TOCTOU concurrency leaks.
+- grouped atomic checks currently target single-node Redis; Redis Cluster needs same-slot hash tags for grouped keys.

@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.auth import AuthenticatedPrincipal, require_authenticated_principal
@@ -19,6 +20,14 @@ from app.core.observability import (
     record_rate_limit_backend_error,
     record_rate_limit_check_duration,
     record_rate_limit_decision,
+)
+from app.core.rate_limit.grouped_atomic import (
+    GroupedBucketSpec,
+    atomic_consume_grouped_buckets,
+    build_grouped_redis_key,
+    compatibility_consume_grouped_buckets_with_same_keys,
+    is_redis_cluster_fallback_error,
+    maybe_get_async_redis_client,
 )
 from app.core.rate_limit.identifiers import (
     RateLimitBucket,
@@ -34,6 +43,15 @@ from app.core.rate_limit.policies import (
 from app.core.rate_limit.registry import get_effective_rate_limit_policy
 
 log = get_logger(__name__)
+
+_RATE_LIMIT_BACKEND_ERRORS = (
+    RedisConnectionError,
+    RedisTimeoutError,
+    RedisError,
+    TimeoutError,
+    RuntimeError,
+)
+_RATE_LIMIT_STATS_FALLBACK_ERRORS = (*_RATE_LIMIT_BACKEND_ERRORS, AttributeError)
 
 
 @dataclass(frozen=True)
@@ -137,13 +155,7 @@ async def _retry_after_for_identifier(
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
         return _build_retry_after(window.reset_time)
-    except (
-        RedisConnectionError,
-        RedisTimeoutError,
-        TimeoutError,
-        RuntimeError,
-        AttributeError,
-    ):
+    except _RATE_LIMIT_STATS_FALLBACK_ERRORS:
         return str(policy.item.get_expiry())
 
 
@@ -237,12 +249,7 @@ async def _check_rate_limit_for_identifier(
             runtime.limiter.hit(policy.item, namespace, identifier.bucket_key),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
-    except (
-        RedisConnectionError,
-        RedisTimeoutError,
-        TimeoutError,
-        RuntimeError,
-    ) as exc:
+    except _RATE_LIMIT_BACKEND_ERRORS as exc:
         if await _handle_rate_limit_backend_error(
             request=request,
             policy=policy,
@@ -309,12 +316,7 @@ async def _test_rate_limit_for_identifier(
             test_method(policy.item, namespace, identifier.bucket_key),
             timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
         )
-    except (
-        RedisConnectionError,
-        RedisTimeoutError,
-        TimeoutError,
-        RuntimeError,
-    ) as exc:
+    except _RATE_LIMIT_BACKEND_ERRORS as exc:
         if await _handle_rate_limit_backend_error(
             request=request,
             policy=policy,
@@ -439,6 +441,89 @@ async def check_rate_limit_for_bucket(
     )
 
 
+_GROUPED_REDIS_CLIENT_MISSING = object()
+
+
+def _grouped_redis_client_from_runtime(runtime: Any | None) -> Any | None:
+    if runtime is None:
+        return None
+
+    explicit_client = getattr(
+        runtime, "grouped_redis_client", _GROUPED_REDIS_CLIENT_MISSING
+    )
+    if explicit_client is not _GROUPED_REDIS_CLIENT_MISSING:
+        # ``None`` is an explicit startup decision: grouped Lua is unsupported
+        # for this runtime/URL and the compatibility limiter path must be used.
+        # Do not introspect storage afterwards, because limits may wrap clients
+        # with incompatible eval() signatures such as coredis/valkey bridges.
+        return explicit_client
+
+    storage = getattr(runtime, "storage", None)
+    if storage is None:
+        return None
+    return maybe_get_async_redis_client(storage)
+
+
+def _strictest_prepared_check(
+    prepared_checks: list[_PreparedRateLimitCheck],
+) -> _PreparedRateLimitCheck:
+    return min(prepared_checks, key=lambda prepared: prepared.policy.fail_open)
+
+
+async def _check_grouped_rate_limits_with_compatibility_fallback(
+    *,
+    request: Request,
+    prepared_checks: list[_PreparedRateLimitCheck],
+) -> None:
+    for prepared in prepared_checks:
+        await _test_rate_limit_for_identifier(
+            request=request,
+            policy=prepared.policy,
+            identifier=prepared.identifier,
+            namespace=prepared.namespace,
+            started_at=prepared.started_at,
+        )
+
+    for prepared in prepared_checks:
+        await _check_rate_limit_for_identifier(
+            request=request,
+            policy=prepared.policy,
+            identifier=prepared.identifier,
+            started_at=prepared.started_at,
+        )
+
+
+async def _handle_grouped_redis_result(
+    *,
+    prepared_checks: list[_PreparedRateLimitCheck],
+    grouped_result: Any,
+) -> None:
+    if grouped_result.allowed:
+        for prepared in prepared_checks:
+            _record_rate_limit_outcome(
+                policy_name=prepared.policy.name,
+                result="allowed",
+                identifier_kind=prepared.identifier.kind,
+                started_at=prepared.started_at,
+            )
+        return
+
+    blocked = prepared_checks[grouped_result.blocked_index or 0]
+    _record_rate_limit_outcome(
+        policy_name=blocked.policy.name,
+        result="blocked",
+        identifier_kind=blocked.identifier.kind,
+        started_at=blocked.started_at,
+    )
+    raise TooManyRequestsError(
+        detail="Too many requests.",
+        headers={
+            "Retry-After": str(grouped_result.retry_after_seconds or 1),
+            "Access-Control-Expose-Headers": "Retry-After",
+        },
+    )
+
+
 async def check_rate_limits_for_buckets(
     *,
     request: Request,
@@ -460,25 +545,92 @@ async def check_rate_limits_for_buckets(
         for policy, bucket in checks
     ]
 
-    # All grouped business buckets are preflighted first. Only if every bucket
-    # can be consumed do we mutate any quota via hit(). This prevents earlier
-    # buckets from being burned when a later bucket rejects the request.
-    for prepared in prepared_checks:
-        await _test_rate_limit_for_identifier(
-            request=request,
-            policy=prepared.policy,
-            identifier=prepared.identifier,
-            namespace=prepared.namespace,
-            started_at=prepared.started_at,
-        )
+    redis_client = _grouped_redis_client_from_runtime(_runtime_from_request(request))
 
-    for prepared in prepared_checks:
-        await _check_rate_limit_for_identifier(
-            request=request,
-            policy=prepared.policy,
-            identifier=prepared.identifier,
-            started_at=prepared.started_at,
+    if redis_client is not None:
+        bucket_specs = [
+            GroupedBucketSpec(
+                key=build_grouped_redis_key(
+                    namespace=prepared.namespace,
+                    bucket_key=prepared.identifier.bucket_key,
+                ),
+                limit=prepared.policy.item.amount,
+                expiry_seconds=prepared.policy.item.get_expiry(),
+            )
+            for prepared in prepared_checks
+        ]
+        try:
+            grouped_result = await _await_with_timeout(
+                atomic_consume_grouped_buckets(
+                    redis_client=redis_client,
+                    buckets=bucket_specs,
+                ),
+                timeout_seconds=settings.rate_limiting.storage_timeout_seconds,
+            )
+        except Exception as exc:
+            if is_redis_cluster_fallback_error(exc):
+                strictest = _strictest_prepared_check(prepared_checks)
+                record_rate_limit_backend_error(
+                    policy_name=strictest.policy.name,
+                    identifier_kind=strictest.identifier.kind,
+                    error_type=exc.__class__.__name__,
+                )
+                log.warning(
+                    "rate_limiter_grouped_cluster_fallback",
+                    policy=strictest.policy.name,
+                    identifier_kind=strictest.identifier.kind,
+                    reason=exc.__class__.__name__,
+                    category="security",
+                )
+                try:
+                    fallback_result = await _await_with_timeout(
+                        compatibility_consume_grouped_buckets_with_same_keys(
+                            redis_client=redis_client,
+                            buckets=bucket_specs,
+                        ),
+                        timeout_seconds=(
+                            settings.rate_limiting.storage_timeout_seconds
+                        ),
+                    )
+                except _RATE_LIMIT_BACKEND_ERRORS as fallback_exc:
+                    if await _handle_rate_limit_backend_error(
+                        request=request,
+                        policy=strictest.policy,
+                        identifier=strictest.identifier,
+                        started_at=strictest.started_at,
+                        exc=fallback_exc,
+                    ):
+                        return
+                    raise
+                await _handle_grouped_redis_result(
+                    prepared_checks=prepared_checks,
+                    grouped_result=fallback_result,
+                )
+                return
+
+            if isinstance(exc, _RATE_LIMIT_BACKEND_ERRORS):
+                strictest = _strictest_prepared_check(prepared_checks)
+                if await _handle_rate_limit_backend_error(
+                    request=request,
+                    policy=strictest.policy,
+                    identifier=strictest.identifier,
+                    started_at=strictest.started_at,
+                    exc=exc,
+                ):
+                    return
+            raise
+
+        await _handle_grouped_redis_result(
+            prepared_checks=prepared_checks,
+            grouped_result=grouped_result,
         )
+        return
+
+    # Compatibility fallback for non-Redis runtimes and lightweight test doubles.
+    await _check_grouped_rate_limits_with_compatibility_fallback(
+        request=request,
+        prepared_checks=prepared_checks,
+    )
 
 
 async def check_pre_auth_rate_limit(

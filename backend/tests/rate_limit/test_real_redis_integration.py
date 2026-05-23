@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -171,3 +172,88 @@ async def test_real_redis_layered_invite_organisation_bucket_spans_two_users(
     )
     assert second_response.json()["error_code"] == "rate_limited"
     assert organisation_id not in second_response.text
+
+
+@pytest.mark.integration
+@pytest.mark.anyio
+async def test_real_redis_grouped_rate_limit_is_atomic_under_concurrency(
+    monkeypatch,
+    redis_integration_url: str,
+) -> None:
+    test_suffix = uuid.uuid4().hex
+    prefix = f"it-grouped-atomic-{test_suffix}"
+
+    monkeypatch.setenv("REDIS__URL", redis_integration_url)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv(
+        "RATE_LIMITING__IDENTIFIER_SECRET", "test-rate-limit-identifier-secret-32chars"
+    )
+    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", prefix)
+    monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "false")
+    reset_settings_cache()
+
+    app = create_app()
+
+    async def _principal() -> AuthenticatedPrincipal:
+        return AuthenticatedPrincipal(
+            external_auth_id=f"integration-user-{test_suffix}",
+            email="integration-user@example.com",
+            email_verified=True,
+        )
+
+    app.dependency_overrides[get_authenticated_principal] = _principal
+
+    organisation_policy = RateLimitPolicy(
+        name=f"integration_group_org_{test_suffix}",
+        item=RateLimitItemPerMinute(1),
+        fail_open=False,
+    )
+    domain_policy = RateLimitPolicy(
+        name=f"integration_group_domain_{test_suffix}",
+        item=RateLimitItemPerMinute(1),
+        fail_open=False,
+    )
+
+    router = APIRouter()
+
+    @router.post("/api/v1/integration/grouped-atomic")
+    async def _probe(request: Request) -> dict[str, str]:
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[
+                (
+                    organisation_policy,
+                    RateLimitBucket(kind="organisation", raw_value="organisation:1"),
+                ),
+                (
+                    domain_policy,
+                    RateLimitBucket(
+                        kind="organisation_target_domain",
+                        raw_value="organisation:1:domain:example.com",
+                    ),
+                ),
+            ],
+        )
+        return {"ok": "true"}
+
+    app.include_router(router)
+
+    async with app.router.lifespan_context(app):
+        runtime = app.state.rate_limiter_runtime
+        assert runtime.grouped_redis_client is not None
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            start = asyncio.Event()
+
+            async def _fire() -> int:
+                await start.wait()
+                response = await client.post("/api/v1/integration/grouped-atomic")
+                return response.status_code
+
+            tasks = [asyncio.create_task(_fire()) for _ in range(30)]
+            start.set()
+            statuses = await asyncio.gather(*tasks)
+
+    assert statuses.count(200) == 1
+    assert statuses.count(429) == 29

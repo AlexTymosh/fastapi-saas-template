@@ -232,29 +232,32 @@ Protected endpoint matrix:
 
 ## Invite layered anti-abuse model
 
-Invite creation and resend use sequential multi-bucket Redis checks before the database session or invite services are constructed. These checks are intentionally part of the core rate-limit layer, not `InviteService`, so durable business rules remain separate from ephemeral anti-abuse controls.
+Invite create and resend endpoints use two layers of protection:
 
-Invite create (`POST /api/v1/organisations/{organisation_id}/invites`) checks, in order:
+1. **Actor-level endpoint dependency** — runs early after authentication and before endpoint body work where possible. It limits the authenticated actor (`invite_create` or `invite_mutation`).
+2. **Authorised business-scope buckets** — run later in `InviteService`, only after tenant membership/role checks and other non-mutating preconditions pass. This prevents cross-tenant quota poisoning by authenticated outsiders.
 
-| Policy | Bucket kind | Default | Purpose |
-|---|---|---|---|
-| `invite_create` | `user` | 20 / hour | Limit one authenticated actor's invite creation rate. |
-| `invite_create_organisation` | `organisation` | 50 / hour | Prevent multiple admins in the same organisation from multiplying spam. |
-| `invite_create_organisation_daily` | `organisation` | 200 / day | Cap daily invite creation pressure from one organisation. |
-| `invite_create_target_email` | `organisation_target_email` | 3 / day | Prevent repeated targeting of the same email address in one organisation. |
-| `invite_create_target_domain` | `organisation_target_domain` | 50 / day | Prevent one organisation flooding one email domain. |
+Authorised business-scope invite buckets are consumed through `check_rate_limits_for_buckets()`. In Redis-backed runtime this uses a static Lua script with all-or-nothing semantics: every grouped business bucket is checked first, and no bucket is incremented unless all grouped buckets can be consumed. Non-Redis runtimes and lightweight test doubles keep the compatibility fallback path.
 
-Invite resend (`POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend`) checks, in order:
+Invite create (`POST /api/v1/organisations/{organisation_id}/invites`) uses:
 
-| Policy | Bucket kind | Default | Purpose |
-|---|---|---|---|
-| `invite_mutation` | `user` | 30 / hour | Limit one actor's invite administration mutation rate. |
-| `invite_resend_invite` | `invite` | 5 / hour | Prevent repeatedly resending one invite. |
-| `invite_resend_organisation_daily` | `organisation` | 200 / day | Prevent high-volume resend pressure from one organisation. |
+| Layer | Policy | Bucket kind | Default | Purpose |
+|---|---|---|---|---|
+| Endpoint actor | `invite_create` | `user` | 20 / hour | Limit one authenticated actor's invite creation rate. |
+| Authorised grouped business | `invite_create_organisation` | `organisation` | 50 / hour | Prevent multiple admins in the same organisation from multiplying spam. |
+| Authorised grouped business | `invite_create_organisation_daily` | `organisation` | 200 / day | Cap daily invite creation pressure from one organisation. |
+| Authorised grouped business | `invite_create_target_email` | `organisation_target_email` | 3 / day | Prevent repeated targeting of the same email address in one organisation. |
+| Authorised grouped business | `invite_create_target_domain` | `organisation_target_domain` | 50 / day | Prevent one organisation flooding one email domain. |
+
+Invite resend (`POST /api/v1/organisations/{organisation_id}/invites/{invite_id}/resend`) uses:
+
+| Layer | Policy | Bucket kind | Default | Purpose |
+|---|---|---|---|---|
+| Endpoint actor | `invite_mutation` | `user` | 30 / hour | Limit one actor's invite administration mutation rate. |
+| Authorised grouped business | `invite_resend_invite` | `invite` | 5 / hour | Prevent repeatedly resending one invite. |
+| Authorised grouped business | `invite_resend_organisation_daily` | `organisation` | 200 / day | Prevent high-volume resend pressure from one organisation. |
 
 Invite revoke keeps the existing `invite_mutation` actor bucket; no organisation-level revoke throttle is added at this stage.
-
-Sequential multi-bucket consumption is intentional conservative throttling: an earlier actor or organisation bucket may be consumed even if a later email/domain/invite bucket blocks the request. Lua scripts, custom Redis scripts, and atomic multi-key Redis transactions are intentionally out of scope for this stage.
 
 ## Identifier strategy
 
@@ -296,6 +299,34 @@ Runtime/backend failures follow policy fail mode.
 - **Runtime unavailable** (limiter/runtime missing): return `503` (`error_code=rate_limiter_unavailable`).
 
 In all backend failure paths, observability metrics are emitted.
+
+## Grouped business bucket atomicity
+
+Grouped business bucket checks use a Redis Lua script with all-or-nothing semantics in one round-trip for Redis-backed execution:
+
+- all grouped bucket keys are checked first;
+- if any bucket is already at/over limit, no grouped bucket is incremented;
+- grouped increments happen only when every bucket can be consumed.
+
+This closes concurrent TOCTOU preflight/hit races for grouped business checks.
+
+Implementation notes:
+
+- Keys are passed via Lua `KEYS`; limits and window metadata are passed via `ARGV`.
+- The script is static and parameterised (no per-request Lua source generation).
+- Grouped Redis keys are prefixed with the shared `{rl-grouped-v1}` hash tag so all keys touched by one grouped Lua invocation are mapped to the same Redis Cluster hash slot while still keeping HMAC bucket identifiers as the only per-subject key material.
+- The grouped atomic path uses simple Redis counters plus TTL, so its grouped semantics are fixed-window style even when the single-bucket limiter strategy is moving-window or sliding-window.
+- A compatibility fallback path remains for non-Redis runtimes and lightweight test doubles.
+- If Redis Cluster returns CROSSSLOT, MOVED, ASK, CLUSTERDOWN, TRYAGAIN, or another recognised cluster routing/same-slot script error, the request falls back to the compatibility `test()` + `hit()` path instead of turning fail-closed invite create/resend checks into rate-limiter-unavailable responses.
+- Redis script/backend errors, including script response errors, are routed through the strictest grouped policy's fail-open/fail-closed setting.
+- A blocked bucket without TTL is repaired defensively by setting its expected expiry before returning `Retry-After`.
+
+Redis Cluster caveat:
+
+- Grouped Lua evaluation requires all grouped keys to be in the same Redis hash slot.
+- The default grouped key builder uses a shared hash tag for this purpose.
+- This keeps grouped Lua atomicity available in Redis Cluster, but concentrates grouped limiter keys into one hash slot. For higher-volume clustered deployments, introduce a deliberate hash-tag sharding strategy and prove that every logical grouped bucket still uses one stable Redis key.
+- The CROSSSLOT fallback preserves availability and previous behaviour, but it is not atomic and should be treated as degraded mode.
 
 ## Retry-After contract
 
