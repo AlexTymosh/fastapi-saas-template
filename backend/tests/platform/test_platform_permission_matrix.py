@@ -120,7 +120,7 @@ def matrix_targets(migrated_session_factory) -> MatrixTargets:
 
 
 def _platform_endpoints(targets: MatrixTargets):
-    reason = {"reason": "Permission matrix check"}
+    reason = {"reason": "compliance_review"}
     return [
         (
             "GET",
@@ -178,7 +178,7 @@ def _platform_endpoints(targets: MatrixTargets):
             f"/api/v1/platform/organisations/{targets.organisation_id}",
             {
                 "name": "Matrix Organisation Updated",
-                "reason": "Permission matrix check",
+                "reason": "data_correction",
             },
             {"platform_admin"},
         ),
@@ -369,7 +369,7 @@ def test_denied_platform_write_does_not_create_audit_event(
 
     response = bundle.client.post(
         f"/api/v1/platform/users/{matrix_targets.user_id}/suspend",
-        json={"reason": "Should not audit"},
+        json={"reason": "security_incident"},
     )
 
     assert response.status_code == 403

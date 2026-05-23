@@ -54,7 +54,7 @@ def test_suspend_user_commits_and_writes_audit(
     )
     response = bundle.client.post(
         f"/api/v1/platform/users/{target.id}/suspend",
-        json={"reason": "incident investigation"},
+        json={"reason": "security_incident"},
     )
     assert response.status_code == 200
 
@@ -107,7 +107,7 @@ def test_suspend_user_rolls_back_on_audit_failure(
     with pytest.raises(RuntimeError, match="audit failed"):
         bundle.client.post(
             f"/api/v1/platform/users/{target.id}/suspend",
-            json={"reason": "incident investigation"},
+            json={"reason": "security_incident"},
         )
 
     async def _verify():

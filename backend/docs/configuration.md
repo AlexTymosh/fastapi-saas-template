@@ -156,7 +156,7 @@ PROCESSOR_GOVERNANCE__PROCESSORS__REDIS__TRANSFER_MECHANISM=not_restricted
 
 For restricted transfers, `TRANSFER_MECHANISM` must be one of the approved mechanisms implemented in settings validation: `adequacy`, `uk_idta`, `uk_addendum`, `bcr`, or `derogation`.
 
-This is not a complete data-protection impact assessment, DPA registry, or clinical cross-border transfer policy. It is a startup guardrail that prevents obvious undocumented processor use while the broader GDPR/privacy module is still planned.
+This is not a complete data-protection impact assessment, DPA registry, or regulated-data transfer policy. It is a startup guardrail that prevents obvious undocumented processor use while the broader GDPR/privacy module is still planned.
 
 ## Database migrations
 

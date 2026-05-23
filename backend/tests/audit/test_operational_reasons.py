@@ -11,11 +11,10 @@ from app.platform.schemas.platform_users import ReasonRequest
     [
         ("security_incident", OperationalReasonCode.SECURITY_INCIDENT),
         (" security_incident ", OperationalReasonCode.SECURITY_INCIDENT),
-        ("Legacy operational note without sensitive data", OperationalReasonCode.OTHER),
-        ("patient asked to pause treatment", OperationalReasonCode.OTHER),
+        ("other", OperationalReasonCode.OTHER),
     ],
 )
-def test_legacy_reasons_map_to_safe_codes(
+def test_legacy_reason_accepts_existing_structured_codes(
     raw_reason: str,
     expected_code: OperationalReasonCode,
 ) -> None:
@@ -25,9 +24,22 @@ def test_legacy_reasons_map_to_safe_codes(
 @pytest.mark.parametrize(
     "raw_reason",
     [
+        "Legacy operational note without sensitive data",
+        "Manual review requested by the account owner",
+        "contains unstructured operational details",
+    ],
+)
+def test_legacy_free_text_reasons_are_rejected(raw_reason: str) -> None:
+    with pytest.raises(ValueError, match="structured reason code"):
+        normalise_legacy_reason(raw_reason, required=True)
+
+
+@pytest.mark.parametrize(
+    "raw_reason",
+    [
         "password reset token was pasted here",
         "Bearer abcdefghijklmnopqrstuvwxyz123456",
-        "patient diagnosed with diabetes",
+        "special category personal data was pasted here",
         "contact jane@example.com about this",
         "postgresql://user:pass@example.test/db",
         "0123456789abcdef0123456789abcdef",
@@ -47,9 +59,14 @@ def test_optional_blank_legacy_reason_maps_to_none() -> None:
     assert normalise_legacy_reason(" ", required=False) is None
 
 
+def test_reason_request_rejects_unstructured_legacy_reason_payload() -> None:
+    with pytest.raises(ValidationError, match="structured reason code"):
+        ReasonRequest(reason="contains unstructured operational details")
+
+
 def test_reason_request_rejects_sensitive_legacy_reason_payload() -> None:
     with pytest.raises(ValidationError, match="reason must not contain"):
-        ReasonRequest(reason="patient has clinical details")
+        ReasonRequest(reason="contains special category personal data")
 
 
 def test_reason_request_preserves_strict_reason_code_validation() -> None:
@@ -60,6 +77,11 @@ def test_reason_request_preserves_strict_reason_code_validation() -> None:
 def test_invite_revoke_allows_optional_reason_to_be_omitted() -> None:
     request = RevokeInviteRequest()
     assert request.reason is None
+
+
+def test_invite_revoke_rejects_unstructured_legacy_reason_payload() -> None:
+    with pytest.raises(ValidationError, match="structured reason code"):
+        RevokeInviteRequest(reason="unstructured operational text")
 
 
 def test_invite_revoke_rejects_sensitive_legacy_reason_payload() -> None:

@@ -21,10 +21,9 @@ def test_reason_request_schema_marks_reason_code_required() -> None:
     assert schema["required"] == ["reason_code"]
 
 
-def test_legacy_free_text_reason_is_never_persisted_as_raw_text() -> None:
-    payload = ReasonRequest(reason="patient asked to pause treatment")
-
-    assert payload.reason == "other"
+def test_legacy_free_text_reason_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="structured reason code"):
+        ReasonRequest(reason="manual review requested by the account owner")
 
 
 def test_legacy_reason_can_submit_existing_reason_code_value() -> None:
@@ -36,19 +35,27 @@ def test_legacy_reason_can_submit_existing_reason_code_value() -> None:
 def test_explicit_reason_code_wins_when_legacy_reason_is_also_present() -> None:
     payload = ReasonRequest(
         reason_code="compliance_review",
-        reason="patient asked to pause treatment",
+        reason="manual review requested by the account owner",
     )
 
     assert payload.reason == "compliance_review"
 
 
-def test_null_reason_code_with_legacy_reason_uses_legacy_reason() -> None:
+def test_null_reason_code_with_structured_legacy_reason_uses_legacy_reason() -> None:
     payload = ReasonRequest(
         reason_code=None,
-        reason="patient asked to pause treatment",
+        reason="other",
     )
 
     assert payload.reason == "other"
+
+
+def test_null_reason_code_with_legacy_free_text_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="structured reason code"):
+        ReasonRequest(
+            reason_code=None,
+            reason="manual review requested by the account owner",
+        )
 
 
 def test_invalid_explicit_reason_code_is_rejected() -> None:
@@ -94,14 +101,23 @@ def test_platform_organisation_patch_accepts_both_reason_fields() -> None:
     assert payload.reason == "data_correction"
 
 
-def test_platform_organisation_patch_uses_legacy_reason_when_reason_code_is_null():
+def test_org_patch_uses_structured_legacy_reason_when_code_is_null() -> None:
     payload = PlatformOrganisationPatchRequest(
         name="Updated",
         reason_code=None,
-        reason="legacy free text",
+        reason="other",
     )
 
     assert payload.reason == "other"
+
+
+def test_org_patch_rejects_free_text_legacy_reason_when_code_is_null() -> None:
+    with pytest.raises(ValidationError, match="structured reason code"):
+        PlatformOrganisationPatchRequest(
+            name="Updated",
+            reason_code=None,
+            reason="legacy free text",
+        )
 
 
 def test_revoke_invite_reason_code_is_optional_but_structured_when_present() -> None:
@@ -109,11 +125,16 @@ def test_revoke_invite_reason_code_is_optional_but_structured_when_present() -> 
     structured_payload = RevokeInviteRequest(
         reason_code=OperationalReasonCode.COMPLIANCE_REVIEW
     )
-    legacy_payload = RevokeInviteRequest(reason="unstructured operational text")
+    legacy_payload = RevokeInviteRequest(reason="other")
 
     assert empty_payload.reason is None
     assert structured_payload.reason == "compliance_review"
     assert legacy_payload.reason == "other"
+
+
+def test_revoke_invite_rejects_legacy_free_text() -> None:
+    with pytest.raises(ValidationError, match="structured reason code"):
+        RevokeInviteRequest(reason="unstructured operational text")
 
 
 def test_revoke_invite_rejects_invalid_explicit_reason_code() -> None:
@@ -130,10 +151,18 @@ def test_revoke_invite_accepts_both_reason_fields() -> None:
     assert payload.reason == "compliance_review"
 
 
-def test_revoke_invite_uses_legacy_reason_when_reason_code_is_null() -> None:
+def test_revoke_invite_uses_structured_legacy_reason_when_reason_code_is_null() -> None:
     payload = RevokeInviteRequest(
         reason_code=None,
-        reason="legacy free text",
+        reason="other",
     )
 
     assert payload.reason == "other"
+
+
+def test_revoke_invite_rejects_legacy_free_text_when_reason_code_is_null() -> None:
+    with pytest.raises(ValidationError, match="structured reason code"):
+        RevokeInviteRequest(
+            reason_code=None,
+            reason="legacy free text",
+        )

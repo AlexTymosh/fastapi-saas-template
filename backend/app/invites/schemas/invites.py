@@ -69,10 +69,10 @@ class RevokeInviteRequest(BaseModel):
         default=None,
         description=(
             "Optional structured operational reason code. The legacy 'reason' "
-            "input field is accepted for backward compatibility only when it "
-            "does not contain obvious secrets, contact details, or "
-            "clinical/patient details; arbitrary legacy free text is persisted "
-            "as 'other'."
+            "input field is accepted for backward compatibility only when its "
+            "value is an existing structured reason code. Free-text legacy "
+            "reasons are rejected before validation to avoid persisting "
+            "operational details."
         ),
     )
 

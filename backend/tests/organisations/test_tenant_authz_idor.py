@@ -375,7 +375,7 @@ def test_invite_id_from_another_org_cannot_be_revoked_or_resent_under_actor_org_
         revoke_response = client.request(
             "DELETE",
             f"/api/v1/organisations/{org_a_id}/invites/{invite_id}",
-            json={"reason": "cross-tenant invite revoke attempt"},
+            json={"reason": "security_incident"},
         )
         resend_response = client.post(
             f"/api/v1/organisations/{org_a_id}/invites/{invite_id}/resend"

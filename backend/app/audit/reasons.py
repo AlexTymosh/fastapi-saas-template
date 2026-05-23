@@ -17,8 +17,9 @@ _SENSITIVE_REASON_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bbearer\s+[a-z0-9._~+/=-]{16,}\b", re.IGNORECASE),
     re.compile(
         r"\b("
-        r"diagnosis|diagnosed|clinical|clinic notes|x-?ray|xray|"
-        r"medical|medication|treatment plan|nhs(?:\s+number)?"
+        r"special[-\s]?category|protected characteristic|biometric|genetic|"
+        r"religion|religious belief|political opinion|trade union|"
+        r"sexual orientation|national identifier"
         r")\b",
         re.IGNORECASE,
     ),
@@ -53,7 +54,7 @@ def _ensure_reason_has_no_sensitive_detail(value: str) -> None:
     if _contains_sensitive_reason_detail(value):
         raise ValueError(
             "reason must not contain secrets, tokens, contact details, "
-            "or clinical/patient details"
+            "special-category personal data, or sensitive operational details"
         )
 
 
@@ -62,14 +63,15 @@ def normalise_legacy_reason(
     *,
     required: bool,
 ) -> OperationalReasonCode | None:
-    """Map only legacy free-text reason payloads to a safe persisted code.
+    """Map legacy ``reason`` only when it already contains a safe reason code.
 
     This helper is intentionally for the old ``reason`` input field only. New
     ``reason_code`` input must be validated strictly by Pydantic's enum handling
     so typos return 422 instead of being silently persisted as ``other``.
 
-    Legacy free text is discarded and stored as ``other`` only after a narrow
-    privacy guard rejects obvious secrets, contact details, and clinical details.
+    To avoid persisting arbitrary operational details, legacy free text is no
+    longer normalised to ``other``. Clients using the legacy field may submit an
+    existing structured reason-code value only.
     """
 
     if isinstance(value, OperationalReasonCode):
@@ -94,9 +96,11 @@ def normalise_legacy_reason(
 
     try:
         return OperationalReasonCode(normalised)
-    except ValueError:
+    except ValueError as exc:
         _ensure_reason_has_no_sensitive_detail(normalised)
-        return OperationalReasonCode.OTHER
+        raise ValueError(
+            "legacy reason must use a structured reason code; free text is not accepted"
+        ) from exc
 
 
 def normalise_legacy_reason_payload(
@@ -110,7 +114,7 @@ def normalise_legacy_reason_payload(
     are rejected normally with 422. Legacy ``reason`` is always removed before
     ``extra='forbid'`` validation. If a compatibility serializer sends
     ``reason_code: null`` together with legacy ``reason``, the legacy value is
-    used after the privacy guard in :func:`normalise_legacy_reason`.
+    used after the structured-code guard in :func:`normalise_legacy_reason`.
     """
 
     if not isinstance(data, dict):

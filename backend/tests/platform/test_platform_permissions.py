@@ -86,6 +86,7 @@ def test_permission_matrix_core(
             return org
 
     org = run_async(_seed_org())
+    reason = {"reason": "security_incident"}
 
     for user in (suspended_user, suspended_staff):
         bundle = authenticated_client_factory(
@@ -100,13 +101,13 @@ def test_permission_matrix_core(
     )
     assert (
         support_bundle.client.post(
-            f"/api/v1/platform/users/{admin.id}/suspend", json={"reason": "r"}
+            f"/api/v1/platform/users/{admin.id}/suspend", json=reason
         ).status_code
         == 403
     )
     assert (
         support_bundle.client.post(
-            f"/api/v1/platform/organisations/{org.id}/suspend", json={"reason": "r"}
+            f"/api/v1/platform/organisations/{org.id}/suspend", json=reason
         ).status_code
         == 403
     )
@@ -117,13 +118,13 @@ def test_permission_matrix_core(
     )
     assert (
         comp_bundle.client.post(
-            f"/api/v1/platform/users/{admin.id}/suspend", json={"reason": "r"}
+            f"/api/v1/platform/users/{admin.id}/suspend", json=reason
         ).status_code
         == 403
     )
     assert (
         comp_bundle.client.post(
-            f"/api/v1/platform/organisations/{org.id}/suspend", json={"reason": "r"}
+            f"/api/v1/platform/organisations/{org.id}/suspend", json=reason
         ).status_code
         == 403
     )

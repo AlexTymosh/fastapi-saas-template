@@ -133,7 +133,7 @@ def test_platform_write_real_redis_blocks_after_policy_limit(
         responses = [
             client.post(
                 f"/api/v1/platform/users/{target.id}/suspend",
-                json={"reason": "integration rate-limit probe"},
+                json={"reason": "security_incident"},
             )
             for target in targets
         ]
