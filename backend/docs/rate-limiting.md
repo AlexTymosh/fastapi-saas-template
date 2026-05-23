@@ -317,7 +317,7 @@ Implementation notes:
 - Grouped Redis keys are prefixed with the shared `{rl-grouped-v1}` hash tag so all keys touched by one grouped Lua invocation are mapped to the same Redis Cluster hash slot while still keeping HMAC bucket identifiers as the only per-subject key material.
 - The grouped atomic path uses simple Redis counters plus TTL, so its grouped semantics are fixed-window style even when the single-bucket limiter strategy is moving-window or sliding-window.
 - A compatibility fallback path remains for non-Redis runtimes and lightweight test doubles.
-- If Redis Cluster returns CROSSSLOT, MOVED, ASK, CLUSTERDOWN, TRYAGAIN, or another recognised cluster routing/same-slot script error, the request falls back to the compatibility `test()` + `hit()` path instead of turning fail-closed invite create/resend checks into rate-limiter-unavailable responses.
+- If Redis Cluster returns CROSSSLOT, MOVED, ASK, CLUSTERDOWN, TRYAGAIN, or another recognised cluster routing/same-slot script error, the request falls back to a degraded Redis same-key path that uses `GET` / `PTTL` / `INCR` / `PEXPIRE` against the same grouped keys used by Lua. This avoids splitting enforcement state between Lua keys and the `limits` storage keyspace.
 - Redis script/backend errors, including script response errors, are routed through the strictest grouped policy's fail-open/fail-closed setting.
 - A blocked bucket without TTL is repaired defensively by setting its expected expiry before returning `Retry-After`.
 
@@ -326,7 +326,7 @@ Redis Cluster caveat:
 - Grouped Lua evaluation requires all grouped keys to be in the same Redis hash slot.
 - The default grouped key builder uses a shared hash tag for this purpose.
 - This keeps grouped Lua atomicity available in Redis Cluster, but concentrates grouped limiter keys into one hash slot. For higher-volume clustered deployments, introduce a deliberate hash-tag sharding strategy and prove that every logical grouped bucket still uses one stable Redis key.
-- The CROSSSLOT fallback preserves availability and previous behaviour, but it is not atomic and should be treated as degraded mode.
+- Cluster routing fallback preserves availability and uses the same grouped keyspace, but it is still not atomic and should be treated as degraded mode.
 
 ## Retry-After contract
 
@@ -411,6 +411,14 @@ uv run --locked pytest -q tests/rate_limit/test_api_rate_limiting.py
 uv run --locked pytest -q tests/rate_limit/test_policy_registry.py
 uv run --locked pytest -q tests/rate_limit/test_endpoint_protection.py
 uv run --locked pytest -q tests/platform/test_platform_write_rate_limiting.py
+uv run --locked pytest -q tests/rate_limit/test_real_redis_integration.py -m integration -rs
+
+# Optional Redis Cluster smoke test. Requires TEST_REDIS_CLUSTER_URL with a
+# Redis Cluster URL scheme, for example:
+# TEST_REDIS_CLUSTER_URL=redis+cluster://localhost:7000,localhost:7001/0
+uv run --locked pytest -q tests/rate_limit/test_real_redis_integration.py \
+  -m integration -k real_redis_cluster -rs
+
 uv run --locked pytest -q tests/platform/test_platform_write_rate_limiting_integration.py -m integration -rs
 uv run --locked pytest -q tests/api/test_rate_limiting_integration.py -m integration -rs
 uv run --locked pytest tests/observability/test_otlp_export_integration.py -q -m "integration and e2e" -rs

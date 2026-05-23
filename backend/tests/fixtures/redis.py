@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Iterator
 
@@ -37,3 +38,19 @@ def redis_integration_url() -> Iterator[str]:
             yield redis_url
         finally:
             client.close()
+
+
+@pytest.fixture(scope="session")
+def redis_cluster_integration_url() -> str:
+    """Return an opt-in Redis Cluster URL for integration tests.
+
+    Starting a reliable multi-node Redis Cluster through Testcontainers would
+    add a large amount of orchestration to the default safe suite. Keep the
+    cluster smoke test explicit and opt-in: local/CI jobs that provide a real
+    Redis Cluster can set TEST_REDIS_CLUSTER_URL, while the regular integration
+    suite skips this test without failing.
+    """
+
+    redis_url = os.getenv("TEST_REDIS_CLUSTER_URL")
+    if not redis_url:
+        pytest.skip("TEST_REDIS_CLUSTER_URL is required for Redis Cluster tests")

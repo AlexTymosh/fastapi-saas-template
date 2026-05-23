@@ -101,6 +101,45 @@ class _ClusterFallbackRedisClient:
         return True
 
 
+class _PerBucketClusterFallbackRedisClient:
+    def __init__(
+        self,
+        message: str,
+        *,
+        current_values: list[int],
+        ttl_ms: int = 60_000,
+    ) -> None:
+        self.message = message
+        self.current_values = list(current_values)
+        self.ttl_ms = ttl_ms
+        self.eval_calls: list[tuple[object, ...]] = []
+        self.get_keys: list[str] = []
+        self.incr_keys: list[str] = []
+        self.pexpire_calls: list[tuple[str, int]] = []
+
+    async def eval(self, *args: object, **kwargs: object) -> list[int]:
+        self.eval_calls.append(args)
+        raise RedisError(self.message)
+
+    async def get(self, key: str) -> str:
+        index = len(self.get_keys)
+        self.get_keys.append(key)
+        return str(self.current_values[index])
+
+    async def pttl(self, key: str) -> int:
+        return self.ttl_ms
+
+    async def incr(self, key: str) -> int:
+        self.incr_keys.append(key)
+        index = len(self.incr_keys) - 1
+        self.current_values[index] += 1
+        return self.current_values[index]
+
+    async def pexpire(self, key: str, ttl_ms: int) -> bool:
+        self.pexpire_calls.append((key, ttl_ms))
+        return True
+
+
 class _IncompatibleEvalClient:
     async def eval(self, script: str, *, keys: list[str], args: list[str]) -> list[int]:
         raise AssertionError("incompatible eval client must not be selected")
@@ -448,6 +487,35 @@ async def test_grouped_redis_cluster_fallback_uses_lua_keyspace_when_blocked(
     assert len(redis_client.get_keys) == 1
     assert redis_client.incr_keys == []
     assert GROUPED_REDIS_HASH_TAG in redis_client.get_keys[0]
+    assert limiter.operations == []
+
+
+@pytest.mark.anyio
+async def test_cluster_fallback_block_does_not_consume_earlier_bucket(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    redis_client = _PerBucketClusterFallbackRedisClient(
+        "TRYAGAIN Multiple keys request during rehashing of slot",
+        current_values=[0, 10],
+        ttl_ms=1_500,
+    )
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        grouped_redis_client=redis_client,
+    )
+
+    with pytest.raises(TooManyRequestsError) as exc_info:
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=_custom_grouped_checks(fail_open=False),
+        )
+
+    assert exc_info.value.headers["Retry-After"] == "2"
+    assert len(redis_client.get_keys) == 2
+    assert redis_client.incr_keys == []
+    assert all(GROUPED_REDIS_HASH_TAG in key for key in redis_client.get_keys)
     assert limiter.operations == []
 
 
