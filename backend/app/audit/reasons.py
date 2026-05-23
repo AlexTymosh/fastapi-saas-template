@@ -23,6 +23,13 @@ _SENSITIVE_REASON_PATTERNS: tuple[re.Pattern[str], ...] = (
         r")\b",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"\b("
+        r"diagnos(?:is|ed)|treatment(?:\s+plan)?|medication|"
+        r"prescription|test result|care plan"
+        r")\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"\b(?:postgres(?:ql)?|mysql|redis|mongodb)://\S+", re.IGNORECASE),
     re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9])"),

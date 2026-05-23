@@ -10,6 +10,7 @@ from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.privacy.models.privacy_governance import (
     DataProcessingAuthorization,
     LawfulBasis,
+    PrivacyNoticeAcceptance,
     ProcessingPurposeFamily,
     SpecialCategoryCondition,
 )
@@ -82,7 +83,7 @@ def test_privacy_governance_tracks_distinct_purpose_lawful_bases(
             await service.create_processing_authorization(
                 subject_user_id=user.id,
                 purpose_code="regulated_service_delivery",
-                source="care_pathway",
+                source="regulated_service_policy",
             )
             await service.accept_privacy_notice(
                 subject_user_id=user.id,
@@ -248,5 +249,62 @@ def test_regulated_processing_cannot_reuse_generic_marketing_consent(
                     lawful_basis=LawfulBasis.CONSENT,
                     consent_source_purpose_code="marketing",
                 )
+
+    run_async(_run())
+
+
+def test_privacy_notice_acceptance_is_idempotent(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            service = PrivacyGovernanceService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+
+            first = await service.accept_privacy_notice(
+                subject_user_id=user.id,
+                notice_version="2026-05",
+                audit_context=audit_context,
+                source="signup",
+            )
+            second = await service.accept_privacy_notice(
+                subject_user_id=user.id,
+                notice_version="2026-05",
+                audit_context=audit_context,
+                source="client_retry",
+            )
+
+            assert second.id == first.id
+            assert second.source == "signup"
+
+            acceptances = list(
+                (
+                    await session.execute(
+                        select(PrivacyNoticeAcceptance).where(
+                            PrivacyNoticeAcceptance.subject_user_id == user.id,
+                            PrivacyNoticeAcceptance.notice_version == "2026-05",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(acceptances) == 1
+
+            notice_events = list(
+                (
+                    await session.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.target_id == user.id,
+                            AuditEvent.action
+                            == AuditAction.PRIVACY_NOTICE_ACCEPTED.value,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(notice_events) == 1
 
     run_async(_run())

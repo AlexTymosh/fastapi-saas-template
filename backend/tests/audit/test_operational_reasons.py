@@ -28,6 +28,8 @@ def test_legacy_reasons_map_to_safe_codes(
         "password reset token was pasted here",
         "Bearer abcdefghijklmnopqrstuvwxyz123456",
         "special category personal data was pasted here",
+        "diagnosis details were pasted here",
+        "treatment plan details were pasted here",
         "contact jane@example.com about this",
         "postgresql://user:pass@example.test/db",
         "0123456789abcdef0123456789abcdef",
@@ -49,7 +51,7 @@ def test_optional_blank_legacy_reason_maps_to_none() -> None:
 
 def test_reason_request_rejects_sensitive_legacy_reason_payload() -> None:
     with pytest.raises(ValidationError, match="reason must not contain"):
-        ReasonRequest(reason="contains special category personal data")
+        ReasonRequest(reason="contains diagnosis details")
 
 
 def test_reason_request_preserves_strict_reason_code_validation() -> None:

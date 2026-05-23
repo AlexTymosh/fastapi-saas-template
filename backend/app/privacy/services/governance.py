@@ -219,12 +219,18 @@ class PrivacyGovernanceService:
         source: str | None = None,
     ) -> PrivacyNoticeAcceptance:
         reference_now = accepted_at or datetime.now(UTC)
-        acceptance = await self.repository.create_privacy_notice_acceptance(
+        (
+            acceptance,
+            created,
+        ) = await self.repository.get_or_create_privacy_notice_acceptance(
             subject_user_id=subject_user_id,
             notice_version=notice_version,
             accepted_at=reference_now,
             source=source,
         )
+        if not created:
+            return acceptance
+
         await self.audit_events.record_event(
             audit_context=audit_context,
             category=AuditCategory.COMPLIANCE,

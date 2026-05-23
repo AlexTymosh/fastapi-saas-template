@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.privacy.models.privacy_governance import (
@@ -182,6 +183,59 @@ class PrivacyGovernanceRepository:
         return int(consent_result.rowcount or 0), int(
             authorization_result.rowcount or 0
         )
+
+    async def get_privacy_notice_acceptance(
+        self,
+        *,
+        subject_user_id: UUID,
+        notice_version: str,
+    ) -> PrivacyNoticeAcceptance | None:
+        stmt = (
+            select(PrivacyNoticeAcceptance)
+            .where(
+                PrivacyNoticeAcceptance.subject_user_id == subject_user_id,
+                PrivacyNoticeAcceptance.notice_version == notice_version,
+            )
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_or_create_privacy_notice_acceptance(
+        self,
+        *,
+        subject_user_id: UUID,
+        notice_version: str,
+        accepted_at: datetime,
+        source: str | None,
+    ) -> tuple[PrivacyNoticeAcceptance, bool]:
+        existing = await self.get_privacy_notice_acceptance(
+            subject_user_id=subject_user_id,
+            notice_version=notice_version,
+        )
+        if existing is not None:
+            return existing, False
+
+        acceptance = PrivacyNoticeAcceptance(
+            subject_user_id=subject_user_id,
+            notice_version=notice_version,
+            accepted_at=accepted_at,
+            source=source,
+        )
+        try:
+            async with self.session.begin_nested():
+                self.session.add(acceptance)
+                await self.session.flush()
+        except IntegrityError:
+            existing = await self.get_privacy_notice_acceptance(
+                subject_user_id=subject_user_id,
+                notice_version=notice_version,
+            )
+            if existing is None:
+                raise
+            return existing, False
+
+        await self.session.refresh(acceptance)
+        return acceptance, True
 
     async def create_privacy_notice_acceptance(
         self,
