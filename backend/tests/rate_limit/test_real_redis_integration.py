@@ -257,3 +257,94 @@ async def test_real_redis_grouped_rate_limit_is_atomic_under_concurrency(
 
     assert statuses.count(200) == 1
     assert statuses.count(429) == 29
+
+
+@pytest.mark.integration
+@pytest.mark.anyio
+async def test_real_redis_cluster_grouped_limit_is_atomic(
+    monkeypatch,
+    redis_cluster_integration_url: str,
+) -> None:
+    test_suffix = uuid.uuid4().hex
+    prefix = f"it-cluster-grouped-{test_suffix}"
+
+    monkeypatch.setenv("REDIS__URL", redis_cluster_integration_url)
+    monkeypatch.setenv("RATE_LIMITING__ENABLED", "true")
+    monkeypatch.setenv(
+        "RATE_LIMITING__IDENTIFIER_SECRET",
+        "test-rate-limit-identifier-secret-32chars",
+    )
+    monkeypatch.setenv("RATE_LIMITING__REDIS_PREFIX", prefix)
+    monkeypatch.setenv("RATE_LIMITING__TRUST_PROXY_HEADERS", "false")
+    reset_settings_cache()
+
+    app = create_app()
+
+    async def _principal() -> AuthenticatedPrincipal:
+        return AuthenticatedPrincipal(
+            external_auth_id=f"cluster-user-{test_suffix}",
+            email="cluster-user@example.com",
+            email_verified=True,
+        )
+
+    app.dependency_overrides[get_authenticated_principal] = _principal
+
+    organisation_policy = RateLimitPolicy(
+        name=f"cluster_group_org_{test_suffix}",
+        item=RateLimitItemPerMinute(1),
+        fail_open=False,
+    )
+    domain_policy = RateLimitPolicy(
+        name=f"cluster_group_domain_{test_suffix}",
+        item=RateLimitItemPerMinute(1),
+        fail_open=False,
+    )
+
+    router = APIRouter()
+
+    @router.post("/api/v1/integration/cluster-grouped-atomic")
+    async def _probe(request: Request) -> dict[str, str]:
+        await check_rate_limits_for_buckets(
+            request=request,
+            checks=[
+                (
+                    organisation_policy,
+                    RateLimitBucket(
+                        kind="organisation",
+                        raw_value="organisation:cluster-smoke",
+                    ),
+                ),
+                (
+                    domain_policy,
+                    RateLimitBucket(
+                        kind="organisation_target_domain",
+                        raw_value=("organisation:cluster-smoke:domain:example.com"),
+                    ),
+                ),
+            ],
+        )
+        return {"ok": "true"}
+
+    app.include_router(router)
+
+    async with app.router.lifespan_context(app):
+        runtime = app.state.rate_limiter_runtime
+        assert runtime.grouped_redis_client is not None
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            start = asyncio.Event()
+
+            async def _fire() -> int:
+                await start.wait()
+                response = await client.post(
+                    "/api/v1/integration/cluster-grouped-atomic"
+                )
+                return response.status_code
+
+            tasks = [asyncio.create_task(_fire()) for _ in range(30)]
+            start.set()
+            statuses = await asyncio.gather(*tasks)
+
+    assert statuses.count(200) == 1
+    assert statuses.count(429) == 29
