@@ -68,6 +68,20 @@ Focused runs such as security-only, authz-only, privacy-only, contract-only, con
 - Requires both `--run-external-db` and `ENABLE_EXTERNAL_MIGRATION_DB_TEST=1`.
 - Use `@pytest.mark.external_db`.
 
+### External Redis Cluster smoke tests
+
+- Opt-in only.
+- Uses `TEST_REDIS_CLUSTER_URL`.
+- Intended for Redis Cluster topology validation that cannot be proven with the single-node Testcontainers Redis fixture.
+- Should be marked `integration`; do not mark it `external_db` because it does not use `TEST_DATABASE_URL` or database migrations.
+- The smoke test does not start a Redis Cluster automatically. Provide a URL
+  pointing to a real Redis Cluster started manually, via Docker, or through a
+  dedicated local Compose/Testcontainers setup outside the default safe suite.
+- The test should skip when `TEST_REDIS_CLUSTER_URL` is not provided so the regular safe CI suite remains self-contained.
+- If `TEST_REDIS_CLUSTER_URL` is provided with a non-cluster scheme such as `redis://`, the test should fail fast to avoid false-positive single-node coverage.
+- Cluster URLs should use the `limits` storage scheme, for example `redis+cluster://localhost:7000,localhost:7001/0`; Redis Cluster supports database `0` only.
+- Do not rely on the default local Compose stack for Redis Cluster smoke tests.
+
 ## Marker policy
 
 ### Execution markers
