@@ -36,6 +36,18 @@ def _is_grouped_redis_cluster_url(redis_url: str) -> bool:
     return normalised.startswith(("redis+cluster://", "rediss+cluster://"))
 
 
+def _is_grouped_redis_direct_url(redis_url: str) -> bool:
+    """Return True when redis-py can build a direct grouped Lua client.
+
+    The main `limits` storage accepts more adapter schemes than redis-py, such
+    as Sentinel URLs. Grouped Lua support is an optional optimisation, so
+    unsupported schemes must not fail application startup.
+    """
+
+    normalised = _strip_limits_async_prefix(redis_url)
+    return normalised.startswith(("redis://", "rediss://", "unix://"))
+
+
 def _build_grouped_redis_url(redis_url: str) -> str:
     """Return a redis-py compatible URL for the grouped Lua client.
 
@@ -77,13 +89,24 @@ def _build_grouped_redis_client(redis_url: str) -> Any | None:
             return None
 
         try:
+            from redis.exceptions import RedisClusterException
+        except ImportError:  # pragma: no cover - defensive for redis-py variants
+            RedisClusterException = RuntimeError
+
+        try:
             return RedisCluster.from_url(grouped_url)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RedisClusterException):
             return None
+
+    if not _is_grouped_redis_direct_url(redis_url):
+        return None
 
     from redis.asyncio import Redis
 
-    return Redis.from_url(grouped_url)
+    try:
+        return Redis.from_url(grouped_url)
+    except (TypeError, ValueError):
+        return None
 
 
 def _select_rate_limiter_strategy(storage: Any) -> tuple[Any, str]:
