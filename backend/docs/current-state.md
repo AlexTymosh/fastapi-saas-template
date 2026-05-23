@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-05-16
+2026-05-23
 
 ## Project Phase
 
@@ -22,6 +22,7 @@ The following foundations are present in code and/or current documentation and s
 - Organisations, memberships, and invites foundation.
 - Platform staff, permissions, current platform identity endpoint foundation, full platform list filters, limited platform user/organisation/audit views, and OpenAPI operation ID hardening for future generated admin clients.
 - Audit events foundation, including a backend-redacted limited platform audit view.
+- Privacy governance foundation: processing purpose registry, lawful-basis and special-category condition primitives, per-subject processing authorisations, consent records, privacy notice acceptance records, service-layer processing checks, consent withdrawal, and compliance audit events.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, layered invite anti-abuse flows, platform read/audit reads, fail-closed platform write policies, and versioned HMAC-SHA256 identifier bucket keys backed by a dedicated rate-limit secret.
 - Observability/OpenTelemetry foundation.
@@ -37,7 +38,7 @@ The following foundations are present in code and/or current documentation and s
 
 ## Partially Implemented
 
-- GDPR/privacy posture.
+- GDPR/privacy posture beyond the privacy-governance foundation, especially Data Subject Rights workflows, retention/purge orchestration across all personal-data stores, and future regulated or special-category data controls.
 - Production hardening.
 - Platform workflows, including explicit platform visibility for soft-deleted organisations in admin operations while tenant organisation endpoints keep excluding deleted organisations by default.
 - Organisation soft deletion preserves the original slug, while database-level active-only uniqueness allows slug reuse after deletion without allowing duplicate active slugs.
@@ -107,7 +108,7 @@ uv run --frozen ruff check .
 uv run --frozen pytest -q -m "not external_db"
 ```
 
-Focused security and contract commands remain available for local/manual diagnosis, but the main CI quality gate avoids duplicate pytest execution.
+Focused security and contract commands remain available for local/manual troubleshooting, but the main CI quality gate avoids duplicate pytest execution.
 
 External DB tests are opt-in and must not run by default.
 
@@ -122,10 +123,11 @@ External DB tests are opt-in and must not run by default.
 ## Recommended Next Steps
 
 1. Keep CI green and required before merging.
-2. Continue expanding BOLA/BFLA and platform permission tests.
-3. Harden Docker/runtime for production beyond dependency installation, especially non-root runtime and deployment-specific hardening.
-4. Continue trusted proxy policy hardening and verify deployment-specific CORS origins.
-5. Continue feature-specific docs only after code stabilises.
+2. Implement Data Subject Rights export/erasure/anonymisation workflows on top of the new privacy-governance foundation.
+3. Continue expanding BOLA/BFLA and platform permission tests.
+4. Harden Docker/runtime for production beyond dependency installation, especially non-root runtime and deployment-specific hardening.
+5. Continue trusted proxy policy hardening and verify deployment-specific CORS origins.
+6. Continue feature-specific docs only after code stabilises.
 
 ## Source of Truth
 

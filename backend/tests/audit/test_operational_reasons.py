@@ -12,7 +12,7 @@ from app.platform.schemas.platform_users import ReasonRequest
         ("security_incident", OperationalReasonCode.SECURITY_INCIDENT),
         (" security_incident ", OperationalReasonCode.SECURITY_INCIDENT),
         ("Legacy operational note without sensitive data", OperationalReasonCode.OTHER),
-        ("patient asked to pause treatment", OperationalReasonCode.OTHER),
+        ("Manual review requested by the account owner", OperationalReasonCode.OTHER),
     ],
 )
 def test_legacy_reasons_map_to_safe_codes(
@@ -27,7 +27,7 @@ def test_legacy_reasons_map_to_safe_codes(
     [
         "password reset token was pasted here",
         "Bearer abcdefghijklmnopqrstuvwxyz123456",
-        "patient diagnosed with diabetes",
+        "special category personal data was pasted here",
         "contact jane@example.com about this",
         "postgresql://user:pass@example.test/db",
         "0123456789abcdef0123456789abcdef",
@@ -49,7 +49,7 @@ def test_optional_blank_legacy_reason_maps_to_none() -> None:
 
 def test_reason_request_rejects_sensitive_legacy_reason_payload() -> None:
     with pytest.raises(ValidationError, match="reason must not contain"):
-        ReasonRequest(reason="patient has clinical details")
+        ReasonRequest(reason="contains special category personal data")
 
 
 def test_reason_request_preserves_strict_reason_code_validation() -> None:

@@ -17,8 +17,9 @@ _SENSITIVE_REASON_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bbearer\s+[a-z0-9._~+/=-]{16,}\b", re.IGNORECASE),
     re.compile(
         r"\b("
-        r"diagnosis|diagnosed|clinical|clinic notes|x-?ray|xray|"
-        r"medical|medication|treatment plan|nhs(?:\s+number)?"
+        r"special[-\s]?category|protected characteristic|biometric|genetic|"
+        r"religion|religious belief|political opinion|trade union|"
+        r"sexual orientation|national identifier"
         r")\b",
         re.IGNORECASE,
     ),
@@ -53,7 +54,7 @@ def _ensure_reason_has_no_sensitive_detail(value: str) -> None:
     if _contains_sensitive_reason_detail(value):
         raise ValueError(
             "reason must not contain secrets, tokens, contact details, "
-            "or clinical/patient details"
+            "special-category personal data, or sensitive operational details"
         )
 
 
@@ -69,7 +70,8 @@ def normalise_legacy_reason(
     so typos return 422 instead of being silently persisted as ``other``.
 
     Legacy free text is discarded and stored as ``other`` only after a narrow
-    privacy guard rejects obvious secrets, contact details, and clinical details.
+    privacy guard rejects obvious secrets, contact details, and special-category
+    personal data.
     """
 
     if isinstance(value, OperationalReasonCode):

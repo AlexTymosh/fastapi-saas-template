@@ -34,6 +34,9 @@ class AuditAction(StrEnum):
     PLATFORM_STAFF_SUSPENDED = "platform_staff_suspended"
     PLATFORM_STAFF_RESTORED = "platform_staff_restored"
     PLATFORM_STAFF_ROLE_CHANGED = "platform_staff_role_changed"
+    CONSENT_GRANTED = "consent_granted"
+    CONSENT_WITHDRAWN = "consent_withdrawn"
+    PRIVACY_NOTICE_ACCEPTED = "privacy_notice_accepted"
 
 
 class AuditTargetType(StrEnum):
@@ -42,6 +45,8 @@ class AuditTargetType(StrEnum):
     INVITE = "invite"
     USER = "user"
     PLATFORM_STAFF = "platform_staff"
+    PRIVACY_CONSENT = "privacy_consent"
+    PRIVACY_NOTICE = "privacy_notice"
 
 
 class AuditEvent(UUIDMixin, Base):

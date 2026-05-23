@@ -5,4 +5,5 @@ def import_all_models() -> None:
     import app.organisations.models.organisation  # noqa: F401
     import app.outbox.models.outbox_event  # noqa: F401
     import app.platform.models.platform_staff  # noqa: F401
+    import app.privacy.models.privacy_governance  # noqa: F401
     import app.users.models.user  # noqa: F401

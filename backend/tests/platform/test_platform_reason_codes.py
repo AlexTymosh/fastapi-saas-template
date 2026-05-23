@@ -22,7 +22,7 @@ def test_reason_request_schema_marks_reason_code_required() -> None:
 
 
 def test_legacy_free_text_reason_is_never_persisted_as_raw_text() -> None:
-    payload = ReasonRequest(reason="patient asked to pause treatment")
+    payload = ReasonRequest(reason="manual review requested by the account owner")
 
     assert payload.reason == "other"
 
@@ -36,7 +36,7 @@ def test_legacy_reason_can_submit_existing_reason_code_value() -> None:
 def test_explicit_reason_code_wins_when_legacy_reason_is_also_present() -> None:
     payload = ReasonRequest(
         reason_code="compliance_review",
-        reason="patient asked to pause treatment",
+        reason="manual review requested by the account owner",
     )
 
     assert payload.reason == "compliance_review"
@@ -45,7 +45,7 @@ def test_explicit_reason_code_wins_when_legacy_reason_is_also_present() -> None:
 def test_null_reason_code_with_legacy_reason_uses_legacy_reason() -> None:
     payload = ReasonRequest(
         reason_code=None,
-        reason="patient asked to pause treatment",
+        reason="manual review requested by the account owner",
     )
 
     assert payload.reason == "other"
