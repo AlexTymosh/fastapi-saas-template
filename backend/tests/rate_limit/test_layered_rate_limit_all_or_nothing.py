@@ -72,6 +72,11 @@ class _ClusterFallbackRedisClient:
         raise RedisError(self.message)
 
 
+class _IncompatibleEvalClient:
+    async def eval(self, script: str, *, keys: list[str], args: list[str]) -> list[int]:
+        raise AssertionError("incompatible eval client must not be selected")
+
+
 @dataclass
 class _RecordingRedisClient:
     result: list[int] = field(default_factory=lambda: [1, 0, 0])
@@ -412,7 +417,7 @@ async def test_grouped_redis_errors_use_strictest_policy_fail_closed(
     request = _build_request(
         monkeypatch,
         limiter,
-        storage=_RedisBackedStorage(client=_FailingRedisClient()),
+        grouped_redis_client=_FailingRedisClient(),
     )
 
     with pytest.raises(RateLimiterUnavailableError):
@@ -432,7 +437,7 @@ async def test_grouped_redis_errors_fail_open_when_all_grouped_policies_allow_it
     request = _build_request(
         monkeypatch,
         limiter,
-        storage=_RedisBackedStorage(client=_FailingRedisClient()),
+        grouped_redis_client=_FailingRedisClient(),
     )
 
     await check_rate_limits_for_buckets(
@@ -441,6 +446,31 @@ async def test_grouped_redis_errors_fail_open_when_all_grouped_policies_allow_it
     )
 
     assert limiter.operations == []
+
+
+@pytest.mark.anyio
+async def test_explicit_none_grouped_redis_client_uses_compatibility_fallback(
+    monkeypatch,
+) -> None:
+    limiter = _PreflightAwareLimiter(test_sequence=[True, True])
+    request = _build_request(
+        monkeypatch,
+        limiter,
+        storage=_RedisBackedStorage(client=_IncompatibleEvalClient()),
+        grouped_redis_client=None,
+    )
+
+    await check_rate_limits_for_buckets(
+        request=request,
+        checks=_organisation_checks(),
+    )
+
+    assert [operation[0] for operation in limiter.operations] == [
+        "test",
+        "test",
+        "hit",
+        "hit",
+    ]
 
 
 def test_grouped_redis_client_discovery_supports_limits_bridge_shape() -> None:

@@ -440,12 +440,21 @@ async def check_rate_limit_for_bucket(
     )
 
 
+_GROUPED_REDIS_CLIENT_MISSING = object()
+
+
 def _grouped_redis_client_from_runtime(runtime: Any | None) -> Any | None:
     if runtime is None:
         return None
 
-    explicit_client = getattr(runtime, "grouped_redis_client", None)
-    if explicit_client is not None:
+    explicit_client = getattr(
+        runtime, "grouped_redis_client", _GROUPED_REDIS_CLIENT_MISSING
+    )
+    if explicit_client is not _GROUPED_REDIS_CLIENT_MISSING:
+        # ``None`` is an explicit startup decision: grouped Lua is unsupported
+        # for this runtime/URL and the compatibility limiter path must be used.
+        # Do not introspect storage afterwards, because limits may wrap clients
+        # with incompatible eval() signatures such as coredis/valkey bridges.
         return explicit_client
 
     storage = getattr(runtime, "storage", None)
