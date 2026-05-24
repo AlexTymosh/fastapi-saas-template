@@ -1,3 +1,8 @@
+from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
+    DataSubjectRequestStatus,
+    DataSubjectRequestType,
+)
 from app.privacy.models.privacy_governance import (
     ConsentRecord,
     DataProcessingAuthorization,
@@ -11,6 +16,9 @@ from app.privacy.models.privacy_governance import (
 __all__ = [
     "ConsentRecord",
     "DataProcessingAuthorization",
+    "DataSubjectRequest",
+    "DataSubjectRequestStatus",
+    "DataSubjectRequestType",
     "LawfulBasis",
     "ProcessingPurpose",
     "ProcessingPurposeFamily",

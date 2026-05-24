@@ -37,6 +37,12 @@ class AuditAction(StrEnum):
     CONSENT_GRANTED = "consent_granted"
     CONSENT_WITHDRAWN = "consent_withdrawn"
     PRIVACY_NOTICE_ACCEPTED = "privacy_notice_accepted"
+    DATA_SUBJECT_REQUEST_SUBMITTED = "data_subject_request_submitted"
+    DATA_SUBJECT_REQUEST_UNDER_REVIEW = "data_subject_request_under_review"
+    DATA_SUBJECT_REQUEST_APPROVED = "data_subject_request_approved"
+    DATA_SUBJECT_REQUEST_REJECTED = "data_subject_request_rejected"
+    DATA_SUBJECT_REQUEST_CANCELLED = "data_subject_request_cancelled"
+    DATA_SUBJECT_REQUEST_FULFILLED = "data_subject_request_fulfilled"
 
 
 class AuditTargetType(StrEnum):
@@ -47,6 +53,7 @@ class AuditTargetType(StrEnum):
     PLATFORM_STAFF = "platform_staff"
     PRIVACY_CONSENT = "privacy_consent"
     PRIVACY_NOTICE = "privacy_notice"
+    DATA_SUBJECT_REQUEST = "data_subject_request"
 
 
 class AuditEvent(UUIDMixin, Base):
