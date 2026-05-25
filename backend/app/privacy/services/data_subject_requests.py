@@ -74,6 +74,7 @@ class DataSubjectRequestService:
     ) -> DataSubjectRequest:
         reference_now = now or datetime.now(UTC)
         normalised_request_type = self._normalise_request_type(request_type)
+        normalised_idempotency_key = self._normalise_idempotency_key(idempotency_key)
 
         if (
             requester_note is not None
@@ -85,23 +86,28 @@ class DataSubjectRequestService:
                     f"{self.REQUESTER_NOTE_MAX_LENGTH} characters"
                 )
             )
+
+        self._validate_idempotency_key_safety(
+            idempotency_key=normalised_idempotency_key
+        )
         idempotency_key_hash = (
-            self._hash_idempotency_key(idempotency_key)
-            if idempotency_key is not None
+            self._hash_idempotency_key(normalised_idempotency_key)
+            if normalised_idempotency_key is not None
             else None
         )
         idempotency_fingerprint = (
             self._build_fingerprint(
-                request_type=request_type,
+                request_type=normalised_request_type,
                 requester_note=requester_note,
             )
             if idempotency_key_hash is not None
             else None
         )
 
-        self._validate_idempotency_key_safety(idempotency_key=idempotency_key)
-
         if idempotency_key_hash is not None:
+            await self.repository.lock_requester_for_idempotency(
+                requester_user_id=requester_user_id,
+            )
             existing = await self.repository.get_non_expired_by_idempotency_key_hash(
                 requester_user_id=requester_user_id,
                 idempotency_key_hash=idempotency_key_hash,
@@ -195,6 +201,12 @@ class DataSubjectRequestService:
             audit_context=audit_context,
         )
         return persisted_request
+
+    @staticmethod
+    def _normalise_idempotency_key(key: str | None) -> str | None:
+        if key is None:
+            return None
+        return key.strip()
 
     @staticmethod
     def _hash_idempotency_key(key: str) -> str:

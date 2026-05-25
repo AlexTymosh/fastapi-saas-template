@@ -97,6 +97,68 @@ def test_submit_request_rejects_unsafe_idempotency_key(
     run_async(_run())
 
 
+def test_submit_request_validates_idempotency_key_before_hashing(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="idempotency-order@example.com")
+            service = DataSubjectRequestService(session)
+
+            def _fail_if_called(key: str) -> str:
+                raise AssertionError("idempotency key was hashed before validation")
+
+            monkeypatch.setattr(service, "_hash_idempotency_key", _fail_if_called)
+
+            with pytest.raises(BadRequestError):
+                await service.submit_request(
+                    requester_user_id=user.id,
+                    request_type="export",
+                    idempotency_key="x" * 513,
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+    run_async(_run())
+
+
+def test_idempotency_locks_requester_before_lookup(migrated_session_factory) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="idempotency-lock@example.com")
+            service = DataSubjectRequestService(session)
+            calls: list[str] = []
+
+            original_lock = service.repository.lock_requester_for_idempotency
+            original_lookup = service.repository.get_non_expired_by_idempotency_key_hash
+
+            async def _lock_requester_for_idempotency(*, requester_user_id):
+                calls.append("lock")
+                await original_lock(requester_user_id=requester_user_id)
+
+            async def _get_non_expired_by_idempotency_key_hash(**kwargs):
+                calls.append("lookup")
+                return await original_lookup(**kwargs)
+
+            service.repository.lock_requester_for_idempotency = (  # type: ignore[method-assign]
+                _lock_requester_for_idempotency
+            )
+            service.repository.get_non_expired_by_idempotency_key_hash = (  # type: ignore[method-assign]
+                _get_non_expired_by_idempotency_key_hash
+            )
+
+            await service.submit_request(
+                requester_user_id=user.id,
+                request_type="export",
+                idempotency_key="lock-before-lookup",
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            assert calls[:2] == ["lock", "lookup"]
+
+    run_async(_run())
+
+
 def test_idempotency_returns_existing_or_conflict(migrated_session_factory) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:

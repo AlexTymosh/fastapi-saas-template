@@ -40,10 +40,12 @@ The service calculates `due_at` at submit time.
 ## Idempotency behaviour
 - `IDEMPOTENCY_KEY_TTL_HOURS = 24`
 - raw idempotency key is not persisted;
+- idempotency key validation runs before hashing;
 - `idempotency_key_hash` and `idempotency_fingerprint` are persisted;
 - same requester + same non-expired key + same fingerprint returns the existing request;
 - same requester + same non-expired key + different fingerprint raises conflict;
-- expired keys can be reused.
+- expired keys can be reused;
+- idempotent submit serialises the requester row before the lookup/create path so concurrent same-requester retries cannot both miss the non-expired key in transactional databases that support row-level locks.
 
 ## Explicitly out of scope in this PR
 - API routers and schemas;

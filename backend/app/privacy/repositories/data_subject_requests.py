@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.privacy.models.data_subject_request import DataSubjectRequest
+from app.users.models.user import User
 
 
 class DataSubjectRequestRepository:
@@ -47,6 +48,22 @@ class DataSubjectRequestRepository:
             DataSubjectRequest.subject_user_id == subject_user_id,
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def lock_requester_for_idempotency(
+        self,
+        *,
+        requester_user_id: UUID,
+    ) -> None:
+        """Serialize idempotent submit checks for one requester.
+
+        This deliberately locks the existing requester row instead of adding a
+        permanent uniqueness constraint to the DSR table. The lock prevents two
+        concurrent transactions for the same requester/key from both missing the
+        non-expired idempotency row and creating duplicate DSR records, while the
+        TTL lookup still allows key reuse after expiry.
+        """
+        stmt = select(User.id).where(User.id == requester_user_id).with_for_update()
+        await self.session.execute(stmt)
 
     async def get_non_expired_by_idempotency_key_hash(
         self,
