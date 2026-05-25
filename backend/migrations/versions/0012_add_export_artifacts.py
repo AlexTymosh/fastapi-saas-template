@@ -1,16 +1,15 @@
 """add export artifacts
 
 Revision ID: 0012_add_export_artifacts
-Revises: 0011_add_data_subject_requests
+Revises: 0011
 Create Date: 2026-05-25
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "0012_add_export_artifacts"
-down_revision = "0011_add_data_subject_requests"
+down_revision = "0011"
 branch_labels = None
 depends_on = None
 
@@ -42,14 +41,94 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("downloaded_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("download_count", sa.Integer(), server_default="0", nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.CheckConstraint("status IN ('queued','processing','ready','failed','expired','cancelled')", name="export_artifacts_status_valid"),
-        sa.CheckConstraint("format IN ('json_zip')", name="export_artifacts_format_valid"),
-        sa.CheckConstraint("storage_backend IN ('local','s3_compatible')", name="export_artifacts_storage_backend_valid"),
-        sa.ForeignKeyConstraint(["data_subject_request_id"], ["data_subject_requests.id"], ondelete="RESTRICT"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "status IN ('queued','processing','ready','failed','expired','cancelled')",
+            name="export_artifacts_status_valid",
+        ),
+        sa.CheckConstraint(
+            "format IN ('json_zip')",
+            name="export_artifacts_format_valid",
+        ),
+        sa.CheckConstraint(
+            "storage_backend IN ('local','s3_compatible')",
+            name="export_artifacts_storage_backend_valid",
+        ),
+        sa.ForeignKeyConstraint(
+            ["data_subject_request_id"],
+            ["data_subject_requests.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(["subject_user_id"], ["users.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["requester_user_id"], ["users.id"], ondelete="SET NULL"
+        ),
+        sa.ForeignKeyConstraint(
+            ["requested_by_user_id"], ["users.id"], ondelete="SET NULL"
+        ),
+        sa.ForeignKeyConstraint(
+            ["generated_by_user_id"], ["users.id"], ondelete="SET NULL"
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index(
+        "ix_export_artifacts_data_subject_request_id",
+        "export_artifacts",
+        ["data_subject_request_id"],
+    )
+    op.create_index(
+        "ix_export_artifacts_subject_user_id", "export_artifacts", ["subject_user_id"]
+    )
+    op.create_index(
+        "ix_export_artifacts_requester_user_id",
+        "export_artifacts",
+        ["requester_user_id"],
+    )
+    op.create_index(
+        "ix_export_artifacts_status_queued_at",
+        "export_artifacts",
+        ["status", "queued_at"],
+    )
+    op.create_index(
+        "ix_export_artifacts_status_expires_at",
+        "export_artifacts",
+        ["status", "expires_at"],
+    )
+    op.create_index(
+        "ix_export_artifacts_storage_backend_storage_key",
+        "export_artifacts",
+        ["storage_backend", "storage_key"],
+    )
+    op.create_index(
+        "ix_export_artifacts_created_at", "export_artifacts", ["created_at"]
+    )
+
 
 def downgrade() -> None:
+    op.drop_index("ix_export_artifacts_created_at", table_name="export_artifacts")
+    op.drop_index(
+        "ix_export_artifacts_storage_backend_storage_key", table_name="export_artifacts"
+    )
+    op.drop_index(
+        "ix_export_artifacts_status_expires_at", table_name="export_artifacts"
+    )
+    op.drop_index("ix_export_artifacts_status_queued_at", table_name="export_artifacts")
+    op.drop_index(
+        "ix_export_artifacts_requester_user_id", table_name="export_artifacts"
+    )
+    op.drop_index("ix_export_artifacts_subject_user_id", table_name="export_artifacts")
+    op.drop_index(
+        "ix_export_artifacts_data_subject_request_id", table_name="export_artifacts"
+    )
     op.drop_table("export_artifacts")

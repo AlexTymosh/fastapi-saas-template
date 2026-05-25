@@ -21,22 +21,49 @@ class ExportArtifactRepository:
         return row
 
     async def get_by_id(self, artifact_id: UUID) -> ExportArtifact | None:
-        return (await self.session.execute(select(ExportArtifact).where(ExportArtifact.id == artifact_id))).scalar_one_or_none()
+        return (
+            await self.session.execute(
+                select(ExportArtifact).where(ExportArtifact.id == artifact_id)
+            )
+        ).scalar_one_or_none()
 
     async def get_by_dsr_id(self, request_id: UUID) -> list[ExportArtifact]:
-        stmt = select(ExportArtifact).where(ExportArtifact.data_subject_request_id == request_id).order_by(ExportArtifact.created_at.desc())
+        stmt = (
+            select(ExportArtifact)
+            .where(ExportArtifact.data_subject_request_id == request_id)
+            .order_by(ExportArtifact.created_at.desc())
+        )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def list_for_requester(self, *, requester_user_id: UUID, limit: int, offset: int) -> list[ExportArtifact]:
-        stmt = select(ExportArtifact).where(ExportArtifact.requester_user_id == requester_user_id).order_by(ExportArtifact.created_at.desc()).offset(offset).limit(limit)
+    async def list_for_requester(
+        self, *, requester_user_id: UUID, limit: int, offset: int
+    ) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .where(ExportArtifact.requester_user_id == requester_user_id)
+            .order_by(ExportArtifact.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def list_for_platform(self, *, limit: int, offset: int) -> list[ExportArtifact]:
-        stmt = select(ExportArtifact).order_by(ExportArtifact.created_at.desc()).offset(offset).limit(limit)
+    async def list_for_platform(
+        self, *, limit: int, offset: int
+    ) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .order_by(ExportArtifact.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def count_for_requester(self, *, requester_user_id: UUID) -> int:
-        stmt = select(func.count()).select_from(ExportArtifact).where(ExportArtifact.requester_user_id == requester_user_id)
+        stmt = (
+            select(func.count())
+            .select_from(ExportArtifact)
+            .where(ExportArtifact.requester_user_id == requester_user_id)
+        )
         return int((await self.session.execute(stmt)).scalar_one())
 
     async def count_for_platform(self) -> int:
@@ -44,7 +71,14 @@ class ExportArtifactRepository:
         return int((await self.session.execute(stmt)).scalar_one())
 
     async def claim_queued_batch(self, limit: int) -> list[ExportArtifact]:
-        stmt = select(ExportArtifact).where(ExportArtifact.status == ExportArtifactStatus.QUEUED.value).order_by(ExportArtifact.queued_at.asc()).limit(limit)
+        stmt = (
+            select(ExportArtifact)
+            .where(ExportArtifact.status == ExportArtifactStatus.QUEUED.value)
+            .order_by(ExportArtifact.queued_at.asc())
+            .limit(limit)
+        )
+        if self.session.bind is not None and self.session.bind.dialect.name != "sqlite":
+            stmt = stmt.with_for_update(skip_locked=True)
         rows = list((await self.session.execute(stmt)).scalars().all())
         now = datetime.now(UTC)
         for row in rows:
@@ -60,7 +94,9 @@ class ExportArtifactRepository:
         await self.session.refresh(artifact)
         return artifact
 
-    async def mark_failed(self, artifact: ExportArtifact, *, reason_code: str, detail: str) -> ExportArtifact:
+    async def mark_failed(
+        self, artifact: ExportArtifact, *, reason_code: str, detail: str
+    ) -> ExportArtifact:
         artifact.status = ExportArtifactStatus.FAILED.value
         artifact.failure_reason_code = reason_code
         artifact.failure_detail = detail[:255]
@@ -75,7 +111,9 @@ class ExportArtifactRepository:
         await self.session.refresh(artifact)
         return artifact
 
-    async def increment_download_count(self, artifact: ExportArtifact) -> ExportArtifact:
+    async def increment_download_count(
+        self, artifact: ExportArtifact
+    ) -> ExportArtifact:
         artifact.download_count += 1
         artifact.downloaded_at = datetime.now(UTC)
         await self.session.flush()
