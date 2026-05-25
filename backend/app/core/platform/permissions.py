@@ -26,6 +26,8 @@ class PlatformPermission(StrEnum):
     AUDIT_READ_LIMITED = "audit:read_limited"
     GDPR_EXPORT = "gdpr:export"
     GDPR_ERASE = "gdpr:erase"
+    PRIVACY_REQUESTS_READ = "privacy_requests:read"
+    PRIVACY_REQUESTS_REVIEW = "privacy_requests:review"
 
 
 ALL_PERMISSIONS = frozenset(PlatformPermission)
@@ -45,6 +47,8 @@ ROLE_PERMISSIONS = {
             PlatformPermission.AUDIT_READ,
             PlatformPermission.AUDIT_READ_LIMITED,
             PlatformPermission.GDPR_EXPORT,
+            PlatformPermission.PRIVACY_REQUESTS_READ,
+            PlatformPermission.PRIVACY_REQUESTS_REVIEW,
         }
     ),
 }

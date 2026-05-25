@@ -202,6 +202,143 @@ class DataSubjectRequestService:
         )
         return persisted_request
 
+    async def list_own_requests(
+        self,
+        *,
+        requester_user_id: UUID,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+        request_type: str | None = None,
+    ) -> tuple[list[DataSubjectRequest], int]:
+        rows = await self.repository.list_for_requester(
+            requester_user_id=requester_user_id,
+            limit=limit,
+            offset=offset,
+            status=status,
+            request_type=request_type,
+        )
+        total = await self.repository.count_for_requester(
+            requester_user_id=requester_user_id,
+            status=status,
+            request_type=request_type,
+        )
+        return rows, total
+
+    async def get_own_request(
+        self, *, requester_user_id: UUID, request_id: UUID
+    ) -> DataSubjectRequest:
+        row = await self.repository.get_by_id_for_requester(
+            request_id=request_id, requester_user_id=requester_user_id
+        )
+        if row is None:
+            raise NotFoundError(detail="Data subject request not found")
+        return row
+
+    async def cancel_own_request(
+        self, *, requester_user_id: UUID, request_id: UUID, audit_context: AuditContext
+    ) -> DataSubjectRequest:
+        request = await self.get_own_request(
+            requester_user_id=requester_user_id, request_id=request_id
+        )
+        if request.status not in {
+            DataSubjectRequestStatus.SUBMITTED.value,
+            DataSubjectRequestStatus.UNDER_REVIEW.value,
+        }:
+            raise ConflictError(detail="Request cannot be cancelled in current state")
+        return await self.transition_status(
+            request_id=request_id,
+            target_status=DataSubjectRequestStatus.CANCELLED,
+            reviewer_user_id=requester_user_id,
+            audit_context=audit_context,
+        )
+
+    async def list_platform_requests(
+        self, **kwargs
+    ) -> tuple[list[DataSubjectRequest], int]:
+        rows = await self.repository.list_for_platform(**kwargs)
+        total = await self.repository.count_for_platform(
+            status=kwargs.get("status"),
+            request_type=kwargs.get("request_type"),
+            subject_user_id=kwargs.get("subject_user_id"),
+            requester_user_id=kwargs.get("requester_user_id"),
+            due_before=kwargs.get("due_before"),
+            due_after=kwargs.get("due_after"),
+        )
+        return rows, total
+
+    async def get_platform_request(self, *, request_id: UUID) -> DataSubjectRequest:
+        return await self.get_request(request_id=request_id)
+
+    async def mark_under_review(
+        self, *, request_id: UUID, reviewer_user_id: UUID, audit_context: AuditContext
+    ) -> DataSubjectRequest:
+        return await self.transition_status(
+            request_id=request_id,
+            target_status=DataSubjectRequestStatus.UNDER_REVIEW,
+            reviewer_user_id=reviewer_user_id,
+            audit_context=audit_context,
+        )
+
+    async def approve_request(
+        self,
+        *,
+        request_id: UUID,
+        reviewer_user_id: UUID,
+        reason_code: str | None,
+        audit_context: AuditContext,
+    ) -> DataSubjectRequest:
+        return await self.transition_status(
+            request_id=request_id,
+            target_status=DataSubjectRequestStatus.APPROVED,
+            reviewer_user_id=reviewer_user_id,
+            reason_code=reason_code,
+            audit_context=audit_context,
+        )
+
+    async def reject_request(
+        self,
+        *,
+        request_id: UUID,
+        reviewer_user_id: UUID,
+        reason_code: str,
+        audit_context: AuditContext,
+    ) -> DataSubjectRequest:
+        return await self.transition_status(
+            request_id=request_id,
+            target_status=DataSubjectRequestStatus.REJECTED,
+            reviewer_user_id=reviewer_user_id,
+            reason_code=reason_code,
+            audit_context=audit_context,
+        )
+
+    async def cancel_platform_request(
+        self,
+        *,
+        request_id: UUID,
+        reviewer_user_id: UUID,
+        audit_context: AuditContext,
+    ) -> DataSubjectRequest:
+        return await self.transition_status(
+            request_id=request_id,
+            target_status=DataSubjectRequestStatus.CANCELLED,
+            reviewer_user_id=reviewer_user_id,
+            audit_context=audit_context,
+        )
+
+    async def fulfil_request(
+        self, *, request_id: UUID, reviewer_user_id: UUID, audit_context: AuditContext
+    ) -> DataSubjectRequest:
+        request = await self.get_request(request_id=request_id)
+        if request.status != DataSubjectRequestStatus.APPROVED.value:
+            raise ConflictError(detail="Only approved requests can be fulfilled")
+        return await self.transition_status(
+            request_id=request_id,
+            target_status=DataSubjectRequestStatus.FULFILLED,
+            reviewer_user_id=reviewer_user_id,
+            audit_context=audit_context,
+        )
+
     @staticmethod
     def _normalise_idempotency_key(key: str | None) -> str | None:
         if key is None:

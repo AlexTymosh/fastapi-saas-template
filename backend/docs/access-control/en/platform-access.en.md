@@ -400,3 +400,8 @@ Contract rules:
 - Platform read and write routes must carry explicit route-level rate-limit dependency metadata so contract tests can verify the expected `platform_read`, `audit_read`, `platform_write`, or `platform_staff_write` policy.
 
 Future admin clients may rely on `operationId` values as stable method names, but any route rename is an API-contract change and must be reviewed with the same care as a path or schema change.
+
+- Added DSR platform permissions for compliance officers (`privacy_requests:read`, `privacy_requests:review`) and kept support-agent access denied by default.
+
+- Added DSR platform endpoints under /api/v1/platform/privacy/data-subject-requests* and platform-privacy OpenAPI tag coverage.
+- Added permissions privacy_requests:read and privacy_requests:review; support_agent remains denied by default, compliance_officer allowed.

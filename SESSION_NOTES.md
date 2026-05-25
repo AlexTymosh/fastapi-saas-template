@@ -116,3 +116,9 @@ and the GitHub Actions `Backend quality gate` are green.
 
 - grouped business rate-limit consume path now uses Redis Lua all-or-nothing semantics for Redis-backed execution to close TOCTOU concurrency leaks.
 - grouped atomic checks currently target single-node Redis; Redis Cluster needs same-slot hash tags for grouped keys.
+
+## Latest update
+
+- PR-2 DSR API foundation in progress: user and platform endpoints, permissions, and rate limits.
+
+- PR-377 hardening pass: registered privacy_dsr_submit in policy registry; added DSR API/security and OpenAPI contract tests.

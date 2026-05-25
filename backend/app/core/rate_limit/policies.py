@@ -204,3 +204,12 @@ PLATFORM_STAFF_WRITE_POLICY = RateLimitPolicySpec(
     default_fail_open=False,
     sensitivity="critical",
 )
+
+
+PRIVACY_DSR_SUBMIT_POLICY = RateLimitPolicySpec(
+    name="privacy_dsr_submit",
+    default_limit=5,
+    default_window_seconds=86400,
+    default_fail_open=False,
+    sensitivity="critical",
+)

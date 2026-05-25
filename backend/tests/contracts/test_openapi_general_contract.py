@@ -213,6 +213,18 @@ def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
     assert "/api/v1/platform/staff/{staff_id}/role" in paths
     assert "/api/v1/platform/staff/{staff_id}/suspend" in paths
     assert "/api/v1/platform/staff/{staff_id}/restore" in paths
+    assert "/api/v1/platform/privacy/data-subject-requests" in paths
+    assert "/api/v1/platform/privacy/data-subject-requests/{request_id}" in paths
+    assert "/api/v1/platform/privacy/data-subject-requests/{request_id}/review" in paths
+    assert (
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve" in paths
+    )
+    assert "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject" in paths
+    assert "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel" in paths
+    assert "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil" in paths
+    assert "/api/v1/privacy/data-subject-requests" in paths
+    assert "/api/v1/privacy/data-subject-requests/{request_id}" in paths
+    assert "/api/v1/privacy/data-subject-requests/{request_id}/cancel" in paths
 
 
 def test_openapi_platform_collection_and_errors_contract(monkeypatch) -> None:
