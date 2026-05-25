@@ -124,4 +124,28 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_data_subject_requests_idempotency_key_expires_at",
+        table_name="data_subject_requests",
+    )
+    op.drop_index(
+        "ix_data_subject_requests_idempotency_key_hash",
+        table_name="data_subject_requests",
+    )
+    op.drop_index(
+        "ix_data_subject_requests_type_status",
+        table_name="data_subject_requests",
+    )
+    op.drop_index(
+        "ix_data_subject_requests_status_due",
+        table_name="data_subject_requests",
+    )
+    op.drop_index(
+        "ix_data_subject_requests_requester_created",
+        table_name="data_subject_requests",
+    )
+    op.drop_index(
+        "ix_data_subject_requests_subject_status_created",
+        table_name="data_subject_requests",
+    )
     op.drop_table("data_subject_requests")

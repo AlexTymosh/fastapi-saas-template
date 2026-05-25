@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID
@@ -9,10 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
 from app.audit.services.audit_events import AuditEventService
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
+    DataSubjectRequestType,
 )
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 
@@ -22,6 +24,21 @@ class DataSubjectRequestService:
     EXTENSION_DAYS = 60
     MAX_DUE_DAYS = 90
     IDEMPOTENCY_KEY_TTL_HOURS = 24
+    REQUESTER_NOTE_MAX_LENGTH = 2000
+
+    _EMAIL_LIKE_PATTERN = re.compile(
+        r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}",
+        re.IGNORECASE,
+    )
+    _UNSAFE_IDEMPOTENCY_PATTERNS = (
+        re.compile(r"^\s*bearer\s+[A-Z0-9._\-+/=]+", re.IGNORECASE),
+        re.compile(r"^\s*basic\s+[A-Z0-9._\-+/=]+", re.IGNORECASE),
+        re.compile(
+            r"(api[_\-]?key|secret|password|passwd|token)\s*[:=]", re.IGNORECASE
+        ),
+        re.compile(r"eyJ[A-Za-z0-9_\-]+?\.[A-Za-z0-9_\-]+?\.[A-Za-z0-9_\-]+"),
+        re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}", re.IGNORECASE),
+    )
 
     _ALLOWED_TRANSITIONS = {
         DataSubjectRequestStatus.SUBMITTED.value: {
@@ -56,6 +73,18 @@ class DataSubjectRequestService:
         audit_context: AuditContext,
     ) -> DataSubjectRequest:
         reference_now = now or datetime.now(UTC)
+        normalised_request_type = self._normalise_request_type(request_type)
+
+        if (
+            requester_note is not None
+            and len(requester_note) > self.REQUESTER_NOTE_MAX_LENGTH
+        ):
+            raise BadRequestError(
+                detail=(
+                    "Requester note exceeds maximum length of "
+                    f"{self.REQUESTER_NOTE_MAX_LENGTH} characters"
+                )
+            )
         idempotency_key_hash = (
             self._hash_idempotency_key(idempotency_key)
             if idempotency_key is not None
@@ -69,6 +98,8 @@ class DataSubjectRequestService:
             if idempotency_key_hash is not None
             else None
         )
+
+        self._validate_idempotency_key_safety(idempotency_key=idempotency_key)
 
         if idempotency_key_hash is not None:
             existing = await self.repository.get_non_expired_by_idempotency_key_hash(
@@ -86,7 +117,7 @@ class DataSubjectRequestService:
                 )
 
         request = await self.repository.create(
-            request_type=request_type,
+            request_type=normalised_request_type,
             status=DataSubjectRequestStatus.SUBMITTED.value,
             requester_user_id=requester_user_id,
             subject_user_id=requester_user_id,
@@ -175,6 +206,45 @@ class DataSubjectRequestService:
             f"request_type={request_type}|requester_note={requester_note or ''}"
         )
         return sha256(fingerprint_source.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _normalise_request_type(request_type: str) -> str:
+        try:
+            return DataSubjectRequestType(request_type).value
+        except ValueError as exc:
+            raise BadRequestError(
+                detail=(
+                    "Invalid request_type. Supported values: "
+                    "access, export, erase, rectify, restrict, object, portability"
+                )
+            ) from exc
+
+    @classmethod
+    def _validate_idempotency_key_safety(cls, *, idempotency_key: str | None) -> None:
+        if idempotency_key is None:
+            return
+        candidate = idempotency_key.strip()
+        if not candidate:
+            raise BadRequestError(detail="Idempotency key must not be empty")
+        if len(candidate) > 512:
+            raise BadRequestError(detail="Idempotency key is too long")
+        if cls._EMAIL_LIKE_PATTERN.search(candidate):
+            raise BadRequestError(
+                detail="Idempotency key must not contain email-like values"
+            )
+        for pattern in cls._UNSAFE_IDEMPOTENCY_PATTERNS:
+            if pattern.search(candidate):
+                raise BadRequestError(
+                    detail=(
+                        "Idempotency key appears to contain credential "
+                        "or token-like content"
+                    )
+                )
+        # Guard against obvious key-value blobs often copied from headers.
+        if ":" in candidate and "=" in candidate:
+            raise BadRequestError(
+                detail=("Idempotency key appears to contain sensitive structured data")
+            )
 
     @staticmethod
     def _action_for_status(status: DataSubjectRequestStatus) -> AuditAction:

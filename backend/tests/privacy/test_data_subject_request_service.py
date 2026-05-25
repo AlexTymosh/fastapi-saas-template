@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from uuid import uuid4
 
 import pytest
@@ -8,7 +9,7 @@ from sqlalchemy import select
 
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
-from app.core.errors import ConflictError
+from app.core.errors import BadRequestError, ConflictError
 from app.privacy.models.data_subject_request import DataSubjectRequestStatus
 from app.privacy.services.data_subject_requests import DataSubjectRequestService
 from app.users.models.user import User
@@ -54,6 +55,48 @@ def test_submit_request_calculates_due_and_self_subject(
     run_async(_run())
 
 
+def test_submit_request_rejects_invalid_request_type(migrated_session_factory) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="invalid-type@example.com")
+            service = DataSubjectRequestService(session)
+            with pytest.raises(BadRequestError):
+                await service.submit_request(
+                    requester_user_id=user.id,
+                    request_type="unknown",
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+    run_async(_run())
+
+
+@pytest.mark.parametrize(
+    "unsafe_key",
+    [
+        "john.doe@example.com",
+        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig",
+        "Basic dXNlcjpwYXNzd29yZA==",
+        "token=secret_value",
+    ],
+)
+def test_submit_request_rejects_unsafe_idempotency_key(
+    migrated_session_factory, unsafe_key: str
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="unsafe-idempotency@example.com")
+            service = DataSubjectRequestService(session)
+            with pytest.raises(BadRequestError):
+                await service.submit_request(
+                    requester_user_id=user.id,
+                    request_type="export",
+                    idempotency_key=unsafe_key,
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+    run_async(_run())
+
+
 def test_idempotency_returns_existing_or_conflict(migrated_session_factory) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:
@@ -85,6 +128,48 @@ def test_idempotency_returns_existing_or_conflict(migrated_session_factory) -> N
                     idempotency_key="same-key",
                     audit_context=audit_context,
                 )
+
+    run_async(_run())
+
+
+def test_idempotency_expired_key_allows_new_request(migrated_session_factory) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="expired-key@example.com")
+            service = DataSubjectRequestService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+            now = datetime.now(UTC)
+            key = "same-key-expired"
+            key_hash = sha256(key.encode("utf-8")).hexdigest()
+
+            first = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="export",
+                requester_note="first",
+                idempotency_key=key,
+                now=now,
+                audit_context=audit_context,
+            )
+            first.idempotency_key_expires_at = now - timedelta(seconds=1)
+            await service.repository.save(first)
+
+            second = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="export",
+                requester_note="second",
+                idempotency_key=key,
+                now=now + timedelta(seconds=2),
+                audit_context=audit_context,
+            )
+
+            assert second.id != first.id
+            assert second.idempotency_key_hash == key_hash
+            expected_expiry = now + timedelta(
+                seconds=2, hours=service.IDEMPOTENCY_KEY_TTL_HOURS
+            )
+            assert (
+                second.idempotency_key_expires_at.replace(tzinfo=UTC) == expected_expiry
+            )
 
     run_async(_run())
 
@@ -124,6 +209,102 @@ def test_state_machine_and_terminal_protection(migrated_session_factory) -> None
                 await service.transition_status(
                     request_id=request.id,
                     target_status=DataSubjectRequestStatus.CANCELLED,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
+
+    run_async(_run())
+
+
+def test_state_machine_submitted_to_approved(migrated_session_factory) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="submitted-approved@example.com")
+            service = DataSubjectRequestService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+
+            request = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="access",
+                audit_context=audit_context,
+            )
+            request = await service.transition_status(
+                request_id=request.id,
+                target_status=DataSubjectRequestStatus.APPROVED,
+                reviewer_user_id=user.id,
+                audit_context=audit_context,
+            )
+            assert request.status == DataSubjectRequestStatus.APPROVED.value
+            assert request.decided_at is not None
+
+    run_async(_run())
+
+
+def test_state_machine_submitted_to_fulfilled(migrated_session_factory) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="submitted-fulfilled@example.com")
+            service = DataSubjectRequestService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+
+            request = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="access",
+                audit_context=audit_context,
+            )
+            request = await service.transition_status(
+                request_id=request.id,
+                target_status=DataSubjectRequestStatus.FULFILLED,
+                reviewer_user_id=user.id,
+                audit_context=audit_context,
+            )
+            assert request.status == DataSubjectRequestStatus.FULFILLED.value
+            assert request.fulfilled_at is not None
+
+    run_async(_run())
+
+
+@pytest.mark.parametrize(
+    "terminal_status",
+    [
+        DataSubjectRequestStatus.REJECTED,
+        DataSubjectRequestStatus.CANCELLED,
+        DataSubjectRequestStatus.FULFILLED,
+    ],
+)
+def test_terminal_states_reject_further_transitions(
+    migrated_session_factory, terminal_status: DataSubjectRequestStatus
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(
+                session, email=f"terminal-{terminal_status.value}@example.com"
+            )
+            service = DataSubjectRequestService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+            request = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="access",
+                audit_context=audit_context,
+            )
+            if terminal_status is DataSubjectRequestStatus.REJECTED:
+                request = await service.transition_status(
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.UNDER_REVIEW,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
+
+            request = await service.transition_status(
+                request_id=request.id,
+                target_status=terminal_status,
+                reviewer_user_id=user.id,
+                audit_context=audit_context,
+            )
+            with pytest.raises(ConflictError):
+                await service.transition_status(
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.UNDER_REVIEW,
                     reviewer_user_id=user.id,
                     audit_context=audit_context,
                 )

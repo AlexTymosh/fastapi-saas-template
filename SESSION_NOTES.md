@@ -1,4 +1,5 @@
 # SESSION_NOTES
+DSR PR-1 foundation now includes model/migration/repository/service with state machine, idempotency TTL handling, and service tests; API/export/erasure remain follow-up scope.
 
 ## Current Focus
 
