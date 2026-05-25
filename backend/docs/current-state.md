@@ -23,6 +23,7 @@ The following foundations are present in code and/or current documentation and s
 - Platform staff, permissions, current platform identity endpoint foundation, full platform list filters, limited platform user/organisation/audit views, and OpenAPI operation ID hardening for future generated admin clients.
 - Audit events foundation, including a backend-redacted limited platform audit view.
 - Privacy governance foundation: processing purpose registry, lawful-basis and special-category condition primitives, per-subject processing authorisations, consent records, privacy notice acceptance records, service-layer processing checks, consent withdrawal, and compliance audit events.
+- Data Subject Request foundation (PR-1 scope): persistence model/migration, repository, lifecycle service transitions, SLA due-date defaults, idempotency hash/fingerprint TTL logic, and service-level tests.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies, settings-aware effective policy resolution, authenticated reads, tenant read/write/create flows, layered invite anti-abuse flows, platform read/audit reads, fail-closed platform write policies, and versioned HMAC-SHA256 identifier bucket keys backed by a dedicated rate-limit secret.
 - Observability/OpenTelemetry foundation.
@@ -40,6 +41,7 @@ The following foundations are present in code and/or current documentation and s
 
 - GDPR/privacy posture beyond the privacy-governance foundation, especially Data Subject Rights workflows, retention/purge orchestration across all personal-data stores, and future regulated or special-category data controls.
 - Production hardening.
+- DSR API endpoints, export orchestration, erasure/anonymisation orchestration, and retention runners remain planned follow-up work.
 - Platform workflows, including explicit platform visibility for soft-deleted organisations in admin operations while tenant organisation endpoints keep excluding deleted organisations by default.
 - Organisation soft deletion preserves the original slug, while database-level active-only uniqueness allows slug reuse after deletion without allowing duplicate active slugs.
 - Invite delivery pipeline.

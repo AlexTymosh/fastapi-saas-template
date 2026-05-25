@@ -1,3 +1,4 @@
+from app.privacy.services.data_subject_requests import DataSubjectRequestService
 from app.privacy.services.governance import (
     PrivacyConfigurationError,
     PrivacyGovernanceError,
@@ -6,6 +7,7 @@ from app.privacy.services.governance import (
 )
 
 __all__ = [
+    "DataSubjectRequestService",
     "PrivacyConfigurationError",
     "PrivacyGovernanceError",
     "PrivacyGovernanceService",
