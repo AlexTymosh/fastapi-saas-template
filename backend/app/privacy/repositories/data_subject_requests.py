@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.privacy.models.data_subject_request import DataSubjectRequest
@@ -95,3 +95,101 @@ class DataSubjectRequestRepository:
         await self.session.flush()
         await self.session.refresh(request)
         return request
+
+    async def list_for_requester(
+        self,
+        *,
+        requester_user_id: UUID,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+        request_type: str | None = None,
+    ) -> list[DataSubjectRequest]:
+        stmt = select(DataSubjectRequest).where(
+            DataSubjectRequest.requester_user_id == requester_user_id
+        )
+        if status is not None:
+            stmt = stmt.where(DataSubjectRequest.status == status)
+        if request_type is not None:
+            stmt = stmt.where(DataSubjectRequest.request_type == request_type)
+        stmt = (
+            stmt.order_by(DataSubjectRequest.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def count_for_requester(
+        self,
+        *,
+        requester_user_id: UUID,
+        status: str | None = None,
+        request_type: str | None = None,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(DataSubjectRequest)
+            .where(DataSubjectRequest.requester_user_id == requester_user_id)
+        )
+        if status is not None:
+            stmt = stmt.where(DataSubjectRequest.status == status)
+        if request_type is not None:
+            stmt = stmt.where(DataSubjectRequest.request_type == request_type)
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    async def list_for_platform(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+        request_type: str | None = None,
+        subject_user_id: UUID | None = None,
+        requester_user_id: UUID | None = None,
+        due_before: datetime | None = None,
+        due_after: datetime | None = None,
+    ) -> list[DataSubjectRequest]:
+        stmt = select(DataSubjectRequest)
+        if status is not None:
+            stmt = stmt.where(DataSubjectRequest.status == status)
+        if request_type is not None:
+            stmt = stmt.where(DataSubjectRequest.request_type == request_type)
+        if subject_user_id is not None:
+            stmt = stmt.where(DataSubjectRequest.subject_user_id == subject_user_id)
+        if requester_user_id is not None:
+            stmt = stmt.where(DataSubjectRequest.requester_user_id == requester_user_id)
+        if due_before is not None:
+            stmt = stmt.where(DataSubjectRequest.due_at <= due_before)
+        if due_after is not None:
+            stmt = stmt.where(DataSubjectRequest.due_at >= due_after)
+        stmt = (
+            stmt.order_by(DataSubjectRequest.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def count_for_platform(
+        self,
+        *,
+        status: str | None = None,
+        request_type: str | None = None,
+        subject_user_id: UUID | None = None,
+        requester_user_id: UUID | None = None,
+        due_before: datetime | None = None,
+        due_after: datetime | None = None,
+    ) -> int:
+        stmt = select(func.count()).select_from(DataSubjectRequest)
+        if status is not None:
+            stmt = stmt.where(DataSubjectRequest.status == status)
+        if request_type is not None:
+            stmt = stmt.where(DataSubjectRequest.request_type == request_type)
+        if subject_user_id is not None:
+            stmt = stmt.where(DataSubjectRequest.subject_user_id == subject_user_id)
+        if requester_user_id is not None:
+            stmt = stmt.where(DataSubjectRequest.requester_user_id == requester_user_id)
+        if due_before is not None:
+            stmt = stmt.where(DataSubjectRequest.due_at <= due_before)
+        if due_after is not None:
+            stmt = stmt.where(DataSubjectRequest.due_at >= due_after)
+        return int((await self.session.execute(stmt)).scalar_one())

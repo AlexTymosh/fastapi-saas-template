@@ -139,3 +139,5 @@ External DB tests are opt-in and must not run by default.
 4. `backend/docs/current-state.md` controls current status.
 5. `SESSION_NOTES.md` controls live handoff state.
 6. Feature-specific docs control details only for their area.
+
+- Added DSR PR-2 API, permission, and rate-limit foundation scope (still no export pipeline/erasure execution).

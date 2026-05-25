@@ -58,3 +58,18 @@ The service calculates `due_at` at submit time.
 - retention runners;
 - document storage;
 - authorised representative flows.
+
+## PR 2 status update (API and access-control foundation)
+
+Added in PR 2:
+- user-facing API under `/api/v1/privacy/data-subject-requests`;
+- platform-facing API under `/api/v1/platform/privacy/data-subject-requests`;
+- platform permissions `privacy_requests:read` and `privacy_requests:review`;
+- DSR submit rate limit policy `privacy_dsr_submit` (5/day, critical).
+
+Current phase constraints:
+- self-service only (`requester_user_id == subject_user_id`);
+- no authorised representative flows;
+- no asynchronous export generation;
+- no signed download URLs;
+- no erasure/anonymisation execution pipeline.
