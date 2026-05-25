@@ -43,6 +43,11 @@ class AuditAction(StrEnum):
     DATA_SUBJECT_REQUEST_REJECTED = "data_subject_request_rejected"
     DATA_SUBJECT_REQUEST_CANCELLED = "data_subject_request_cancelled"
     DATA_SUBJECT_REQUEST_FULFILLED = "data_subject_request_fulfilled"
+    EXPORT_ARTIFACT_REQUESTED = "export_artifact_requested"
+    EXPORT_ARTIFACT_GENERATED = "export_artifact_generated"
+    EXPORT_ARTIFACT_FAILED = "export_artifact_failed"
+    EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED = "export_artifact_download_url_created"
+    EXPORT_ARTIFACT_EXPIRED = "export_artifact_expired"
 
 
 class AuditTargetType(StrEnum):
@@ -54,6 +59,7 @@ class AuditTargetType(StrEnum):
     PRIVACY_CONSENT = "privacy_consent"
     PRIVACY_NOTICE = "privacy_notice"
     DATA_SUBJECT_REQUEST = "data_subject_request"
+    EXPORT_ARTIFACT = "export_artifact"
 
 
 class AuditEvent(UUIDMixin, Base):

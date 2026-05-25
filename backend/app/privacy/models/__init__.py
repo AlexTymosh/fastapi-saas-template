@@ -19,9 +19,20 @@ __all__ = [
     "DataSubjectRequest",
     "DataSubjectRequestStatus",
     "DataSubjectRequestType",
+    "ExportArtifact",
+    "ExportArtifactFormat",
+    "ExportArtifactStatus",
+    "ExportArtifactStorageBackend",
     "LawfulBasis",
     "ProcessingPurpose",
     "ProcessingPurposeFamily",
     "PrivacyNoticeAcceptance",
     "SpecialCategoryCondition",
 ]
+
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
+)
