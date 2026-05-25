@@ -1,22 +1,42 @@
 from __future__ import annotations
 
-from pathlib import Path
+import base64
+import hashlib
+import hmac
+import json
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
 
 from app.privacy.storage.base import StorageAdapter, StoredObject
 
 
 class LocalStorageAdapter(StorageAdapter):
-    def __init__(self, base_path: str) -> None:
+    def __init__(self, base_path: str, signing_secret: str) -> None:
         self.base_path = Path(base_path).resolve()
         self.base_path.mkdir(parents=True, exist_ok=True)
+        self.signing_secret = signing_secret.encode("utf-8")
 
     def _resolve(self, key: str) -> Path:
-        safe_key = key.replace("..", "").strip("/")
+        safe_key = self._validate_key(key)
         path = (self.base_path / safe_key).resolve()
-        if not str(path).startswith(str(self.base_path)):
-            raise ValueError("Invalid storage key")
+        try:
+            path.relative_to(self.base_path)
+        except ValueError as exc:
+            raise ValueError("Invalid storage key") from exc
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
+
+    def _validate_key(self, key: str) -> str:
+        if not key or not key.strip():
+            raise ValueError("Storage key must not be empty")
+        if "\\" in key:
+            raise ValueError("Storage key must use forward slashes")
+        parsed = PurePosixPath(key)
+        if parsed.is_absolute() or any(
+            part in {"", ".", ".."} for part in parsed.parts
+        ):
+            raise ValueError("Invalid storage key")
+        return key
 
     def put_bytes(self, key: str, data: bytes, content_type: str) -> StoredObject:
         path = self._resolve(key)
@@ -35,4 +55,40 @@ class LocalStorageAdapter(StorageAdapter):
             path.unlink()
 
     def generate_download_url(self, key: str, expires_in_seconds: int) -> str:
-        return f"local://privacy-export/{key}?ttl={expires_in_seconds}"
+        safe_key = self._validate_key(key)
+        payload = {
+            "k": safe_key,
+            "exp": int(datetime.now(UTC).timestamp()) + expires_in_seconds,
+        }
+        payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii")
+        signature = hmac.new(
+            self.signing_secret,
+            payload_bytes,
+            hashlib.sha256,
+        ).hexdigest()
+        return f"local://privacy-export/{payload_b64}.{signature}"
+
+    def verify_download_url(self, token: str, *, expected_key: str) -> bool:
+        prefix = "local://privacy-export/"
+        if not token.startswith(prefix):
+            return False
+        body = token[len(prefix) :]
+        if "." not in body:
+            return False
+        payload_b64, signature = body.rsplit(".", 1)
+        try:
+            payload_bytes = base64.urlsafe_b64decode(payload_b64.encode("ascii"))
+            payload = json.loads(payload_bytes)
+        except Exception:
+            return False
+        expected = hmac.new(
+            self.signing_secret,
+            payload_bytes,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return False
+        if payload.get("k") != expected_key:
+            return False
+        return int(payload.get("exp", 0)) > int(datetime.now(UTC).timestamp())

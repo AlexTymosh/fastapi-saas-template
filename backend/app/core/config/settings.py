@@ -496,6 +496,7 @@ class PrivacyExportsSettings(BaseModel):
     artifact_retention_days: int = Field(default=30, ge=1)
     max_artifact_size_bytes: int = Field(default=10_485_760, gt=0)
     schema_version: str = "1.0"
+    local_signing_secret: str = "dev-only-signing-secret"
 
 
 class ProcessorGovernanceSettings(BaseModel):

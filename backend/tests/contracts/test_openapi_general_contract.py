@@ -225,6 +225,10 @@ def test_openapi_includes_platform_endpoints(monkeypatch) -> None:
     assert "/api/v1/privacy/data-subject-requests" in paths
     assert "/api/v1/privacy/data-subject-requests/{request_id}" in paths
     assert "/api/v1/privacy/data-subject-requests/{request_id}/cancel" in paths
+    assert "/api/v1/privacy/export-artifacts" in paths
+    assert "/api/v1/privacy/export-artifacts/{artifact_id}" in paths
+    assert "/api/v1/privacy/export-artifacts/{artifact_id}/download-url" in paths
+    assert "/api/v1/platform/privacy/export-artifacts" in paths
 
 
 def test_openapi_platform_collection_and_errors_contract(monkeypatch) -> None:
