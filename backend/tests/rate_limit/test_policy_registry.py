@@ -21,6 +21,7 @@ from app.core.rate_limit.policies import (
     PLATFORM_STAFF_WRITE_POLICY,
     PLATFORM_WRITE_POLICY,
     PRE_AUTH_POLICY,
+    PRIVACY_DSR_SUBMIT_POLICY,
     TENANT_READ_POLICY,
     TENANT_WRITE_ORGANISATION_POLICY,
     TENANT_WRITE_POLICY,
@@ -55,6 +56,7 @@ EXPECTED_POLICIES = {
     "audit_read": AUDIT_READ_POLICY,
     "platform_write": PLATFORM_WRITE_POLICY,
     "platform_staff_write": PLATFORM_STAFF_WRITE_POLICY,
+    "privacy_dsr_submit": PRIVACY_DSR_SUBMIT_POLICY,
 }
 
 
@@ -135,6 +137,9 @@ def test_default_effective_policies_preserve_current_behaviour() -> None:
     assert registry["platform_staff_write"].item.amount == 10
     assert registry["platform_staff_write"].item.get_expiry() == 60
     assert registry["platform_staff_write"].fail_open is False
+    assert registry["privacy_dsr_submit"].item.amount == 5
+    assert registry["privacy_dsr_submit"].item.get_expiry() == 86400
+    assert registry["privacy_dsr_submit"].fail_open is False
 
     assert registry["invite_accept"].item.amount == 5
     assert registry["invite_accept"].item.multiples == 5
@@ -251,6 +256,9 @@ def test_override_changes_limit_window_and_fail_open() -> None:
         ("relaxed", "tenant_read", 240),
         ("panic", "tenant_write", 15),
         ("panic", "platform_write", 7),
+        ("strict", "privacy_dsr_submit", 2),
+        ("relaxed", "privacy_dsr_submit", 10),
+        ("panic", "privacy_dsr_submit", 1),
     ],
 )
 def test_modes_transform_effective_limits(

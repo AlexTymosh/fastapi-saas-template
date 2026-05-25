@@ -112,19 +112,7 @@ class RejectDataSubjectRequest(BaseModel):
 
 class CancelDataSubjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reason_code: OperationalReasonCode | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalise_legacy_reason_alias(cls, data: object) -> object:
-        return normalise_legacy_reason_payload(data, required=False)
 
 
 class FulfilDataSubjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reason_code: OperationalReasonCode | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalise_legacy_reason_alias(cls, data: object) -> object:
-        return normalise_legacy_reason_payload(data, required=False)

@@ -120,3 +120,5 @@ and the GitHub Actions `Backend quality gate` are green.
 ## Latest update
 
 - PR-2 DSR API foundation in progress: user and platform endpoints, permissions, and rate limits.
+
+- PR-377 hardening pass: registered privacy_dsr_submit in policy registry; added DSR API/security and OpenAPI contract tests.

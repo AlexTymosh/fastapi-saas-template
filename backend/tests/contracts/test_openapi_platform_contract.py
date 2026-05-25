@@ -18,6 +18,7 @@ PLATFORM_TAGS = {
     "platform-organisations",
     "platform-staff",
     "platform-audit",
+    "platform-privacy",
 }
 PLATFORM_PATHS = {
     "/api/v1/platform/me": {"get": "platform-identity"},
@@ -45,6 +46,25 @@ PLATFORM_PATHS = {
     "/api/v1/platform/staff/{staff_id}/role": {"patch": "platform-staff"},
     "/api/v1/platform/staff/{staff_id}/suspend": {"post": "platform-staff"},
     "/api/v1/platform/staff/{staff_id}/restore": {"post": "platform-staff"},
+    "/api/v1/platform/privacy/data-subject-requests": {"get": "platform-privacy"},
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}": {
+        "get": "platform-privacy"
+    },
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}/review": {
+        "post": "platform-privacy"
+    },
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve": {
+        "post": "platform-privacy"
+    },
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject": {
+        "post": "platform-privacy"
+    },
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel": {
+        "post": "platform-privacy"
+    },
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil": {
+        "post": "platform-privacy"
+    },
 }
 
 EXPECTED_PLATFORM_OPERATION_IDS = {
@@ -86,6 +106,34 @@ EXPECTED_PLATFORM_OPERATION_IDS = {
     ("patch", "/api/v1/platform/staff/{staff_id}/role"): "update_platform_staff_role",
     ("post", "/api/v1/platform/staff/{staff_id}/suspend"): "suspend_platform_staff",
     ("post", "/api/v1/platform/staff/{staff_id}/restore"): "restore_platform_staff",
+    (
+        "get",
+        "/api/v1/platform/privacy/data-subject-requests",
+    ): "list_platform_data_subject_requests",
+    (
+        "get",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}",
+    ): "get_platform_data_subject_request",
+    (
+        "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/review",
+    ): "review_platform_data_subject_request",
+    (
+        "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve",
+    ): "approve_platform_data_subject_request",
+    (
+        "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject",
+    ): "reject_platform_data_subject_request",
+    (
+        "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel",
+    ): "cancel_platform_data_subject_request",
+    (
+        "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
+    ): "fulfil_platform_data_subject_request",
 }
 
 READ_POLICIES = {
@@ -100,6 +148,11 @@ READ_POLICIES = {
     ("GET", "/api/v1/platform/audit-events/limited"): "audit_read",
     ("GET", "/api/v1/platform/staff"): "platform_read",
     ("GET", "/api/v1/platform/staff/{staff_id}"): "platform_read",
+    ("GET", "/api/v1/platform/privacy/data-subject-requests"): "platform_read",
+    (
+        "GET",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}",
+    ): "platform_read",
 }
 
 WRITE_POLICIES = {
@@ -118,6 +171,26 @@ WRITE_POLICIES = {
     ("PATCH", "/api/v1/platform/staff/{staff_id}/role"): "platform_staff_write",
     ("POST", "/api/v1/platform/staff/{staff_id}/suspend"): "platform_staff_write",
     ("POST", "/api/v1/platform/staff/{staff_id}/restore"): "platform_staff_write",
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/review",
+    ): "platform_write",
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve",
+    ): "platform_write",
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject",
+    ): "platform_write",
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel",
+    ): "platform_write",
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
+    ): "platform_write",
 }
 
 
@@ -498,6 +571,29 @@ def test_platform_routes_declare_rate_limit_policies(monkeypatch) -> None:
     for (method, path), policy_name in {**READ_POLICIES, **WRITE_POLICIES}.items():
         route = _find_route(app, method=method, path=path)
         assert _route_has_policy(route, policy_name), (method, path, policy_name)
+
+
+def test_platform_dsr_mutation_routes_use_function_scoped_write_context(
+    monkeypatch,
+) -> None:
+    app = _build_app(monkeypatch)
+    dsr_mutation_paths = {
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/review",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
+    }
+    for path in dsr_mutation_paths:
+        route = _find_route(app, method="POST", path=path)
+        assert any(
+            getattr(dependency, "scope", None) == "function"
+            and getattr(
+                getattr(dependency, "call", None), "__rate_limit_policy_name__", None
+            )
+            == "platform_write"
+            for dependency in route.dependant.dependencies
+        ), path
 
 
 def test_no_platform_route_is_undocumented_by_accident(monkeypatch) -> None:

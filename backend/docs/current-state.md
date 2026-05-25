@@ -141,3 +141,5 @@ External DB tests are opt-in and must not run by default.
 6. Feature-specific docs control details only for their area.
 
 - Added DSR PR-2 API, permission, and rate-limit foundation scope (still no export pipeline/erasure execution).
+
+- DSR PR-2 merge blockers addressed: policy registry wiring, function-scoped platform write deps, API+contract coverage.

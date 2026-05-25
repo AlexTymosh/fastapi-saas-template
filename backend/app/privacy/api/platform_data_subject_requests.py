@@ -115,7 +115,8 @@ async def review_platform_data_subject_request(
         Depends(
             require_rate_limited_platform_write_context(
                 PlatformPermission.PRIVACY_REQUESTS_REVIEW
-            )
+            ),
+            scope="function",
         ),
     ],
 ) -> PlatformDataSubjectRequestResponse:
@@ -144,7 +145,8 @@ async def approve_platform_data_subject_request(
         Depends(
             require_rate_limited_platform_write_context(
                 PlatformPermission.PRIVACY_REQUESTS_REVIEW
-            )
+            ),
+            scope="function",
         ),
     ],
 ) -> PlatformDataSubjectRequestResponse:
@@ -174,7 +176,8 @@ async def reject_platform_data_subject_request(
         Depends(
             require_rate_limited_platform_write_context(
                 PlatformPermission.PRIVACY_REQUESTS_REVIEW
-            )
+            ),
+            scope="function",
         ),
     ],
 ) -> PlatformDataSubjectRequestResponse:
@@ -204,7 +207,8 @@ async def cancel_platform_data_subject_request(
         Depends(
             require_rate_limited_platform_write_context(
                 PlatformPermission.PRIVACY_REQUESTS_REVIEW
-            )
+            ),
+            scope="function",
         ),
     ],
 ) -> PlatformDataSubjectRequestResponse:
@@ -235,7 +239,8 @@ async def fulfil_platform_data_subject_request(
         Depends(
             require_rate_limited_platform_write_context(
                 PlatformPermission.PRIVACY_REQUESTS_REVIEW
-            )
+            ),
+            scope="function",
         ),
     ],
 ) -> PlatformDataSubjectRequestResponse:
