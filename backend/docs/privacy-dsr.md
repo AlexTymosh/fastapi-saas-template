@@ -45,7 +45,8 @@ The service calculates `due_at` at submit time.
 - same requester + same non-expired key + same fingerprint returns the existing request;
 - same requester + same non-expired key + different fingerprint raises conflict;
 - expired keys can be reused;
-- idempotent submit serialises the requester row before the lookup/create path so concurrent same-requester retries cannot both miss the non-expired key in transactional databases that support row-level locks.
+- idempotent submit serialises the requester row before the lookup/create path so concurrent same-requester retries cannot both miss the non-expired key in transactional databases that support row-level locks;
+- PostgreSQL uses a `FOR NO KEY UPDATE` requester-row lock for this critical section, which avoids blocking foreign-key key-share checks that only need to verify the requester row still exists.
 
 ## Explicitly out of scope in this PR
 - API routers and schemas;

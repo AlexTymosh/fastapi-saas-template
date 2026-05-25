@@ -57,12 +57,17 @@ class DataSubjectRequestRepository:
         """Serialize idempotent submit checks for one requester.
 
         This deliberately locks the existing requester row instead of adding a
-        permanent uniqueness constraint to the DSR table. The lock prevents two
-        concurrent transactions for the same requester/key from both missing the
-        non-expired idempotency row and creating duplicate DSR records, while the
-        TTL lookup still allows key reuse after expiry.
+        permanent uniqueness constraint to the DSR table. PostgreSQL renders
+        ``key_share=True`` as ``FOR NO KEY UPDATE``, which is strong enough to
+        serialize same-requester idempotency checks but weaker than ``FOR UPDATE``
+        and does not block foreign-key ``FOR KEY SHARE`` checks that only need
+        to verify the requester row still exists.
         """
-        stmt = select(User.id).where(User.id == requester_user_id).with_for_update()
+        stmt = (
+            select(User.id)
+            .where(User.id == requester_user_id)
+            .with_for_update(key_share=True)
+        )
         await self.session.execute(stmt)
 
     async def get_non_expired_by_idempotency_key_hash(

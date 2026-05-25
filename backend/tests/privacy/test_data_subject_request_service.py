@@ -6,16 +6,27 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.core.errors import BadRequestError, ConflictError
 from app.privacy.models.data_subject_request import DataSubjectRequestStatus
+from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.services.data_subject_requests import DataSubjectRequestService
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
+
+
+class _StatementCaptureSession:
+    def __init__(self) -> None:
+        self.statement = None
+
+    async def execute(self, statement):
+        self.statement = statement
+        return None
 
 
 async def _create_user(session, *, email: str = "subject@example.com") -> User:
@@ -28,6 +39,20 @@ async def _create_user(session, *, email: str = "subject@example.com") -> User:
     await session.flush()
     await session.refresh(user)
     return user
+
+
+def test_idempotency_requester_lock_uses_no_key_update() -> None:
+    async def _run() -> None:
+        session = _StatementCaptureSession()
+        repository = DataSubjectRequestRepository(session)  # type: ignore[arg-type]
+
+        await repository.lock_requester_for_idempotency(requester_user_id=uuid4())
+
+        assert session.statement is not None
+        compiled = str(session.statement.compile(dialect=postgresql.dialect()))
+        assert "FOR NO KEY UPDATE" in compiled
+
+    run_async(_run())
 
 
 def test_submit_request_calculates_due_and_self_subject(
