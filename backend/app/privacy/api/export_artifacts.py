@@ -95,13 +95,13 @@ async def create_own_export_download_url(
         artifact = await service.get_own_export_artifact(
             artifact_id=artifact_id, requester_user_id=user.id
         )
-        url = await service.generate_download_url(
+        download = await service.generate_download_url(
             artifact=artifact,
             audit_context=build_audit_context_from_request(
                 actor_user_id=user.id, request=request
             ),
         )
     return ExportDownloadUrlResponse(
-        url=url,
-        expires_in_seconds=service.settings.privacy_exports.download_url_ttl_seconds,
+        url=download.url,
+        expires_in_seconds=download.expires_in_seconds,
     )

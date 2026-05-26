@@ -123,13 +123,13 @@ async def create_platform_export_download_url(
     actor = write_context.actor
     service = ExportArtifactService(write_context.session)
     artifact = await service.get_platform_export_artifact(artifact_id=artifact_id)
-    url = await service.generate_download_url(
+    download = await service.generate_download_url(
         artifact=artifact,
         audit_context=build_audit_context_from_request(
             actor_user_id=actor.user.id, request=request
         ),
     )
     return ExportDownloadUrlResponse(
-        url=url,
-        expires_in_seconds=service.settings.privacy_exports.download_url_ttl_seconds,
+        url=download.url,
+        expires_in_seconds=download.expires_in_seconds,
     )

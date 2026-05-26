@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from uuid import uuid4
 
@@ -170,5 +170,75 @@ def test_generate_export_artifact_too_large_marks_failed(
             assert failed.status == ExportArtifactStatus.FAILED.value
             assert failed.failure_reason_code == "artifact_too_large"
             assert failed.storage_key is None
+
+    run_async(_run())
+
+
+def test_generate_export_artifact_fails_when_dsr_no_longer_eligible(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            artifact.status = ExportArtifactStatus.PROCESSING.value
+            dsr.status = DataSubjectRequestStatus.CANCELLED.value
+
+            failed = await service.generate_export_artifact(
+                artifact=artifact, generated_by_user_id=user.id
+            )
+
+            assert failed.status == ExportArtifactStatus.FAILED.value
+            assert failed.failure_reason_code == "dsr_not_export_eligible"
+            assert failed.storage_key is None
+
+    run_async(_run())
+
+
+def test_generate_download_url_clamps_ttl_to_artifact_remaining_lifetime(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            service.storage.put_bytes(
+                artifact.storage_key,
+                b"payload",
+                "application/zip",
+            )
+
+            download = await service.generate_download_url(
+                artifact=artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            assert 0 < download.expires_in_seconds <= 60
+            assert service.storage.verify_download_url(
+                download.url,
+                expected_key=artifact.storage_key,
+            )
 
     run_async(_run())

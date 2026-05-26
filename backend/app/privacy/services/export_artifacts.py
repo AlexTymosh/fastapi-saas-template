@@ -49,6 +49,12 @@ class PreparedExportArchive:
     checksum_sha256: str
 
 
+@dataclass(frozen=True)
+class GeneratedExportDownloadUrl:
+    url: str
+    expires_in_seconds: int
+
+
 class ExportArtifactService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -140,21 +146,35 @@ class ExportArtifactService:
 
     async def generate_download_url(
         self, *, artifact: ExportArtifact, audit_context: AuditContext
-    ) -> str:
+    ) -> GeneratedExportDownloadUrl:
+        now = datetime.now(UTC)
+
         if artifact.status != ExportArtifactStatus.READY.value:
             raise ConflictError(detail="Export artifact is not available for download")
-        if _ensure_aware_utc(artifact.expires_at) <= datetime.now(UTC):
+
+        expires_at = _ensure_aware_utc(artifact.expires_at)
+        remaining_seconds = int((expires_at - now).total_seconds())
+        if remaining_seconds <= 0:
             raise ConflictError(detail="Export artifact is expired")
+
         if artifact.storage_key is None:
             raise ConflictError(detail="Export artifact is missing storage key")
+
+        effective_ttl_seconds = min(
+            self.settings.privacy_exports.download_url_ttl_seconds,
+            remaining_seconds,
+        )
         url = self.storage.generate_download_url(
-            artifact.storage_key, self.settings.privacy_exports.download_url_ttl_seconds
+            artifact.storage_key, effective_ttl_seconds
         )
         await self.repo.increment_download_count(artifact)
         await self._record_event(
             audit_context, AuditAction.EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED, artifact
         )
-        return url
+        return GeneratedExportDownloadUrl(
+            url=url,
+            expires_in_seconds=effective_ttl_seconds,
+        )
 
     async def count_queued_artifacts(self, *, limit: int) -> int:
         """Return how many queued artifacts would be processed without claiming them."""
@@ -219,6 +239,11 @@ class ExportArtifactService:
         dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
         if dsr is None:
             raise ValueError("dsr_not_found")
+        if (
+            dsr.request_type != DataSubjectRequestType.EXPORT.value
+            or dsr.status != DataSubjectRequestStatus.APPROVED.value
+        ):
+            raise ValueError("dsr_not_export_eligible")
 
         now = datetime.now(UTC)
         payload = MinimalSubjectDataExporter().export_subject_data(
@@ -298,7 +323,12 @@ class ExportArtifactService:
             raise NotFoundError(detail="Export artifact not found")
         code = (
             str(exc)
-            if str(exc) in {"artifact_too_large", "dsr_not_found"}
+            if str(exc)
+            in {
+                "artifact_too_large",
+                "dsr_not_found",
+                "dsr_not_export_eligible",
+            }
             else "generation_failed"
         )
         failed = await self.repo.mark_failed(
