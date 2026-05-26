@@ -70,6 +70,15 @@ class ExportArtifactRepository:
         stmt = select(func.count()).select_from(ExportArtifact)
         return int((await self.session.execute(stmt)).scalar_one())
 
+    async def peek_queued_batch(self, limit: int) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .where(ExportArtifact.status == ExportArtifactStatus.QUEUED.value)
+            .order_by(ExportArtifact.queued_at.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def claim_queued_batch(self, limit: int) -> list[ExportArtifact]:
         stmt = (
             select(ExportArtifact)
@@ -86,6 +95,20 @@ class ExportArtifactRepository:
             row.started_at = now
         await self.session.flush()
         return rows
+
+    async def list_expired_ready(
+        self, *, now: datetime, limit: int
+    ) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.status == ExportArtifactStatus.READY.value,
+                ExportArtifact.expires_at <= now,
+            )
+            .order_by(ExportArtifact.expires_at.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def mark_ready(self, artifact: ExportArtifact) -> ExportArtifact:
         artifact.status = ExportArtifactStatus.READY.value

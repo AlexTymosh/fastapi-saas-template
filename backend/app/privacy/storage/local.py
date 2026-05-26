@@ -13,7 +13,6 @@ from app.privacy.storage.base import StorageAdapter, StoredObject
 class LocalStorageAdapter(StorageAdapter):
     def __init__(self, base_path: str, signing_secret: str) -> None:
         self.base_path = Path(base_path).resolve()
-        self.base_path.mkdir(parents=True, exist_ok=True)
         self.signing_secret = signing_secret.encode("utf-8")
 
     def _resolve(self, key: str) -> Path:
@@ -23,23 +22,33 @@ class LocalStorageAdapter(StorageAdapter):
             path.relative_to(self.base_path)
         except ValueError as exc:
             raise ValueError("Invalid storage key") from exc
-        path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     def _validate_key(self, key: str) -> str:
         if not key or not key.strip():
             raise ValueError("Storage key must not be empty")
+        if key != key.strip():
+            raise ValueError("Storage key must not have surrounding whitespace")
         if "\\" in key:
             raise ValueError("Storage key must use forward slashes")
+        if ":" in key:
+            raise ValueError("Storage key must not contain drive or URI separators")
+        if "//" in key:
+            raise ValueError("Storage key must not contain empty path segments")
+
         parsed = PurePosixPath(key)
-        if parsed.is_absolute() or any(
-            part in {"", ".", ".."} for part in parsed.parts
+        parts = parsed.parts
+        if (
+            parsed.is_absolute()
+            or not parts
+            or any(part in {"", ".", ".."} for part in parts)
         ):
             raise ValueError("Invalid storage key")
-        return key
+        return "/".join(parts)
 
     def put_bytes(self, key: str, data: bytes, content_type: str) -> StoredObject:
         path = self._resolve(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         return StoredObject(key=key, content_type=content_type, size_bytes=len(data))
 

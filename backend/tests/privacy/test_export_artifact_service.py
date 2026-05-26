@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.audit.context import AuditContext
+from app.core.config.settings import get_settings
 from app.core.errors import ConflictError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
@@ -17,6 +18,18 @@ from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.privacy]
+
+
+@pytest.fixture(autouse=True)
+def isolated_export_storage(monkeypatch, tmp_path):
+    storage_path = tmp_path / "privacy-exports"
+    monkeypatch.setenv("PRIVACY_EXPORTS__LOCAL_STORAGE_PATH", str(storage_path))
+    monkeypatch.setenv("PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET", "test-secret")
+    get_settings.cache_clear()
+    try:
+        yield storage_path
+    finally:
+        get_settings.cache_clear()
 
 
 def test_request_requires_approved_export_dsr(migrated_session_factory):
@@ -79,9 +92,12 @@ def test_generate_export_artifact_marks_ready(migrated_session_factory):
             ready = await service.generate_export_artifact(
                 artifact=artifact, generated_by_user_id=user.id
             )
-            assert ready.status in {
-                ExportArtifactStatus.READY.value,
-                ExportArtifactStatus.FAILED.value,
-            }
+            assert ready.status == ExportArtifactStatus.READY.value
+            assert ready.storage_key is not None
+            assert ready.filename is not None
+            assert ready.content_type == "application/zip"
+            assert ready.size_bytes is not None and ready.size_bytes > 0
+            assert ready.checksum_sha256 is not None
+            assert service.storage.exists(ready.storage_key)
 
     run_async(_run())

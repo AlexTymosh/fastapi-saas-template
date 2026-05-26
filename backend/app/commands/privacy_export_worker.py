@@ -16,15 +16,18 @@ async def run_worker(*, batch_size: int, dry_run: bool, once: bool) -> int:
             async with session.begin():
                 service = ExportArtifactService(session)
                 if dry_run:
-                    rows = await service.repo.claim_queued_batch(batch_size)
-                    total_processed += len(rows)
-                else:
-                    processed = await service.claim_and_generate_next_batch(
-                        batch_size=batch_size
+                    processed_this_iteration = await service.count_queued_artifacts(
+                        limit=batch_size
                     )
-                    total_processed += processed
+                else:
+                    processed_this_iteration = (
+                        await service.claim_and_generate_next_batch(
+                            batch_size=batch_size
+                        )
+                    )
+                total_processed += processed_this_iteration
 
-        if once or total_processed == 0:
+        if once or processed_this_iteration == 0:
             break
 
     print(

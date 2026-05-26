@@ -31,6 +31,12 @@ from app.privacy.repositories.export_artifacts import ExportArtifactRepository
 from app.privacy.storage.local import LocalStorageAdapter
 
 
+def _ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 class ExportArtifactService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -125,7 +131,7 @@ class ExportArtifactService:
     ) -> str:
         if artifact.status != ExportArtifactStatus.READY.value:
             raise ConflictError(detail="Export artifact is not available for download")
-        if artifact.expires_at <= datetime.now(UTC):
+        if _ensure_aware_utc(artifact.expires_at) <= datetime.now(UTC):
             raise ConflictError(detail="Export artifact is expired")
         if artifact.storage_key is None:
             raise ConflictError(detail="Export artifact is missing storage key")
@@ -137,6 +143,11 @@ class ExportArtifactService:
             audit_context, AuditAction.EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED, artifact
         )
         return url
+
+    async def count_queued_artifacts(self, *, limit: int) -> int:
+        """Return how many queued artifacts would be processed without claiming them."""
+        rows = await self.repo.peek_queued_batch(limit)
+        return len(rows)
 
     async def claim_and_generate_next_batch(
         self, *, batch_size: int, generated_by_user_id: UUID | None = None
@@ -215,21 +226,17 @@ class ExportArtifactService:
             return failed
 
     async def mark_expired_artifacts(self, *, now: datetime | None = None) -> int:
-        now_value = now or datetime.now(UTC)
-        candidates = await self.repo.list_for_platform(limit=1000, offset=0)
+        now_value = _ensure_aware_utc(now or datetime.now(UTC))
+        candidates = await self.repo.list_expired_ready(now=now_value, limit=1000)
         expired = 0
         for artifact in candidates:
-            if (
-                artifact.status == ExportArtifactStatus.READY.value
-                and artifact.expires_at <= now_value
-            ):
-                await self.repo.mark_expired(artifact)
-                expired += 1
-                await self._record_event(
-                    AuditContext(actor_user_id=None),
-                    AuditAction.EXPORT_ARTIFACT_EXPIRED,
-                    artifact,
-                )
+            await self.repo.mark_expired(artifact)
+            expired += 1
+            await self._record_event(
+                AuditContext(actor_user_id=None),
+                AuditAction.EXPORT_ARTIFACT_EXPIRED,
+                artifact,
+            )
         return expired
 
     async def _record_event(
