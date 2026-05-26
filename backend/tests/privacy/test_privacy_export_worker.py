@@ -19,6 +19,7 @@ from tests.helpers.asyncio_runner import run_async
 
 def test_worker_once_dry_run_executes(monkeypatch, migrated_database_url) -> None:
     monkeypatch.setenv("DATABASE__URL", migrated_database_url)
+    monkeypatch.setenv("PRIVACY_EXPORTS__ENABLED", "true")
     exit_code = run_async(run_worker(batch_size=1, dry_run=True, once=True))
     assert exit_code == 0
 
@@ -43,20 +44,20 @@ def test_worker_dry_run_without_once_exits_after_one_iteration(monkeypatch) -> N
 
 def test_worker_stops_after_empty_iteration(monkeypatch) -> None:
     calls: list[int] = []
-    processed: list[UUID] = []
-    artifact_id = uuid4()
-    batches = [[artifact_id], []]
+    processed: list[object] = []
+    lease = object()
+    batches = [[lease], []]
 
-    async def _claim_queued_artifact_ids(*, batch_size: int) -> list[UUID]:
+    async def _claim_queued_artifact_leases(*, batch_size: int):
         calls.append(batch_size)
         return batches.pop(0)
 
-    async def _process_artifact(*, artifact_id: UUID) -> None:
-        processed.append(artifact_id)
+    async def _process_artifact(*, lease) -> None:
+        processed.append(lease)
 
     monkeypatch.setattr(
-        "app.commands.privacy_export_worker._claim_queued_artifact_ids",
-        _claim_queued_artifact_ids,
+        "app.commands.privacy_export_worker._claim_queued_artifact_leases",
+        _claim_queued_artifact_leases,
     )
     monkeypatch.setattr(
         "app.commands.privacy_export_worker._process_artifact",
@@ -67,7 +68,7 @@ def test_worker_stops_after_empty_iteration(monkeypatch) -> None:
 
     assert exit_code == 0
     assert calls == [7, 7]
-    assert processed == [artifact_id]
+    assert processed == [lease]
 
 
 def test_worker_dry_run_does_not_mutate_queued_artifact(
@@ -113,6 +114,7 @@ def test_worker_dry_run_does_not_mutate_queued_artifact(
     artifact_id = run_async(_provision())
 
     monkeypatch.setenv("DATABASE__URL", migrated_database_url)
+    monkeypatch.setenv("PRIVACY_EXPORTS__ENABLED", "true")
     exit_code = run_async(run_worker(batch_size=1, dry_run=True, once=True))
     assert exit_code == 0
 
@@ -123,8 +125,9 @@ def test_worker_dry_run_does_not_mutate_queued_artifact(
                     select(ExportArtifact).where(ExportArtifact.id == artifact_id)
                 )
             ).scalar_one()
-            return row.status, row.started_at
+            return row.status, row.started_at, row.processing_token
 
-    status, started_at = run_async(_load_status())
+    status, started_at, processing_token = run_async(_load_status())
     assert status == ExportArtifactStatus.QUEUED.value
     assert started_at is None
+    assert processing_token is None

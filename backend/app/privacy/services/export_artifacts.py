@@ -31,13 +31,19 @@ from app.privacy.repositories.data_subject_requests import DataSubjectRequestRep
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
 from app.privacy.storage.local import LocalStorageAdapter
 
-_DEFAULT_PROCESSING_LEASE_SECONDS = 15 * 60
+DEFAULT_PROCESSING_LEASE_SECONDS = 3600
 
 
 def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+@dataclass(frozen=True)
+class ProcessingExportLease:
+    artifact_id: UUID
+    processing_token: str
 
 
 @dataclass(frozen=True)
@@ -75,20 +81,9 @@ class ExportArtifactService:
             )
         raise NotImplementedError("s3_compatible storage is not implemented")
 
-    def _exports_enabled(self) -> bool:
-        return bool(self.settings.privacy_exports.enabled)
-
     def _ensure_exports_enabled(self) -> None:
-        if not self._exports_enabled():
+        if not self.settings.privacy_exports.enabled:
             raise ConflictError(detail="Privacy export artifacts are disabled")
-
-    def _processing_lease_seconds(self) -> float:
-        configured = getattr(
-            self.settings.privacy_exports,
-            "processing_lease_seconds",
-            _DEFAULT_PROCESSING_LEASE_SECONDS,
-        )
-        return float(configured)
 
     async def request_export_artifact(
         self,
@@ -98,7 +93,6 @@ class ExportArtifactService:
         audit_context: AuditContext,
     ) -> ExportArtifact:
         self._ensure_exports_enabled()
-
         dsr = await self.dsr_repo.get_by_id(request_id)
         if dsr is None:
             raise NotFoundError(detail="Data subject request not found")
@@ -192,84 +186,116 @@ class ExportArtifactService:
             audit_context, AuditAction.EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED, artifact
         )
         return GeneratedExportDownloadUrl(
-            url=url,
-            expires_in_seconds=effective_ttl_seconds,
+            url=url, expires_in_seconds=effective_ttl_seconds
         )
 
     async def count_queued_artifacts(self, *, limit: int) -> int:
-        """Return how many queued artifacts would be processed without claiming them."""
-        if not self._exports_enabled():
+        if not self.settings.privacy_exports.enabled:
             return 0
         rows = await self.repo.peek_queued_batch(limit)
         return len(rows)
 
-    async def recover_abandoned_processing_artifacts(self, *, batch_size: int) -> int:
-        """Return processing artifacts abandoned past the lease timeout to queued."""
-        if not self._exports_enabled():
-            return 0
-        rows = await self.repo.recover_stale_processing(
-            stale_timeout_seconds=self._processing_lease_seconds(),
-            limit=batch_size,
+    async def claim_queued_artifact_leases(
+        self, *, batch_size: int
+    ) -> list[ProcessingExportLease]:
+        if not self.settings.privacy_exports.enabled:
+            return []
+        await self.recover_stale_processing_artifacts(limit=batch_size)
+        rows = await self.repo.claim_queued_batch(
+            batch_size, lease_seconds=DEFAULT_PROCESSING_LEASE_SECONDS
         )
-        return len(rows)
+        return [
+            ProcessingExportLease(
+                artifact_id=row.id, processing_token=row.processing_token
+            )
+            for row in rows
+            if row.processing_token is not None
+        ]
 
     async def claim_queued_artifact_ids(self, *, batch_size: int) -> list[UUID]:
-        """Claim queued artifacts and return detached identifiers for worker processing.
+        leases = await self.claim_queued_artifact_leases(batch_size=batch_size)
+        return [lease.artifact_id for lease in leases]
 
-        The worker commits this claim before performing expensive export or storage
-        work. Stale processing rows are recovered first so an interrupted worker
-        cannot permanently strand artifacts in processing.
-        """
-        if not self._exports_enabled():
-            return []
-        await self.recover_abandoned_processing_artifacts(batch_size=batch_size)
-        rows = await self.repo.claim_queued_batch(batch_size)
-        return [row.id for row in rows]
+    async def renew_processing_lease(self, *, lease: ProcessingExportLease) -> bool:
+        return await self.repo.renew_processing_lease(
+            artifact_id=lease.artifact_id,
+            processing_token=lease.processing_token,
+            lease_seconds=DEFAULT_PROCESSING_LEASE_SECONDS,
+        )
+
+    async def recover_stale_processing_artifacts(self, *, limit: int) -> int:
+        now = datetime.now(UTC)
+        recovered = await self.repo.recover_stale_processing(now=now, limit=limit)
+        return len(recovered)
 
     async def claim_and_generate_next_batch(
         self, *, batch_size: int, generated_by_user_id: UUID | None = None
     ) -> int:
-        """Process one batch in-process.
-
-        This method remains for service-level tests and small local workflows. The
-        command worker uses claim_queued_artifact_ids() plus separate transactions
-        so future larger exports do not hold the claim transaction while writing
-        artifacts to storage.
-        """
-        if not self._exports_enabled():
-            return 0
-        await self.recover_abandoned_processing_artifacts(batch_size=batch_size)
-        rows = await self.repo.claim_queued_batch(batch_size)
-        for row in rows:
-            await self.generate_export_artifact(
-                artifact=row, generated_by_user_id=generated_by_user_id
+        leases = await self.claim_queued_artifact_leases(batch_size=batch_size)
+        for lease in leases:
+            artifact = await self.repo.get_processing_by_token(
+                artifact_id=lease.artifact_id,
+                processing_token=lease.processing_token,
             )
-        return len(rows)
+            if artifact is not None:
+                await self.generate_export_artifact(
+                    artifact=artifact,
+                    generated_by_user_id=generated_by_user_id,
+                    processing_token=lease.processing_token,
+                )
+        return len(leases)
 
     async def generate_export_artifact(
-        self, *, artifact: ExportArtifact, generated_by_user_id: UUID | None = None
+        self,
+        *,
+        artifact: ExportArtifact,
+        generated_by_user_id: UUID | None = None,
+        processing_token: str | None = None,
     ) -> ExportArtifact:
         self._ensure_exports_enabled()
+        token = processing_token or artifact.processing_token
+        if token is None:
+            token = str(uuid4())
+            artifact.processing_token = token
+            artifact.processing_lease_expires_at = datetime.now(UTC) + timedelta(
+                seconds=DEFAULT_PROCESSING_LEASE_SECONDS
+            )
+            if artifact.started_at is None:
+                artifact.started_at = datetime.now(UTC)
+            await self.repo.save(artifact)
+
         try:
-            prepared = await self.prepare_export_archive(artifact_id=artifact.id)
+            prepared = await self.prepare_export_archive(
+                artifact_id=artifact.id, processing_token=token
+            )
             self.write_prepared_export_archive(prepared)
             return await self.mark_generated_export_artifact_ready(
                 artifact_id=artifact.id,
                 prepared=prepared,
                 generated_by_user_id=generated_by_user_id,
+                processing_token=token,
             )
         except Exception as exc:
-            return await self.mark_export_artifact_failed(
+            failed = await self.mark_export_artifact_failed(
                 artifact_id=artifact.id,
                 exc=exc,
                 generated_by_user_id=generated_by_user_id,
+                processing_token=token,
             )
+            if failed is None:
+                raise
+            return failed
 
     async def prepare_export_archive(
-        self, *, artifact_id: UUID
+        self, *, artifact_id: UUID, processing_token: str | None = None
     ) -> PreparedExportArchive:
         self._ensure_exports_enabled()
-        artifact = await self.repo.get_by_id(artifact_id)
+        if processing_token is None:
+            artifact = await self.repo.get_by_id(artifact_id)
+        else:
+            artifact = await self.repo.get_processing_by_token(
+                artifact_id=artifact_id, processing_token=processing_token
+            )
         if artifact is None:
             raise NotFoundError(detail="Export artifact not found")
         if artifact.status != ExportArtifactStatus.PROCESSING.value:
@@ -334,10 +360,18 @@ class ExportArtifactService:
         artifact_id: UUID,
         prepared: PreparedExportArchive,
         generated_by_user_id: UUID | None = None,
+        processing_token: str | None = None,
     ) -> ExportArtifact:
-        artifact = await self.repo.get_by_id(artifact_id)
+        if processing_token is None:
+            artifact = await self.repo.get_by_id(artifact_id)
+        else:
+            artifact = await self.repo.get_processing_by_token(
+                artifact_id=artifact_id, processing_token=processing_token
+            )
         if artifact is None:
-            raise NotFoundError(detail="Export artifact not found")
+            raise ConflictError(
+                detail="Export artifact processing lease is no longer active"
+            )
         artifact.storage_key = prepared.storage_key
         artifact.filename = prepared.filename
         artifact.content_type = prepared.content_type
@@ -358,18 +392,20 @@ class ExportArtifactService:
         artifact_id: UUID,
         exc: Exception,
         generated_by_user_id: UUID | None = None,
-    ) -> ExportArtifact:
-        artifact = await self.repo.get_by_id(artifact_id)
+        processing_token: str | None = None,
+    ) -> ExportArtifact | None:
+        if processing_token is None:
+            artifact = await self.repo.get_by_id(artifact_id)
+        else:
+            artifact = await self.repo.get_processing_by_token(
+                artifact_id=artifact_id, processing_token=processing_token
+            )
         if artifact is None:
-            raise NotFoundError(detail="Export artifact not found")
+            return None
         code = (
             str(exc)
             if str(exc)
-            in {
-                "artifact_too_large",
-                "dsr_not_found",
-                "dsr_not_export_eligible",
-            }
+            in {"artifact_too_large", "dsr_not_found", "dsr_not_export_eligible"}
             else "generation_failed"
         )
         failed = await self.repo.mark_failed(

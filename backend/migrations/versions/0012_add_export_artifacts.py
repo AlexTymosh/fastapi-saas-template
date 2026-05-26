@@ -36,6 +36,10 @@ def upgrade() -> None:
         sa.Column("failure_detail", sa.String(length=255), nullable=True),
         sa.Column("queued_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("processing_token", sa.String(length=36), nullable=True),
+        sa.Column(
+            "processing_lease_expires_at", sa.DateTime(timezone=True), nullable=True
+        ),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("failed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
@@ -58,8 +62,7 @@ def upgrade() -> None:
             name="export_artifacts_status_valid",
         ),
         sa.CheckConstraint(
-            "format IN ('json_zip')",
-            name="export_artifacts_format_valid",
+            "format IN ('json_zip')", name="export_artifacts_format_valid"
         ),
         sa.CheckConstraint(
             "storage_backend IN ('local','s3_compatible')",
@@ -106,6 +109,11 @@ def upgrade() -> None:
         ["status", "expires_at"],
     )
     op.create_index(
+        "ix_export_artifacts_status_processing_lease",
+        "export_artifacts",
+        ["status", "processing_lease_expires_at"],
+    )
+    op.create_index(
         "ix_export_artifacts_storage_backend_storage_key",
         "export_artifacts",
         ["storage_backend", "storage_key"],
@@ -119,6 +127,9 @@ def downgrade() -> None:
     op.drop_index("ix_export_artifacts_created_at", table_name="export_artifacts")
     op.drop_index(
         "ix_export_artifacts_storage_backend_storage_key", table_name="export_artifacts"
+    )
+    op.drop_index(
+        "ix_export_artifacts_status_processing_lease", table_name="export_artifacts"
     )
     op.drop_index(
         "ix_export_artifacts_status_expires_at", table_name="export_artifacts"

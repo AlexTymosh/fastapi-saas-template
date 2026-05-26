@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,11 @@ from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactSta
 class ExportArtifactRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    def _supports_skip_locked(self) -> bool:
+        return (
+            self.session.bind is not None and self.session.bind.dialect.name != "sqlite"
+        )
 
     async def create(self, **kwargs) -> ExportArtifact:
         row = ExportArtifact(**kwargs)
@@ -79,58 +84,75 @@ class ExportArtifactRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def claim_queued_batch(self, limit: int) -> list[ExportArtifact]:
+    async def claim_queued_batch(
+        self, limit: int, *, lease_seconds: int
+    ) -> list[ExportArtifact]:
         stmt = (
             select(ExportArtifact)
             .where(ExportArtifact.status == ExportArtifactStatus.QUEUED.value)
             .order_by(ExportArtifact.queued_at.asc())
             .limit(limit)
         )
-        if self.session.bind is not None and self.session.bind.dialect.name != "sqlite":
+        if self._supports_skip_locked():
             stmt = stmt.with_for_update(skip_locked=True)
         rows = list((await self.session.execute(stmt)).scalars().all())
         now = datetime.now(UTC)
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
         for row in rows:
             row.status = ExportArtifactStatus.PROCESSING.value
             row.started_at = now
+            row.processing_token = str(uuid4())
+            row.processing_lease_expires_at = lease_expires_at
         await self.session.flush()
         return rows
 
-    async def recover_stale_processing(
-        self, *, stale_timeout_seconds: float, limit: int
-    ) -> list[ExportArtifact]:
-        """Return abandoned processing rows to queued so workers can retry them.
+    async def renew_processing_lease(
+        self, *, artifact_id: UUID, processing_token: str, lease_seconds: int
+    ) -> bool:
+        artifact = await self.get_processing_by_token(
+            artifact_id=artifact_id, processing_token=processing_token
+        )
+        if artifact is None:
+            return False
+        artifact.processing_lease_expires_at = datetime.now(UTC) + timedelta(
+            seconds=lease_seconds
+        )
+        await self.session.flush()
+        return True
 
-        This mirrors a queue visibility-timeout pattern. A worker claims rows by
-        moving them to processing and committing the claim before doing storage
-        IO. If that worker is interrupted, rows older than the processing lease
-        are made visible to later workers again instead of remaining stuck in
-        processing forever.
-        """
-        now = datetime.now(UTC)
-        stale_before = now - timedelta(seconds=stale_timeout_seconds)
+    async def get_processing_by_token(
+        self, *, artifact_id: UUID, processing_token: str
+    ) -> ExportArtifact | None:
+        stmt = select(ExportArtifact).where(
+            ExportArtifact.id == artifact_id,
+            ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
+            ExportArtifact.processing_token == processing_token,
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def recover_stale_processing(
+        self, *, now: datetime, limit: int
+    ) -> list[ExportArtifact]:
         stmt = (
             select(ExportArtifact)
             .where(
                 ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
-                ExportArtifact.started_at.is_not(None),
-                ExportArtifact.started_at < stale_before,
+                ExportArtifact.processing_lease_expires_at.is_not(None),
+                ExportArtifact.processing_lease_expires_at < now,
             )
-            .order_by(ExportArtifact.started_at.asc())
+            .order_by(ExportArtifact.processing_lease_expires_at.asc())
             .limit(limit)
         )
-        if self.session.bind is not None and self.session.bind.dialect.name != "sqlite":
+        if self._supports_skip_locked():
             stmt = stmt.with_for_update(skip_locked=True)
-
-        rows = list((await self.session.execute(stmt)).scalars().all())
-        for row in rows:
-            row.status = ExportArtifactStatus.QUEUED.value
-            row.started_at = None
-            row.queued_at = now
-            row.failure_reason_code = None
-            row.failure_detail = None
+        stale = list((await self.session.execute(stmt)).scalars().all())
+        for artifact in stale:
+            artifact.status = ExportArtifactStatus.QUEUED.value
+            artifact.started_at = None
+            artifact.processing_token = None
+            artifact.processing_lease_expires_at = None
         await self.session.flush()
-        return rows
+        return stale
 
     async def list_expired_ready(
         self, *, now: datetime, limit: int
@@ -149,6 +171,8 @@ class ExportArtifactRepository:
     async def mark_ready(self, artifact: ExportArtifact) -> ExportArtifact:
         artifact.status = ExportArtifactStatus.READY.value
         artifact.completed_at = datetime.now(UTC)
+        artifact.processing_token = None
+        artifact.processing_lease_expires_at = None
         await self.session.flush()
         await self.session.refresh(artifact)
         return artifact
@@ -160,6 +184,8 @@ class ExportArtifactRepository:
         artifact.failure_reason_code = reason_code
         artifact.failure_detail = detail[:255]
         artifact.failed_at = datetime.now(UTC)
+        artifact.processing_token = None
+        artifact.processing_lease_expires_at = None
         await self.session.flush()
         await self.session.refresh(artifact)
         return artifact

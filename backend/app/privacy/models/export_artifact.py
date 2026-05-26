@@ -54,6 +54,11 @@ class ExportArtifact(UUIDMixin, TimestampMixin, Base):
         Index("ix_export_artifacts_status_queued_at", "status", "queued_at"),
         Index("ix_export_artifacts_status_expires_at", "status", "expires_at"),
         Index(
+            "ix_export_artifacts_status_processing_lease",
+            "status",
+            "processing_lease_expires_at",
+        ),
+        Index(
             "ix_export_artifacts_storage_backend_storage_key",
             "storage_backend",
             "storage_key",
@@ -89,6 +94,10 @@ class ExportArtifact(UUIDMixin, TimestampMixin, Base):
     failure_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    processing_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    processing_lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     completed_at: Mapped[datetime | None] = mapped_column(

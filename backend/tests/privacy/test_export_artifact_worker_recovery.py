@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-from sqlalchemy import select
-
-from app.commands.privacy_export_worker import run_worker
-from app.core.config.settings import get_settings
 from app.privacy.models.data_subject_request import DataSubjectRequest
 from app.privacy.models.export_artifact import (
     ExportArtifact,
@@ -14,161 +10,153 @@ from app.privacy.models.export_artifact import (
     ExportArtifactStatus,
     ExportArtifactStorageBackend,
 )
+from app.privacy.services.export_artifacts import ExportArtifactService
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
 
-def test_worker_reclaims_abandoned_processing_artifact(
-    monkeypatch, migrated_database_url, migrated_session_factory
-) -> None:
-    old_started_at = datetime.now(UTC) - timedelta(hours=1)
-    processed: list[UUID] = []
+async def _create_user_dsr_and_artifact(
+    session,
+    *,
+    status: str,
+    processing_lease_expires_at: datetime | None = None,
+    processing_token: str | None = None,
+):
+    user = User(
+        external_auth_id=f"kc|{uuid4()}",
+        email=f"{uuid4()}@example.com",
+        email_verified=True,
+    )
+    session.add(user)
+    await session.flush()
 
-    async def _provision() -> UUID:
+    dsr = DataSubjectRequest(
+        request_type="export",
+        status="approved",
+        requester_user_id=user.id,
+        subject_user_id=user.id,
+        submitted_at=datetime.now(UTC),
+        due_at=datetime.now(UTC),
+    )
+    session.add(dsr)
+    await session.flush()
+
+    artifact = ExportArtifact(
+        data_subject_request_id=dsr.id,
+        requester_user_id=user.id,
+        subject_user_id=user.id,
+        status=status,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        schema_version="1.0",
+        queued_at=datetime.now(UTC),
+        started_at=datetime.now(UTC)
+        if status == ExportArtifactStatus.PROCESSING.value
+        else None,
+        processing_token=processing_token,
+        processing_lease_expires_at=processing_lease_expires_at,
+        expires_at=datetime.now(UTC) + timedelta(days=30),
+    )
+    session.add(artifact)
+    await session.flush()
+    return artifact
+
+
+def test_stale_processing_artifact_is_requeued(migrated_session_factory) -> None:
+    async def _run():
         async with migrated_session_factory() as session:
             async with session.begin():
-                user = User(
-                    external_auth_id=f"kc|{uuid4()}",
-                    email="export-recovery@example.com",
-                    email_verified=True,
-                )
-                session.add(user)
-                await session.flush()
-
-                dsr = DataSubjectRequest(
-                    request_type="export",
-                    status="approved",
-                    requester_user_id=user.id,
-                    subject_user_id=user.id,
-                    submitted_at=datetime.now(UTC),
-                    due_at=datetime.now(UTC),
-                )
-                session.add(dsr)
-                await session.flush()
-
-                artifact = ExportArtifact(
-                    data_subject_request_id=dsr.id,
-                    requester_user_id=user.id,
-                    subject_user_id=user.id,
+                artifact = await _create_user_dsr_and_artifact(
+                    session,
                     status=ExportArtifactStatus.PROCESSING.value,
-                    format=ExportArtifactFormat.JSON_ZIP.value,
-                    storage_backend=ExportArtifactStorageBackend.LOCAL.value,
-                    schema_version="1.0",
-                    queued_at=datetime.now(UTC) - timedelta(hours=1),
-                    started_at=old_started_at,
-                    expires_at=datetime.now(UTC) + timedelta(days=30),
+                    processing_token="stale-token",
+                    processing_lease_expires_at=datetime.now(UTC)
+                    - timedelta(seconds=1),
                 )
-                session.add(artifact)
-                await session.flush()
-                return artifact.id
+                recovered = await ExportArtifactService(
+                    session
+                ).recover_stale_processing_artifacts(limit=10)
 
-    async def _process_artifact(*, artifact_id: UUID) -> None:
-        processed.append(artifact_id)
+                assert recovered == 1
+                assert artifact.status == ExportArtifactStatus.QUEUED.value
+                assert artifact.started_at is None
+                assert artifact.processing_token is None
+                assert artifact.processing_lease_expires_at is None
 
-    artifact_id = run_async(_provision())
-
-    monkeypatch.setenv("DATABASE__URL", migrated_database_url)
-    monkeypatch.setenv("PRIVACY_EXPORTS__ENABLED", "true")
-    get_settings.cache_clear()
-    monkeypatch.setattr(
-        "app.commands.privacy_export_worker._process_artifact",
-        _process_artifact,
-    )
-
-    try:
-        exit_code = run_async(run_worker(batch_size=1, dry_run=False, once=True))
-    finally:
-        get_settings.cache_clear()
-
-    assert exit_code == 0
-    assert processed == [artifact_id]
-
-    async def _load_status():
-        async with migrated_session_factory() as session:
-            row = (
-                await session.execute(
-                    select(ExportArtifact).where(ExportArtifact.id == artifact_id)
-                )
-            ).scalar_one()
-            return row.status, row.started_at
-
-    status, started_at = run_async(_load_status())
-    assert status == ExportArtifactStatus.PROCESSING.value
-    assert started_at is not None
-    assert started_at.replace(tzinfo=UTC) > old_started_at
+    run_async(_run())
 
 
-def test_worker_does_not_reclaim_recent_processing_artifact(
-    monkeypatch, migrated_database_url, migrated_session_factory
-) -> None:
-    processed: list[UUID] = []
-
-    async def _provision() -> UUID:
+def test_recent_processing_artifact_is_not_requeued(migrated_session_factory) -> None:
+    async def _run():
         async with migrated_session_factory() as session:
             async with session.begin():
-                user = User(
-                    external_auth_id=f"kc|{uuid4()}",
-                    email="export-recent-processing@example.com",
-                    email_verified=True,
-                )
-                session.add(user)
-                await session.flush()
-
-                dsr = DataSubjectRequest(
-                    request_type="export",
-                    status="approved",
-                    requester_user_id=user.id,
-                    subject_user_id=user.id,
-                    submitted_at=datetime.now(UTC),
-                    due_at=datetime.now(UTC),
-                )
-                session.add(dsr)
-                await session.flush()
-
-                artifact = ExportArtifact(
-                    data_subject_request_id=dsr.id,
-                    requester_user_id=user.id,
-                    subject_user_id=user.id,
+                artifact = await _create_user_dsr_and_artifact(
+                    session,
                     status=ExportArtifactStatus.PROCESSING.value,
-                    format=ExportArtifactFormat.JSON_ZIP.value,
-                    storage_backend=ExportArtifactStorageBackend.LOCAL.value,
-                    schema_version="1.0",
-                    queued_at=datetime.now(UTC),
-                    started_at=datetime.now(UTC),
-                    expires_at=datetime.now(UTC) + timedelta(days=30),
+                    processing_token="active-token",
+                    processing_lease_expires_at=datetime.now(UTC) + timedelta(hours=1),
                 )
-                session.add(artifact)
-                await session.flush()
-                return artifact.id
+                recovered = await ExportArtifactService(
+                    session
+                ).recover_stale_processing_artifacts(limit=10)
 
-    async def _process_artifact(*, artifact_id: UUID) -> None:
-        processed.append(artifact_id)
+                assert recovered == 0
+                assert artifact.status == ExportArtifactStatus.PROCESSING.value
+                assert artifact.processing_token == "active-token"
 
-    artifact_id = run_async(_provision())
+    run_async(_run())
 
-    monkeypatch.setenv("DATABASE__URL", migrated_database_url)
+
+def test_claimed_artifact_gets_processing_token_and_lease(
+    monkeypatch, migrated_session_factory
+) -> None:
     monkeypatch.setenv("PRIVACY_EXPORTS__ENABLED", "true")
-    get_settings.cache_clear()
-    monkeypatch.setattr(
-        "app.commands.privacy_export_worker._process_artifact",
-        _process_artifact,
-    )
 
-    try:
-        exit_code = run_async(run_worker(batch_size=1, dry_run=False, once=True))
-    finally:
-        get_settings.cache_clear()
-
-    assert exit_code == 0
-    assert processed == []
-
-    async def _load_status():
+    async def _run():
         async with migrated_session_factory() as session:
-            row = (
-                await session.execute(
-                    select(ExportArtifact).where(ExportArtifact.id == artifact_id)
+            async with session.begin():
+                artifact = await _create_user_dsr_and_artifact(
+                    session,
+                    status=ExportArtifactStatus.QUEUED.value,
                 )
-            ).scalar_one()
-            return row.status
+                leases = await ExportArtifactService(
+                    session
+                ).claim_queued_artifact_leases(batch_size=10)
 
-    assert run_async(_load_status()) == ExportArtifactStatus.PROCESSING.value
+                assert len(leases) == 1
+                assert leases[0].artifact_id == artifact.id
+                assert leases[0].processing_token
+                assert artifact.status == ExportArtifactStatus.PROCESSING.value
+                assert artifact.processing_token == leases[0].processing_token
+                assert artifact.processing_lease_expires_at is not None
+
+    run_async(_run())
+
+
+def test_stale_worker_cannot_mark_newer_lease_failed(
+    monkeypatch, migrated_session_factory
+) -> None:
+    monkeypatch.setenv("PRIVACY_EXPORTS__ENABLED", "true")
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                artifact = await _create_user_dsr_and_artifact(
+                    session,
+                    status=ExportArtifactStatus.PROCESSING.value,
+                    processing_token="new-token",
+                    processing_lease_expires_at=datetime.now(UTC) + timedelta(hours=1),
+                )
+                service = ExportArtifactService(session)
+                result = await service.mark_export_artifact_failed(
+                    artifact_id=artifact.id,
+                    exc=RuntimeError("old worker failed late"),
+                    processing_token="old-token",
+                )
+
+                assert result is None
+                assert artifact.status == ExportArtifactStatus.PROCESSING.value
+                assert artifact.failure_reason_code is None
+                assert artifact.processing_token == "new-token"
+
+    run_async(_run())

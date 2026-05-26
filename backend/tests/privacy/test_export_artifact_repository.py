@@ -40,7 +40,7 @@ def test_claim_queued_batch_uses_skip_locked_for_non_sqlite() -> None:
         session = _StatementCaptureSession("postgresql")
         repository = ExportArtifactRepository(session)  # type: ignore[arg-type]
 
-        await repository.claim_queued_batch(10)
+        await repository.claim_queued_batch(limit=10, lease_seconds=300)
 
         assert session.statement is not None
         compiled = str(session.statement.compile(dialect=postgresql.dialect()))

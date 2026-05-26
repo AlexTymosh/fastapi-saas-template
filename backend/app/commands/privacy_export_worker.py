@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from uuid import UUID
+import contextlib
 
 from app.core.db.session import get_session_factory
 from app.privacy.services.export_artifacts import (
+    DEFAULT_PROCESSING_LEASE_SECONDS,
     ExportArtifactService,
     PreparedExportArchive,
+    ProcessingExportLease,
 )
 
 
@@ -20,63 +22,94 @@ async def _count_queued_artifacts(*, batch_size: int) -> int:
             )
 
 
-async def _claim_queued_artifact_ids(*, batch_size: int) -> list[UUID]:
+async def _claim_queued_artifact_leases(
+    *, batch_size: int
+) -> list[ProcessingExportLease]:
     session_factory = get_session_factory()
     async with session_factory() as session:
         async with session.begin():
-            return await ExportArtifactService(session).claim_queued_artifact_ids(
+            return await ExportArtifactService(session).claim_queued_artifact_leases(
                 batch_size=batch_size
             )
 
 
-async def _prepare_export_archive(*, artifact_id: UUID) -> PreparedExportArchive:
+async def _renew_processing_lease(*, lease: ProcessingExportLease) -> bool:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        async with session.begin():
+            return await ExportArtifactService(session).renew_processing_lease(
+                lease=lease
+            )
+
+
+async def _prepare_export_archive(
+    *, lease: ProcessingExportLease
+) -> PreparedExportArchive:
     session_factory = get_session_factory()
     async with session_factory() as session:
         async with session.begin():
             return await ExportArtifactService(session).prepare_export_archive(
-                artifact_id=artifact_id
+                artifact_id=lease.artifact_id,
+                processing_token=lease.processing_token,
             )
 
 
 async def _write_export_archive(prepared: PreparedExportArchive) -> None:
-    """Write the archive outside of any database transaction.
-
-    Keeping storage IO out of the claim/mark-ready transactions prevents future
-    large exports from holding row locks or an open transaction while writing to
-    object storage.
-    """
+    """Write the archive outside of any database transaction."""
     session_factory = get_session_factory()
     async with session_factory() as session:
-        ExportArtifactService(session).write_prepared_export_archive(prepared)
+        service = ExportArtifactService(session)
+        await asyncio.to_thread(service.write_prepared_export_archive, prepared)
 
 
-async def _mark_export_ready(*, prepared: PreparedExportArchive) -> None:
+async def _mark_export_ready(
+    *, lease: ProcessingExportLease, prepared: PreparedExportArchive
+) -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         async with session.begin():
             await ExportArtifactService(session).mark_generated_export_artifact_ready(
                 artifact_id=prepared.artifact_id,
                 prepared=prepared,
+                processing_token=lease.processing_token,
             )
 
 
-async def _mark_export_failed(*, artifact_id: UUID, exc: Exception) -> None:
+async def _mark_export_failed(*, lease: ProcessingExportLease, exc: Exception) -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         async with session.begin():
             await ExportArtifactService(session).mark_export_artifact_failed(
-                artifact_id=artifact_id,
+                artifact_id=lease.artifact_id,
                 exc=exc,
+                processing_token=lease.processing_token,
             )
 
 
-async def _process_artifact(*, artifact_id: UUID) -> None:
+async def _heartbeat_processing_lease(*, lease: ProcessingExportLease) -> None:
+    interval = max(1, DEFAULT_PROCESSING_LEASE_SECONDS // 3)
     try:
-        prepared = await _prepare_export_archive(artifact_id=artifact_id)
+        while True:
+            await asyncio.sleep(interval)
+            renewed = await _renew_processing_lease(lease=lease)
+            if not renewed:
+                return
+    except asyncio.CancelledError:
+        raise
+
+
+async def _process_artifact(*, lease: ProcessingExportLease) -> None:
+    heartbeat = asyncio.create_task(_heartbeat_processing_lease(lease=lease))
+    try:
+        prepared = await _prepare_export_archive(lease=lease)
         await _write_export_archive(prepared)
-        await _mark_export_ready(prepared=prepared)
+        await _mark_export_ready(lease=lease, prepared=prepared)
     except Exception as exc:
-        await _mark_export_failed(artifact_id=artifact_id, exc=exc)
+        await _mark_export_failed(lease=lease, exc=exc)
+    finally:
+        heartbeat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat
 
 
 async def run_worker(*, batch_size: int, dry_run: bool, once: bool) -> int:
@@ -88,10 +121,10 @@ async def run_worker(*, batch_size: int, dry_run: bool, once: bool) -> int:
                 batch_size=batch_size
             )
         else:
-            artifact_ids = await _claim_queued_artifact_ids(batch_size=batch_size)
-            for artifact_id in artifact_ids:
-                await _process_artifact(artifact_id=artifact_id)
-            processed_this_iteration = len(artifact_ids)
+            leases = await _claim_queued_artifact_leases(batch_size=batch_size)
+            for lease in leases:
+                await _process_artifact(lease=lease)
+            processed_this_iteration = len(leases)
 
         total_processed += processed_this_iteration
 
