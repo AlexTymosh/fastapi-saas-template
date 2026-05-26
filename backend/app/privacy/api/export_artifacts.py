@@ -23,9 +23,22 @@ from app.privacy.schemas.export_artifacts import (
     ExportDownloadUrlResponse,
 )
 from app.privacy.services.export_artifacts import ExportArtifactService
+from app.users.models.user import User
 from app.users.services.users import UserService
 
 router = APIRouter(prefix="/privacy/export-artifacts", tags=["privacy"])
+
+
+async def _provision_current_user(
+    *, db_session: AsyncSession, identity: AuthenticatedPrincipal
+) -> User:
+    """Return a local user projection for self-service export artifact routes.
+
+    Authenticated first-time users may not yet have a local projection row. Using
+    JIT provisioning here avoids turning valid authenticated requests into 500s
+    when the route later needs user.id for ownership checks.
+    """
+    return await UserService(db_session).provision_current_user(identity)
 
 
 @router.get(
@@ -42,7 +55,7 @@ async def list_own_export_artifacts(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> ExportArtifactsCollectionResponse:
-    user = await UserService(db_session).get_current_user_by_external_auth_id(identity)
+    user = await _provision_current_user(db_session=db_session, identity=identity)
     rows, total = await ExportArtifactService(db_session).list_own_export_artifacts(
         requester_user_id=user.id, limit=limit, offset=offset
     )
@@ -66,7 +79,7 @@ async def get_own_export_artifact(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(TENANT_READ_POLICY))],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> ExportArtifactResponse:
-    user = await UserService(db_session).get_current_user_by_external_auth_id(identity)
+    user = await _provision_current_user(db_session=db_session, identity=identity)
     row = await ExportArtifactService(db_session).get_own_export_artifact(
         artifact_id=artifact_id, requester_user_id=user.id
     )
@@ -88,9 +101,7 @@ async def create_own_export_download_url(
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> ExportDownloadUrlResponse:
     async with db_session.begin():
-        user = await UserService(db_session).get_current_user_by_external_auth_id(
-            identity
-        )
+        user = await _provision_current_user(db_session=db_session, identity=identity)
         service = ExportArtifactService(db_session)
         artifact = await service.get_own_export_artifact(
             artifact_id=artifact_id, requester_user_id=user.id

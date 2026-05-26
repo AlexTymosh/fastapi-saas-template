@@ -73,6 +73,13 @@ class ExportArtifactService:
             )
         raise NotImplementedError("s3_compatible storage is not implemented")
 
+    def _exports_enabled(self) -> bool:
+        return bool(self.settings.privacy_exports.enabled)
+
+    def _ensure_exports_enabled(self) -> None:
+        if not self._exports_enabled():
+            raise ConflictError(detail="Privacy export artifacts are disabled")
+
     async def request_export_artifact(
         self,
         *,
@@ -80,6 +87,8 @@ class ExportArtifactService:
         requested_by_user_id: UUID,
         audit_context: AuditContext,
     ) -> ExportArtifact:
+        self._ensure_exports_enabled()
+
         dsr = await self.dsr_repo.get_by_id(request_id)
         if dsr is None:
             raise NotFoundError(detail="Data subject request not found")
@@ -147,6 +156,7 @@ class ExportArtifactService:
     async def generate_download_url(
         self, *, artifact: ExportArtifact, audit_context: AuditContext
     ) -> GeneratedExportDownloadUrl:
+        self._ensure_exports_enabled()
         now = datetime.now(UTC)
 
         if artifact.status != ExportArtifactStatus.READY.value:
@@ -178,6 +188,8 @@ class ExportArtifactService:
 
     async def count_queued_artifacts(self, *, limit: int) -> int:
         """Return how many queued artifacts would be processed without claiming them."""
+        if not self._exports_enabled():
+            return 0
         rows = await self.repo.peek_queued_batch(limit)
         return len(rows)
 
@@ -187,6 +199,8 @@ class ExportArtifactService:
         The worker should commit this claim before performing expensive export or
         storage work. This keeps row locks and database transactions short.
         """
+        if not self._exports_enabled():
+            return []
         rows = await self.repo.claim_queued_batch(batch_size)
         return [row.id for row in rows]
 
@@ -200,6 +214,8 @@ class ExportArtifactService:
         so future larger exports do not hold the claim transaction while writing
         artifacts to storage.
         """
+        if not self._exports_enabled():
+            return 0
         rows = await self.repo.claim_queued_batch(batch_size)
         for row in rows:
             await self.generate_export_artifact(
@@ -228,6 +244,8 @@ class ExportArtifactService:
     async def prepare_export_archive(
         self, *, artifact_id: UUID
     ) -> PreparedExportArchive:
+        self._ensure_exports_enabled()
+
         artifact = await self.repo.get_by_id(artifact_id)
         if artifact is None:
             raise NotFoundError(detail="Export artifact not found")

@@ -26,6 +26,7 @@ pytestmark = [pytest.mark.privacy]
 @pytest.fixture(autouse=True)
 def isolated_export_storage(monkeypatch, tmp_path):
     storage_path = tmp_path / "privacy-exports"
+    monkeypatch.setenv("PRIVACY_EXPORTS__ENABLED", "true")
     monkeypatch.setenv("PRIVACY_EXPORTS__LOCAL_STORAGE_PATH", str(storage_path))
     monkeypatch.setenv("PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET", "test-secret")
     get_settings.cache_clear()
@@ -60,6 +61,30 @@ def _read_export_payload(archive_bytes: bytes) -> dict[str, object]:
     with zipfile.ZipFile(BytesIO(archive_bytes), mode="r") as archive:
         assert archive.namelist() == ["export.json"]
         return json.loads(archive.read("export.json"))
+
+
+def test_request_rejects_disabled_export_feature(
+    monkeypatch, migrated_session_factory
+) -> None:
+    monkeypatch.setenv("PRIVACY_EXPORTS__ENABLED", "false")
+    get_settings.cache_clear()
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            with pytest.raises(ConflictError, match="disabled"):
+                await service.request_export_artifact(
+                    request_id=dsr.id,
+                    requested_by_user_id=user.id,
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+    run_async(_run())
 
 
 def test_request_requires_approved_export_dsr(migrated_session_factory):
