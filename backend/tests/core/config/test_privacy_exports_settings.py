@@ -30,6 +30,32 @@ def _staging_settings_kwargs(*, local_signing_secret: str) -> dict[str, object]:
     }
 
 
+def test_unsupported_export_storage_backend_is_rejected_before_runtime() -> None:
+    with pytest.raises(
+        ValueError, match="PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible"
+    ):
+        Settings(
+            privacy_exports={
+                "enabled": False,
+                "storage_backend": "s3_compatible",
+            }
+        )
+
+
+def test_enabled_unsupported_export_storage_backend_is_rejected_before_runtime() -> (
+    None
+):
+    with pytest.raises(
+        ValueError, match="PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible"
+    ):
+        Settings(
+            privacy_exports={
+                "enabled": True,
+                "storage_backend": "s3_compatible",
+            }
+        )
+
+
 def test_default_local_export_signing_secret_is_rejected_in_staging() -> None:
     with pytest.raises(ValueError, match="PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET"):
         Settings(

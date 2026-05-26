@@ -95,7 +95,7 @@ async def run_worker(*, batch_size: int, dry_run: bool, once: bool) -> int:
 
         total_processed += processed_this_iteration
 
-        if once or processed_this_iteration == 0:
+        if dry_run or once or processed_this_iteration == 0:
             break
 
     print(

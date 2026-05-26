@@ -568,6 +568,8 @@ class Settings(BaseSettings):
     def validate_environment_security(self) -> Settings:
         env = self.app.environment
 
+        self._validate_privacy_exports_backend_supported()
+
         if env in {"staging", "prod"}:
             if not self.auth.enabled:
                 raise ValueError("AUTH__ENABLED must be true in staging/prod")
@@ -757,6 +759,15 @@ class Settings(BaseSettings):
                 "mechanism in "
                 f"{env}: " + ", ".join(invalid_transfers)
             )
+
+    def _validate_privacy_exports_backend_supported(self) -> None:
+        if self.privacy_exports.storage_backend != "s3_compatible":
+            return
+
+        raise ValueError(
+            "PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible is reserved for "
+            "a future export storage adapter and is not supported yet"
+        )
 
     def _validate_privacy_exports_security(self, *, env: str) -> None:
         if not self.privacy_exports.enabled:

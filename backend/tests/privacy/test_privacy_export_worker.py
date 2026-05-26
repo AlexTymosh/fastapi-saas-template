@@ -23,6 +23,24 @@ def test_worker_once_dry_run_executes(monkeypatch, migrated_database_url) -> Non
     assert exit_code == 0
 
 
+def test_worker_dry_run_without_once_exits_after_one_iteration(monkeypatch) -> None:
+    calls: list[int] = []
+
+    async def _count_queued_artifacts(*, batch_size: int) -> int:
+        calls.append(batch_size)
+        return 1
+
+    monkeypatch.setattr(
+        "app.commands.privacy_export_worker._count_queued_artifacts",
+        _count_queued_artifacts,
+    )
+
+    exit_code = run_async(run_worker(batch_size=5, dry_run=True, once=False))
+
+    assert exit_code == 0
+    assert calls == [5]
+
+
 def test_worker_stops_after_empty_iteration(monkeypatch) -> None:
     calls: list[int] = []
     processed: list[UUID] = []
