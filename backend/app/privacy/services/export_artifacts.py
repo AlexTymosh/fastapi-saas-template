@@ -31,6 +31,8 @@ from app.privacy.repositories.data_subject_requests import DataSubjectRequestRep
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
 from app.privacy.storage.local import LocalStorageAdapter
 
+_DEFAULT_PROCESSING_LEASE_SECONDS = 15 * 60
+
 
 def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -79,6 +81,14 @@ class ExportArtifactService:
     def _ensure_exports_enabled(self) -> None:
         if not self._exports_enabled():
             raise ConflictError(detail="Privacy export artifacts are disabled")
+
+    def _processing_lease_seconds(self) -> float:
+        configured = getattr(
+            self.settings.privacy_exports,
+            "processing_lease_seconds",
+            _DEFAULT_PROCESSING_LEASE_SECONDS,
+        )
+        return float(configured)
 
     async def request_export_artifact(
         self,
@@ -193,14 +203,26 @@ class ExportArtifactService:
         rows = await self.repo.peek_queued_batch(limit)
         return len(rows)
 
+    async def recover_abandoned_processing_artifacts(self, *, batch_size: int) -> int:
+        """Return processing artifacts abandoned past the lease timeout to queued."""
+        if not self._exports_enabled():
+            return 0
+        rows = await self.repo.recover_stale_processing(
+            stale_timeout_seconds=self._processing_lease_seconds(),
+            limit=batch_size,
+        )
+        return len(rows)
+
     async def claim_queued_artifact_ids(self, *, batch_size: int) -> list[UUID]:
         """Claim queued artifacts and return detached identifiers for worker processing.
 
-        The worker should commit this claim before performing expensive export or
-        storage work. This keeps row locks and database transactions short.
+        The worker commits this claim before performing expensive export or storage
+        work. Stale processing rows are recovered first so an interrupted worker
+        cannot permanently strand artifacts in processing.
         """
         if not self._exports_enabled():
             return []
+        await self.recover_abandoned_processing_artifacts(batch_size=batch_size)
         rows = await self.repo.claim_queued_batch(batch_size)
         return [row.id for row in rows]
 
@@ -216,6 +238,7 @@ class ExportArtifactService:
         """
         if not self._exports_enabled():
             return 0
+        await self.recover_abandoned_processing_artifacts(batch_size=batch_size)
         rows = await self.repo.claim_queued_batch(batch_size)
         for row in rows:
             await self.generate_export_artifact(
@@ -226,6 +249,7 @@ class ExportArtifactService:
     async def generate_export_artifact(
         self, *, artifact: ExportArtifact, generated_by_user_id: UUID | None = None
     ) -> ExportArtifact:
+        self._ensure_exports_enabled()
         try:
             prepared = await self.prepare_export_archive(artifact_id=artifact.id)
             self.write_prepared_export_archive(prepared)
@@ -245,7 +269,6 @@ class ExportArtifactService:
         self, *, artifact_id: UUID
     ) -> PreparedExportArchive:
         self._ensure_exports_enabled()
-
         artifact = await self.repo.get_by_id(artifact_id)
         if artifact is None:
             raise NotFoundError(detail="Export artifact not found")

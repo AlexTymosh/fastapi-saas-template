@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -93,6 +93,42 @@ class ExportArtifactRepository:
         for row in rows:
             row.status = ExportArtifactStatus.PROCESSING.value
             row.started_at = now
+        await self.session.flush()
+        return rows
+
+    async def recover_stale_processing(
+        self, *, stale_timeout_seconds: float, limit: int
+    ) -> list[ExportArtifact]:
+        """Return abandoned processing rows to queued so workers can retry them.
+
+        This mirrors a queue visibility-timeout pattern. A worker claims rows by
+        moving them to processing and committing the claim before doing storage
+        IO. If that worker is interrupted, rows older than the processing lease
+        are made visible to later workers again instead of remaining stuck in
+        processing forever.
+        """
+        now = datetime.now(UTC)
+        stale_before = now - timedelta(seconds=stale_timeout_seconds)
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
+                ExportArtifact.started_at.is_not(None),
+                ExportArtifact.started_at < stale_before,
+            )
+            .order_by(ExportArtifact.started_at.asc())
+            .limit(limit)
+        )
+        if self.session.bind is not None and self.session.bind.dialect.name != "sqlite":
+            stmt = stmt.with_for_update(skip_locked=True)
+
+        rows = list((await self.session.execute(stmt)).scalars().all())
+        for row in rows:
+            row.status = ExportArtifactStatus.QUEUED.value
+            row.started_at = None
+            row.queued_at = now
+            row.failure_reason_code = None
+            row.failure_detail = None
         await self.session.flush()
         return rows
 
