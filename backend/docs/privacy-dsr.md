@@ -87,3 +87,7 @@ Not implemented in this phase:
 - retention runners;
 - authorised representative flows;
 - frontend/UI.
+
+## Export artifacts
+
+Export artifacts are asynchronous and built from approved export DSRs only.

@@ -11,8 +11,12 @@ from app.platform.api.users import router as platform_users_router
 from app.privacy.api.data_subject_requests import (
     router as privacy_data_subject_requests_router,
 )
+from app.privacy.api.export_artifacts import router as privacy_export_artifacts_router
 from app.privacy.api.platform_data_subject_requests import (
     router as platform_privacy_data_subject_requests_router,
+)
+from app.privacy.api.platform_export_artifacts import (
+    router as platform_privacy_export_artifacts_router,
 )
 from app.users.api.users import router as users_router
 
@@ -43,6 +47,10 @@ def build_master_router(*, v1_prefix: str) -> APIRouter:
     v1_router.include_router(privacy_data_subject_requests_router)
     # 011. Platform data subject requests endpoints
     v1_router.include_router(platform_privacy_data_subject_requests_router)
+    # 012. Export artifacts self-service endpoints
+    v1_router.include_router(privacy_export_artifacts_router)
+    # 013. Platform export artifacts endpoints
+    v1_router.include_router(platform_privacy_export_artifacts_router)
 
     router.include_router(v1_router, prefix=v1_prefix)
     return router

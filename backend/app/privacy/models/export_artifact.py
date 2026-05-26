@@ -79,16 +79,30 @@ class ExportArtifact(UUIDMixin, TimestampMixin, Base):
     size_bytes: Mapped[int | None] = mapped_column(nullable=True)
     checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     schema_version: Mapped[str] = mapped_column(String(16), nullable=False)
-    requested_by_user_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    generated_by_user_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    generated_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     failure_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     failure_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    downloaded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     download_count: Mapped[int] = mapped_column(
         nullable=False, default=0, server_default=sa.text("0")
     )

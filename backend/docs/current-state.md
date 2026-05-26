@@ -143,3 +143,5 @@ External DB tests are opt-in and must not run by default.
 - Added DSR PR-2 API, permission, and rate-limit foundation scope (still no export pipeline/erasure execution).
 
 - DSR PR-2 merge blockers addressed: policy registry wiring, function-scoped platform write deps, API+contract coverage.
+
+- Export artifact foundation includes asynchronous queue, local signed download URLs, and platform/user read endpoints.

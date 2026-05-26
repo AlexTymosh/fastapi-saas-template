@@ -122,3 +122,7 @@ and the GitHub Actions `Backend quality gate` are green.
 - PR-2 DSR API foundation in progress: user and platform endpoints, permissions, and rate limits.
 
 - PR-377 hardening pass: registered privacy_dsr_submit in policy registry; added DSR API/security and OpenAPI contract tests.
+
+## Latest update
+
+- Export artifact foundation extended with worker command, API endpoints, storage hardening, and additional privacy tests.

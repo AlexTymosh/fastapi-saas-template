@@ -489,8 +489,6 @@ class ProcessorSettings(BaseModel):
         return _normalise_string_list(value)
 
 
-
-
 class PrivacyExportsSettings(BaseModel):
     storage_backend: Literal["local", "s3_compatible"] = "local"
     local_storage_path: str = ".local/privacy-exports"
@@ -498,6 +496,8 @@ class PrivacyExportsSettings(BaseModel):
     artifact_retention_days: int = Field(default=30, ge=1)
     max_artifact_size_bytes: int = Field(default=10_485_760, gt=0)
     schema_version: str = "1.0"
+    local_signing_secret: str = "dev-only-signing-secret"
+
 
 class ProcessorGovernanceSettings(BaseModel):
     """Deployment-time processor and transfer governance guardrail.
@@ -558,7 +558,9 @@ class Settings(BaseSettings):
         default_factory=ProcessorGovernanceSettings
     )
     cors: CorsSettings = Field(default_factory=CorsSettings)
-    privacy_exports: PrivacyExportsSettings = Field(default_factory=PrivacyExportsSettings)
+    privacy_exports: PrivacyExportsSettings = Field(
+        default_factory=PrivacyExportsSettings
+    )
 
     @model_validator(mode="after")
     def validate_environment_security(self) -> Settings:
