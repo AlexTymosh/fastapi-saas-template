@@ -25,49 +25,31 @@ def test_worker_once_dry_run_executes(monkeypatch, migrated_database_url) -> Non
 
 def test_worker_stops_after_empty_iteration(monkeypatch) -> None:
     calls: list[int] = []
-    results = [1, 0]
+    processed: list[UUID] = []
+    artifact_id = uuid4()
+    batches = [[artifact_id], []]
 
-    class _Transaction:
-        async def __aenter__(self):
-            return None
+    async def _claim_queued_artifact_ids(*, batch_size: int) -> list[UUID]:
+        calls.append(batch_size)
+        return batches.pop(0)
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class _Session:
-        def begin(self):
-            return _Transaction()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class _SessionFactory:
-        def __call__(self):
-            return _Session()
-
-    class _Service:
-        def __init__(self, session):
-            self.session = session
-
-        async def claim_and_generate_next_batch(self, *, batch_size: int) -> int:
-            calls.append(batch_size)
-            return results.pop(0)
+    async def _process_artifact(*, artifact_id: UUID) -> None:
+        processed.append(artifact_id)
 
     monkeypatch.setattr(
-        "app.commands.privacy_export_worker.get_session_factory",
-        lambda: _SessionFactory(),
+        "app.commands.privacy_export_worker._claim_queued_artifact_ids",
+        _claim_queued_artifact_ids,
     )
     monkeypatch.setattr(
-        "app.commands.privacy_export_worker.ExportArtifactService", _Service
+        "app.commands.privacy_export_worker._process_artifact",
+        _process_artifact,
     )
 
     exit_code = run_async(run_worker(batch_size=7, dry_run=False, once=False))
 
     assert exit_code == 0
     assert calls == [7, 7]
+    assert processed == [artifact_id]
 
 
 def test_worker_dry_run_does_not_mutate_queued_artifact(

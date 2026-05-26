@@ -17,6 +17,7 @@ _HTTP_HEADER_NAME_CHARS = frozenset(
 _RESTRICTED_TRANSFER_MECHANISMS = frozenset(
     {"adequacy", "uk_idta", "uk_addendum", "bcr", "derogation"}
 )
+_DEFAULT_LOCAL_EXPORT_SIGNING_SECRET = "dev-only-signing-secret"
 
 
 def _normalise_string_list(
@@ -490,13 +491,14 @@ class ProcessorSettings(BaseModel):
 
 
 class PrivacyExportsSettings(BaseModel):
+    enabled: bool = False
     storage_backend: Literal["local", "s3_compatible"] = "local"
     local_storage_path: str = ".local/privacy-exports"
     download_url_ttl_seconds: int = Field(default=900, gt=0)
     artifact_retention_days: int = Field(default=30, ge=1)
     max_artifact_size_bytes: int = Field(default=10_485_760, gt=0)
     schema_version: str = "1.0"
-    local_signing_secret: str = "dev-only-signing-secret"
+    local_signing_secret: str = _DEFAULT_LOCAL_EXPORT_SIGNING_SECRET
 
 
 class ProcessorGovernanceSettings(BaseModel):
@@ -588,6 +590,7 @@ class Settings(BaseSettings):
             self._validate_pre_auth_policy(env=env)
             self._validate_edge_enforced_mode(env=env)
             self._validate_processor_governance(env=env)
+            self._validate_privacy_exports_security(env=env)
 
         if env == "prod":
             if not self.auth.issuer_url.startswith("https://"):
@@ -753,6 +756,26 @@ class Settings(BaseSettings):
                 "Restricted processor transfers require an approved transfer "
                 "mechanism in "
                 f"{env}: " + ", ".join(invalid_transfers)
+            )
+
+    def _validate_privacy_exports_security(self, *, env: str) -> None:
+        if not self.privacy_exports.enabled:
+            return
+        if self.privacy_exports.storage_backend != "local":
+            return
+
+        signing_secret = self.privacy_exports.local_signing_secret.strip()
+        if signing_secret == _DEFAULT_LOCAL_EXPORT_SIGNING_SECRET:
+            raise ValueError(
+                "PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET must be changed in "
+                f"{env} when PRIVACY_EXPORTS__STORAGE_BACKEND=local"
+            )
+
+        if len(signing_secret) < 32:
+            raise ValueError(
+                "PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET must be at least "
+                "32 characters in staging/prod when "
+                "PRIVACY_EXPORTS__STORAGE_BACKEND=local"
             )
 
     def _required_processor_names(self) -> set[str]:

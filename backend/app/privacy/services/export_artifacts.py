@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import zipfile
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -35,6 +36,17 @@ def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+@dataclass(frozen=True)
+class PreparedExportArchive:
+    artifact_id: UUID
+    storage_key: str
+    filename: str
+    content_type: str
+    archive_bytes: bytes
+    size_bytes: int
+    checksum_sha256: str
 
 
 class ExportArtifactService:
@@ -149,9 +161,25 @@ class ExportArtifactService:
         rows = await self.repo.peek_queued_batch(limit)
         return len(rows)
 
+    async def claim_queued_artifact_ids(self, *, batch_size: int) -> list[UUID]:
+        """Claim queued artifacts and return detached identifiers for worker processing.
+
+        The worker should commit this claim before performing expensive export or
+        storage work. This keeps row locks and database transactions short.
+        """
+        rows = await self.repo.claim_queued_batch(batch_size)
+        return [row.id for row in rows]
+
     async def claim_and_generate_next_batch(
         self, *, batch_size: int, generated_by_user_id: UUID | None = None
     ) -> int:
+        """Process one batch in-process.
+
+        This method remains for service-level tests and small local workflows. The
+        command worker uses claim_queued_artifact_ids() plus separate transactions
+        so future larger exports do not hold the claim transaction while writing
+        artifacts to storage.
+        """
         rows = await self.repo.claim_queued_batch(batch_size)
         for row in rows:
             await self.generate_export_artifact(
@@ -163,67 +191,125 @@ class ExportArtifactService:
         self, *, artifact: ExportArtifact, generated_by_user_id: UUID | None = None
     ) -> ExportArtifact:
         try:
-            dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
-            if dsr is None:
-                raise ValueError("dsr_not_found")
-            now = datetime.now(UTC)
-            payload = MinimalSubjectDataExporter().export_subject_data(
-                ExportContext(
-                    artifact_id=artifact.id,
-                    data_subject_request_id=dsr.id,
-                    subject_user_id=dsr.subject_user_id,
-                    requester_user_id=dsr.requester_user_id,
-                    request_type=dsr.request_type,
-                    request_status=dsr.status,
-                    generated_at=now,
-                    schema_version=artifact.schema_version,
-                )
+            prepared = await self.prepare_export_archive(artifact_id=artifact.id)
+            self.write_prepared_export_archive(prepared)
+            return await self.mark_generated_export_artifact_ready(
+                artifact_id=artifact.id,
+                prepared=prepared,
+                generated_by_user_id=generated_by_user_id,
             )
-            with io.BytesIO() as stream:
-                with zipfile.ZipFile(
-                    stream, mode="w", compression=zipfile.ZIP_DEFLATED
-                ) as archive:
-                    archive.writestr(
-                        "export.json",
-                        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                    )
-                archive_bytes = stream.getvalue()
-            if (
-                len(archive_bytes)
-                > self.settings.privacy_exports.max_artifact_size_bytes
-            ):
-                raise ValueError("artifact_too_large")
-
-            storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
-            self.storage.put_bytes(storage_key, archive_bytes, "application/zip")
-            artifact.storage_key = storage_key
-            artifact.filename = f"privacy-export-{artifact.id}.zip"
-            artifact.content_type = "application/zip"
-            artifact.size_bytes = len(archive_bytes)
-            artifact.checksum_sha256 = hashlib.sha256(archive_bytes).hexdigest()
-            artifact.generated_by_user_id = generated_by_user_id
-            ready = await self.repo.mark_ready(artifact)
-            await self._record_event(
-                AuditContext(actor_user_id=generated_by_user_id),
-                AuditAction.EXPORT_ARTIFACT_GENERATED,
-                ready,
-            )
-            return ready
         except Exception as exc:
-            code = (
-                str(exc)
-                if str(exc) in {"artifact_too_large", "dsr_not_found"}
-                else "generation_failed"
+            return await self.mark_export_artifact_failed(
+                artifact_id=artifact.id,
+                exc=exc,
+                generated_by_user_id=generated_by_user_id,
             )
-            failed = await self.repo.mark_failed(
-                artifact, reason_code=code, detail="Export generation failed"
+
+    async def prepare_export_archive(
+        self, *, artifact_id: UUID
+    ) -> PreparedExportArchive:
+        artifact = await self.repo.get_by_id(artifact_id)
+        if artifact is None:
+            raise NotFoundError(detail="Export artifact not found")
+        if artifact.status != ExportArtifactStatus.PROCESSING.value:
+            raise ConflictError(
+                detail="Export artifact must be processing before generation"
             )
-            await self._record_event(
-                AuditContext(actor_user_id=generated_by_user_id),
-                AuditAction.EXPORT_ARTIFACT_FAILED,
-                failed,
+
+        dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
+        if dsr is None:
+            raise ValueError("dsr_not_found")
+
+        now = datetime.now(UTC)
+        payload = MinimalSubjectDataExporter().export_subject_data(
+            ExportContext(
+                artifact_id=artifact.id,
+                data_subject_request_id=dsr.id,
+                subject_user_id=dsr.subject_user_id,
+                requester_user_id=dsr.requester_user_id,
+                request_type=dsr.request_type,
+                request_status=dsr.status,
+                generated_at=now,
+                schema_version=artifact.schema_version,
             )
-            return failed
+        )
+        with io.BytesIO() as stream:
+            with zipfile.ZipFile(
+                stream, mode="w", compression=zipfile.ZIP_DEFLATED
+            ) as archive:
+                archive.writestr(
+                    "export.json",
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                )
+            archive_bytes = stream.getvalue()
+
+        if len(archive_bytes) > self.settings.privacy_exports.max_artifact_size_bytes:
+            raise ValueError("artifact_too_large")
+
+        storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
+        return PreparedExportArchive(
+            artifact_id=artifact.id,
+            storage_key=storage_key,
+            filename=f"privacy-export-{artifact.id}.zip",
+            content_type="application/zip",
+            archive_bytes=archive_bytes,
+            size_bytes=len(archive_bytes),
+            checksum_sha256=hashlib.sha256(archive_bytes).hexdigest(),
+        )
+
+    def write_prepared_export_archive(self, prepared: PreparedExportArchive) -> None:
+        self.storage.put_bytes(
+            prepared.storage_key, prepared.archive_bytes, prepared.content_type
+        )
+
+    async def mark_generated_export_artifact_ready(
+        self,
+        *,
+        artifact_id: UUID,
+        prepared: PreparedExportArchive,
+        generated_by_user_id: UUID | None = None,
+    ) -> ExportArtifact:
+        artifact = await self.repo.get_by_id(artifact_id)
+        if artifact is None:
+            raise NotFoundError(detail="Export artifact not found")
+        artifact.storage_key = prepared.storage_key
+        artifact.filename = prepared.filename
+        artifact.content_type = prepared.content_type
+        artifact.size_bytes = prepared.size_bytes
+        artifact.checksum_sha256 = prepared.checksum_sha256
+        artifact.generated_by_user_id = generated_by_user_id
+        ready = await self.repo.mark_ready(artifact)
+        await self._record_event(
+            AuditContext(actor_user_id=generated_by_user_id),
+            AuditAction.EXPORT_ARTIFACT_GENERATED,
+            ready,
+        )
+        return ready
+
+    async def mark_export_artifact_failed(
+        self,
+        *,
+        artifact_id: UUID,
+        exc: Exception,
+        generated_by_user_id: UUID | None = None,
+    ) -> ExportArtifact:
+        artifact = await self.repo.get_by_id(artifact_id)
+        if artifact is None:
+            raise NotFoundError(detail="Export artifact not found")
+        code = (
+            str(exc)
+            if str(exc) in {"artifact_too_large", "dsr_not_found"}
+            else "generation_failed"
+        )
+        failed = await self.repo.mark_failed(
+            artifact, reason_code=code, detail="Export generation failed"
+        )
+        await self._record_event(
+            AuditContext(actor_user_id=generated_by_user_id),
+            AuditAction.EXPORT_ARTIFACT_FAILED,
+            failed,
+        )
+        return failed
 
     async def mark_expired_artifacts(self, *, now: datetime | None = None) -> int:
         now_value = _ensure_aware_utc(now or datetime.now(UTC))

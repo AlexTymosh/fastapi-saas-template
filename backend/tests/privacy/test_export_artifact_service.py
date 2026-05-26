@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import zipfile
 from datetime import UTC, datetime
+from io import BytesIO
 from uuid import uuid4
 
 import pytest
@@ -32,26 +35,41 @@ def isolated_export_storage(monkeypatch, tmp_path):
         get_settings.cache_clear()
 
 
+async def _create_user_and_dsr(session, *, request_type: str, status: str):
+    user = User(
+        external_auth_id=f"kc|{uuid4()}",
+        email=f"{uuid4()}@example.com",
+        email_verified=True,
+    )
+    session.add(user)
+    await session.flush()
+    dsr = DataSubjectRequest(
+        request_type=request_type,
+        status=status,
+        requester_user_id=user.id,
+        subject_user_id=user.id,
+        submitted_at=datetime.now(UTC),
+        due_at=datetime.now(UTC),
+    )
+    session.add(dsr)
+    await session.flush()
+    return user, dsr
+
+
+def _read_export_payload(archive_bytes: bytes) -> dict[str, object]:
+    with zipfile.ZipFile(BytesIO(archive_bytes), mode="r") as archive:
+        assert archive.namelist() == ["export.json"]
+        return json.loads(archive.read("export.json"))
+
+
 def test_request_requires_approved_export_dsr(migrated_session_factory):
     async def _run():
         async with migrated_session_factory() as session:
-            user = User(
-                external_auth_id=f"kc|{uuid4()}",
-                email="u@example.com",
-                email_verified=True,
-            )
-            session.add(user)
-            await session.flush()
-            dsr = DataSubjectRequest(
+            user, dsr = await _create_user_and_dsr(
+                session,
                 request_type="erase",
                 status=DataSubjectRequestStatus.SUBMITTED.value,
-                requester_user_id=user.id,
-                subject_user_id=user.id,
-                submitted_at=datetime.now(UTC),
-                due_at=datetime.now(UTC),
             )
-            session.add(dsr)
-            await session.flush()
             service = ExportArtifactService(session)
             with pytest.raises(ConflictError):
                 await service.request_export_artifact(
@@ -66,29 +84,18 @@ def test_request_requires_approved_export_dsr(migrated_session_factory):
 def test_generate_export_artifact_marks_ready(migrated_session_factory):
     async def _run():
         async with migrated_session_factory() as session:
-            user = User(
-                external_auth_id=f"kc|{uuid4()}",
-                email="u2@example.com",
-                email_verified=True,
-            )
-            session.add(user)
-            await session.flush()
-            dsr = DataSubjectRequest(
+            user, dsr = await _create_user_and_dsr(
+                session,
                 request_type="export",
                 status=DataSubjectRequestStatus.APPROVED.value,
-                requester_user_id=user.id,
-                subject_user_id=user.id,
-                submitted_at=datetime.now(UTC),
-                due_at=datetime.now(UTC),
             )
-            session.add(dsr)
-            await session.flush()
             service = ExportArtifactService(session)
             artifact = await service.request_export_artifact(
                 request_id=dsr.id,
                 requested_by_user_id=user.id,
                 audit_context=AuditContext(actor_user_id=user.id),
             )
+            artifact.status = ExportArtifactStatus.PROCESSING.value
             ready = await service.generate_export_artifact(
                 artifact=artifact, generated_by_user_id=user.id
             )
@@ -99,5 +106,69 @@ def test_generate_export_artifact_marks_ready(migrated_session_factory):
             assert ready.size_bytes is not None and ready.size_bytes > 0
             assert ready.checksum_sha256 is not None
             assert service.storage.exists(ready.storage_key)
+
+    run_async(_run())
+
+
+def test_generate_export_artifact_zip_contains_minimal_schema(migrated_session_factory):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.PROCESSING.value
+            ready = await service.generate_export_artifact(
+                artifact=artifact, generated_by_user_id=user.id
+            )
+
+            assert ready.storage_key is not None
+            payload = _read_export_payload(service.storage.get_bytes(ready.storage_key))
+            assert payload["schema_version"] == "1.0"
+            assert payload["data_subject_request_id"] == str(dsr.id)
+            assert payload["subject_user_id"] == str(user.id)
+            assert payload["requester_user_id"] == str(user.id)
+            assert payload["request_type"] == "export"
+            assert payload["request_status"] == DataSubjectRequestStatus.APPROVED.value
+            assert payload["artifact_id"] == str(ready.id)
+            assert "generated_at" in payload
+
+    run_async(_run())
+
+
+def test_generate_export_artifact_too_large_marks_failed(
+    monkeypatch, migrated_session_factory
+):
+    monkeypatch.setenv("PRIVACY_EXPORTS__MAX_ARTIFACT_SIZE_BYTES", "1")
+    get_settings.cache_clear()
+
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.PROCESSING.value
+            failed = await service.generate_export_artifact(
+                artifact=artifact, generated_by_user_id=user.id
+            )
+
+            assert failed.status == ExportArtifactStatus.FAILED.value
+            assert failed.failure_reason_code == "artifact_too_large"
+            assert failed.storage_key is None
 
     run_async(_run())
