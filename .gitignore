@@ -148,6 +148,10 @@ venv.bak/
 /_local/
 desktop.ini
 
+# Local runtime/export artifacts
+.local/
+backend/.local/
+
 # Spyder project settings
 .spyderproject
 .spyproject

@@ -405,3 +405,7 @@ Future admin clients may rely on `operationId` values as stable method names, bu
 
 - Added DSR platform endpoints under /api/v1/platform/privacy/data-subject-requests* and platform-privacy OpenAPI tag coverage.
 - Added permissions privacy_requests:read and privacy_requests:review; support_agent remains denied by default, compliance_officer allowed.
+
+- `gdpr:export` is required for platform export-artifact creation and download-url creation.
+- `privacy_requests:read` is required for platform export-artifact metadata reads.
+- `support_agent` has no export-artifact access by default.

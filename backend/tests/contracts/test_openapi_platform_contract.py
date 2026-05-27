@@ -65,6 +65,16 @@ PLATFORM_PATHS = {
     "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil": {
         "post": "platform-privacy"
     },
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}/export-artifact": {
+        "post": "platform-privacy"
+    },
+    "/api/v1/platform/privacy/export-artifacts": {"get": "platform-privacy"},
+    "/api/v1/platform/privacy/export-artifacts/{artifact_id}": {
+        "get": "platform-privacy"
+    },
+    "/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url": {
+        "post": "platform-privacy"
+    },
 }
 
 EXPECTED_PLATFORM_OPERATION_IDS = {
@@ -134,6 +144,22 @@ EXPECTED_PLATFORM_OPERATION_IDS = {
         "post",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
     ): "fulfil_platform_data_subject_request",
+    (
+        "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/export-artifact",
+    ): "create_platform_export_artifact",
+    (
+        "get",
+        "/api/v1/platform/privacy/export-artifacts",
+    ): "list_platform_export_artifacts",
+    (
+        "get",
+        "/api/v1/platform/privacy/export-artifacts/{artifact_id}",
+    ): "get_platform_export_artifact",
+    (
+        "post",
+        "/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url",
+    ): "create_platform_export_download_url",
 }
 
 READ_POLICIES = {
