@@ -85,6 +85,19 @@ class ExportArtifactService:
         if not self.settings.privacy_exports.enabled:
             raise ConflictError(detail="Privacy export artifacts are disabled")
 
+    async def _ensure_download_dsr_is_still_eligible(
+        self, artifact: ExportArtifact
+    ) -> None:
+        dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
+        if (
+            dsr is None
+            or dsr.request_type != DataSubjectRequestType.EXPORT.value
+            or dsr.status != DataSubjectRequestStatus.APPROVED.value
+        ):
+            raise ConflictError(
+                detail="Export artifact is no longer eligible for download"
+            )
+
     async def request_export_artifact(
         self,
         *,
@@ -165,6 +178,8 @@ class ExportArtifactService:
 
         if artifact.status != ExportArtifactStatus.READY.value:
             raise ConflictError(detail="Export artifact is not available for download")
+
+        await self._ensure_download_dsr_is_still_eligible(artifact)
 
         expires_at = _ensure_aware_utc(artifact.expires_at)
         remaining_seconds = int((expires_at - now).total_seconds())

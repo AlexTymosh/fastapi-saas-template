@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.core.platform.permissions import PlatformRole
 from app.platform.repositories.platform_staff import PlatformStaffRepository
+from app.privacy.api import export_artifacts as export_artifacts_api
 from app.privacy.models.data_subject_request import DataSubjectRequest
 from app.privacy.models.export_artifact import (
     ExportArtifact,
@@ -83,14 +86,18 @@ def _create_export_dsr(session_factory, user):
 
 
 def _create_ready_artifact(
-    session_factory, user, *, expires_at: datetime | None = None
+    session_factory,
+    user,
+    *,
+    dsr_status: str = "approved",
+    expires_at: datetime | None = None,
 ):
     async def _run():
         async with session_factory() as session:
             async with session.begin():
                 dsr = DataSubjectRequest(
                     request_type="export",
-                    status="approved",
+                    status=dsr_status,
                     requester_user_id=user.id,
                     subject_user_id=user.id,
                     submitted_at=datetime.now(UTC),
@@ -256,6 +263,57 @@ def test_user_download_url_ttl_is_clamped_to_artifact_remaining_lifetime(
 
     assert response.status_code == 200
     assert 0 < response.json()["expires_in_seconds"] <= 60
+
+
+def test_user_cannot_create_download_url_when_dsr_is_no_longer_approved(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _enable_privacy_exports(monkeypatch, tmp_path)
+    user = _provision_user(
+        migrated_session_factory,
+        "kc-export-download-cancelled",
+        "export-download-cancelled@example.com",
+    )
+    artifact_id = _create_ready_artifact(
+        migrated_session_factory,
+        user,
+        dsr_status="cancelled",
+    )
+    client = authenticated_client_factory(
+        identity=identity_for(user.external_auth_id, user.email),
+        database_url=migrated_database_url,
+    )
+
+    response = client.client.post(
+        f"/api/v1/privacy/export-artifacts/{artifact_id}/download-url"
+    )
+
+    assert response.status_code == 409
+    assert "no longer eligible" in response.text
+
+    async def _load_download_state() -> tuple[int, datetime | None]:
+        async with migrated_session_factory() as session:
+            artifact = (
+                await session.execute(
+                    select(ExportArtifact).where(ExportArtifact.id == artifact_id)
+                )
+            ).scalar_one()
+            return artifact.download_count, artifact.downloaded_at
+
+    download_count, downloaded_at = run_async(_load_download_state())
+    assert download_count == 0
+    assert downloaded_at is None
+
+
+def test_user_download_url_route_uses_write_rate_limit_policy() -> None:
+    source = inspect.getsource(export_artifacts_api.create_own_export_download_url)
+
+    assert "TENANT_WRITE_POLICY" in source
+    assert "TENANT_READ_POLICY" not in source
 
 
 def test_disabled_privacy_exports_block_platform_artifact_creation(
