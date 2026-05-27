@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
@@ -199,8 +199,14 @@ class ExportArtifactRepository:
     async def increment_download_count(
         self, artifact: ExportArtifact
     ) -> ExportArtifact:
-        artifact.download_count += 1
-        artifact.downloaded_at = datetime.now(UTC)
+        await self.session.execute(
+            update(ExportArtifact)
+            .where(ExportArtifact.id == artifact.id)
+            .values(
+                download_count=ExportArtifact.download_count + 1,
+                downloaded_at=datetime.now(UTC),
+            )
+        )
         await self.session.flush()
         await self.session.refresh(artifact)
         return artifact
