@@ -216,7 +216,10 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         table_name="invites",
         model_module="app.invites.models.invite",
         model_name="Invite",
-        subject_locator="direct/indirect: invites.email matches subject email",
+        subject_locator=(
+            "direct/indirect: invites.email matches subject email "
+            "or invites.revoked_by_user_id == subject_user_id"
+        ),
         data_categories=(PrivacyDataCategory.INVITE, PrivacyDataCategory.CONTACT),
         fields=(
             PrivacyFieldInventory(
@@ -238,11 +241,14 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 PrivacyFieldClassification.INDIRECT_IDENTIFIER,
                 True,
                 PrivacyFieldErasureAction.RETAIN_MINIMISED,
-                "Actor link; preserve integrity but minimise when policy permits.",
+                (
+                    "Revoker-side subject link when the subject revoked another "
+                    "user's invite; preserve integrity but minimise when policy permits"
+                ),
             ),
         ),
-        export_provider_key="invites.by_subject_email",
-        erasure_provider_key="invites.anonymise_or_purge",
+        export_provider_key="invites.by_subject_email_or_revoker",
+        erasure_provider_key="invites.anonymise_or_purge_subject_references",
         erasure_strategy=PrivacyErasureStrategy.DELETE_WHEN_ALLOWED,
         retention_policy_key="invite_lifecycle",
         notes="Invite records are subject data when email matches the subject.",
@@ -359,7 +365,10 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         table_name="platform_staff",
         model_module="app.platform.models.platform_staff",
         model_name="PlatformStaff",
-        subject_locator="direct: platform_staff.user_id == subject_user_id",
+        subject_locator=(
+            "direct: platform_staff.user_id == subject_user_id "
+            "or platform_staff.created_by_user_id == subject_user_id"
+        ),
         data_categories=(PrivacyDataCategory.PLATFORM_STAFF,),
         fields=(
             PrivacyFieldInventory(
@@ -374,7 +383,10 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 PrivacyFieldClassification.INDIRECT_IDENTIFIER,
                 True,
                 PrivacyFieldErasureAction.RETAIN_MINIMISED,
-                "Administrative actor link.",
+                (
+                    "Creator-side subject link when the subject created another "
+                    "platform staff record."
+                ),
             ),
             PrivacyFieldInventory(
                 "suspended_reason",
@@ -384,8 +396,8 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Free-text reason may contain personal data.",
             ),
         ),
-        export_provider_key="platform_staff.by_subject",
-        erasure_provider_key="platform_staff.minimise_subject_link",
+        export_provider_key="platform_staff.by_subject_or_creator",
+        erasure_provider_key="platform_staff.minimise_subject_or_creator_links",
         erasure_strategy=PrivacyErasureStrategy.RETAIN_WITH_LEGAL_BASIS,
         retention_policy_key="platform_staff_records",
         notes="Staff records have stronger legal/compliance retention constraints.",

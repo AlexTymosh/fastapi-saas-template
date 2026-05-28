@@ -73,6 +73,18 @@ def test_issue_328_core_tables_have_export_and_erasure_coverage() -> None:
             assert entry.erasure_strategy in _ALLOWED_RETAIN_ONLY_STRATEGIES
 
 
+def test_subject_locators_cover_actor_side_identifiers() -> None:
+    inventory = get_privacy_inventory_by_table()
+
+    invite_locator = inventory["invites"].subject_locator
+    assert "email" in invite_locator
+    assert "revoked_by_user_id" in invite_locator
+
+    platform_staff_locator = inventory["platform_staff"].subject_locator
+    assert "user_id" in platform_staff_locator
+    assert "created_by_user_id" in platform_staff_locator
+
+
 def test_inventory_entries_are_unique_and_have_required_contract_fields() -> None:
     table_names = [entry.table_name for entry in PRIVACY_DATA_INVENTORY]
     raw_provider_keys = _raw_inventory_provider_keys()
