@@ -299,6 +299,26 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Preserve audit integrity; minimise after retention/legal review.",
             ),
             PrivacyFieldInventory(
+                "target_type",
+                PrivacyFieldClassification.STRUCTURED_METADATA,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                (
+                    "Target discriminator used with target_id to identify "
+                    "subject-linked audit events."
+                ),
+            ),
+            PrivacyFieldInventory(
+                "target_id",
+                PrivacyFieldClassification.INDIRECT_IDENTIFIER,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                (
+                    "Target-side subject link, for example target_type='user' "
+                    "and target_id == subject_user_id."
+                ),
+            ),
+            PrivacyFieldInventory(
                 "reason",
                 PrivacyFieldClassification.OPERATIONAL_REASON,
                 True,
