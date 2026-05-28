@@ -73,6 +73,17 @@ def test_issue_328_core_tables_have_export_and_erasure_coverage() -> None:
             assert entry.erasure_strategy in _ALLOWED_RETAIN_ONLY_STRATEGIES
 
 
+def test_invite_inventory_exports_relationship_context() -> None:
+    inventory = get_privacy_inventory_by_table()
+    invite_fields = {field.name: field for field in inventory["invites"].fields}
+
+    assert invite_fields["organisation_id"].export is True
+    assert invite_fields["role"].export is True
+    assert invite_fields["organisation_id"].erasure_action.name == "RETAIN_MINIMISED"
+    assert invite_fields["role"].erasure_action.name == "RETAIN_MINIMISED"
+    assert invite_fields["token_hash"].export is False
+
+
 def test_subject_locators_cover_actor_side_identifiers() -> None:
     inventory = get_privacy_inventory_by_table()
 
@@ -89,6 +100,27 @@ def test_subject_locators_cover_actor_side_identifiers() -> None:
     assert "requester_user_id" in export_artifacts_locator
     assert "requested_by_user_id" in export_artifacts_locator
     assert "generated_by_user_id" in export_artifacts_locator
+
+
+def test_audit_subject_locator_covers_target_type_joins() -> None:
+    inventory = get_privacy_inventory_by_table()
+    audit_locator = inventory["audit_events"].subject_locator
+
+    assert "actor_user_id" in audit_locator
+    assert "target_type='user'" in audit_locator
+    assert "target_type='invite'" in audit_locator
+    assert "invites.email" in audit_locator
+    assert "invites.revoked_by_user_id" in audit_locator
+    assert "target_type='membership'" in audit_locator
+    assert "memberships.user_id" in audit_locator
+    assert "target_type='data_subject_request'" in audit_locator
+    assert "data_subject_requests.id" in audit_locator
+    assert "reviewer_user_id" in audit_locator
+    assert "target_type='export_artifact'" in audit_locator
+    assert "export_artifacts.id" in audit_locator
+    assert "generated_by_user_id" in audit_locator
+    assert "target_type='platform_staff'" in audit_locator
+    assert "created_by_user_id" in audit_locator
 
 
 def test_inventory_entries_are_unique_and_have_required_contract_fields() -> None:

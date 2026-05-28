@@ -230,6 +230,23 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Invitee contact identifier.",
             ),
             PrivacyFieldInventory(
+                "organisation_id",
+                PrivacyFieldClassification.RELATIONSHIP,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                (
+                    "Tenant relationship explaining which organisation "
+                    "the subject was invited to."
+                ),
+            ),
+            PrivacyFieldInventory(
+                "role",
+                PrivacyFieldClassification.RELATIONSHIP,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                "Invited role relationship for the pending or historical invite.",
+            ),
+            PrivacyFieldInventory(
                 "token_hash",
                 PrivacyFieldClassification.SECRET_OR_TOKEN,
                 False,
@@ -294,7 +311,23 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         table_name="audit_events",
         model_module="app.audit.models.audit_event",
         model_name="AuditEvent",
-        subject_locator="direct/indirect: actor_user_id or target_id matches subject",
+        subject_locator=(
+            "direct: audit_events.actor_user_id == subject_user_id; "
+            "direct target: target_type='user' and target_id == subject_user_id; "
+            "target join: target_type='invite' and target_id -> invites.id where "
+            "invites.email matches subject email or "
+            "invites.revoked_by_user_id == subject_user_id; "
+            "target join: target_type='membership' and target_id -> memberships.id "
+            "where memberships.user_id == subject_user_id; "
+            "target join: target_type='data_subject_request' and target_id -> "
+            "data_subject_requests.id where requester_user_id/subject_user_id/"
+            "reviewer_user_id matches subject_user_id; "
+            "target join: target_type='export_artifact' and target_id -> "
+            "export_artifacts.id where subject_user_id/requester_user_id/"
+            "requested_by_user_id/generated_by_user_id matches subject_user_id; "
+            "target join: target_type='platform_staff' and target_id -> "
+            "platform_staff.id where user_id/created_by_user_id matches subject_user_id"
+        ),
         data_categories=(PrivacyDataCategory.AUDIT,),
         fields=(
             PrivacyFieldInventory(
@@ -353,8 +386,8 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Fingerprinting risk; minimise according to audit policy.",
             ),
         ),
-        export_provider_key="audit.subject_events",
-        erasure_provider_key="audit.minimise_subject_identifiers",
+        export_provider_key="audit.subject_actor_or_target_join_events",
+        erasure_provider_key="audit.minimise_subject_actor_or_target_identifiers",
         erasure_strategy=PrivacyErasureStrategy.RETAIN_AND_MINIMISE,
         retention_policy_key="audit_events",
         notes=(
