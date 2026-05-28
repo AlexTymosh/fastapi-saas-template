@@ -108,6 +108,8 @@ def test_audit_subject_locator_covers_target_type_joins() -> None:
 
     assert "actor_user_id" in audit_locator
     assert "target_type='user'" in audit_locator
+    assert "privacy_consent" in audit_locator
+    assert "privacy_notice" in audit_locator
     assert "target_type='invite'" in audit_locator
     assert "invites.email" in audit_locator
     assert "invites.revoked_by_user_id" in audit_locator

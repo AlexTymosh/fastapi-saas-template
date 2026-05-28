@@ -314,6 +314,8 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         subject_locator=(
             "direct: audit_events.actor_user_id == subject_user_id; "
             "direct target: target_type='user' and target_id == subject_user_id; "
+            "direct target: target_type in ('privacy_consent', "
+            "'privacy_notice') and target_id == subject_user_id; "
             "target join: target_type='invite' and target_id -> invites.id where "
             "invites.email matches subject email or "
             "invites.revoked_by_user_id == subject_user_id; "
