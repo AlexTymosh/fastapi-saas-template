@@ -455,7 +455,10 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         table_name="export_artifacts",
         model_module="app.privacy.models.export_artifact",
         model_name="ExportArtifact",
-        subject_locator="direct: subject_user_id/requester_user_id",
+        subject_locator=(
+            "direct: subject_user_id/requester_user_id "
+            "or actor-side requested_by_user_id/generated_by_user_id"
+        ),
         data_categories=(PrivacyDataCategory.EXPORT_ARTIFACT,),
         fields=(
             PrivacyFieldInventory(
@@ -473,6 +476,26 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Requester link for access checks.",
             ),
             PrivacyFieldInventory(
+                "requested_by_user_id",
+                PrivacyFieldClassification.INDIRECT_IDENTIFIER,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                (
+                    "Actor-side subject link when the subject requested another "
+                    "user's export artifact."
+                ),
+            ),
+            PrivacyFieldInventory(
+                "generated_by_user_id",
+                PrivacyFieldClassification.INDIRECT_IDENTIFIER,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                (
+                    "Actor-side subject link when the subject generated another "
+                    "user's export artifact."
+                ),
+            ),
+            PrivacyFieldInventory(
                 "storage_key",
                 PrivacyFieldClassification.INDIRECT_IDENTIFIER,
                 False,
@@ -487,8 +510,10 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Integrity metadata for generated artifact.",
             ),
         ),
-        export_provider_key="export_artifacts.metadata",
-        erasure_provider_key="export_artifacts.delete_object_minimise_metadata",
+        export_provider_key="export_artifacts.subject_or_actor_metadata",
+        erasure_provider_key=(
+            "export_artifacts.delete_object_minimise_subject_or_actor_metadata"
+        ),
         erasure_strategy=PrivacyErasureStrategy.DELETE_WHEN_ALLOWED,
         retention_policy_key="export_artifacts",
         notes="Artifact binary content must be deleted after retention expiry.",

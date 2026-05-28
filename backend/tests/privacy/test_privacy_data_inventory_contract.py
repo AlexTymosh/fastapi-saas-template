@@ -84,6 +84,12 @@ def test_subject_locators_cover_actor_side_identifiers() -> None:
     assert "user_id" in platform_staff_locator
     assert "created_by_user_id" in platform_staff_locator
 
+    export_artifacts_locator = inventory["export_artifacts"].subject_locator
+    assert "subject_user_id" in export_artifacts_locator
+    assert "requester_user_id" in export_artifacts_locator
+    assert "requested_by_user_id" in export_artifacts_locator
+    assert "generated_by_user_id" in export_artifacts_locator
+
 
 def test_inventory_entries_are_unique_and_have_required_contract_fields() -> None:
     table_names = [entry.table_name for entry in PRIVACY_DATA_INVENTORY]
