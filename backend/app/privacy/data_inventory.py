@@ -557,7 +557,9 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         table_name="data_processing_authorizations",
         model_module="app.privacy.models.privacy_governance",
         model_name="DataProcessingAuthorization",
-        subject_locator="direct: subject_user_id == subject_user_id",
+        subject_locator=(
+            "direct: data_processing_authorizations.subject_user_id == subject_user_id"
+        ),
         data_categories=(PrivacyDataCategory.PRIVACY_GOVERNANCE,),
         fields=(
             PrivacyFieldInventory(
@@ -592,7 +594,7 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         table_name="consent_records",
         model_module="app.privacy.models.privacy_governance",
         model_name="ConsentRecord",
-        subject_locator="direct: subject_user_id == subject_user_id",
+        subject_locator=("direct: consent_records.subject_user_id == subject_user_id"),
         data_categories=(PrivacyDataCategory.PRIVACY_GOVERNANCE,),
         fields=(
             PrivacyFieldInventory(
@@ -627,7 +629,9 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         table_name="privacy_notice_acceptances",
         model_module="app.privacy.models.privacy_governance",
         model_name="PrivacyNoticeAcceptance",
-        subject_locator="direct: subject_user_id == subject_user_id",
+        subject_locator=(
+            "direct: privacy_notice_acceptances.subject_user_id == subject_user_id"
+        ),
         data_categories=(PrivacyDataCategory.PRIVACY_GOVERNANCE,),
         fields=(
             PrivacyFieldInventory(

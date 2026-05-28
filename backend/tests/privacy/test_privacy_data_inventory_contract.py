@@ -125,6 +125,24 @@ def test_audit_subject_locator_covers_target_type_joins() -> None:
     assert "created_by_user_id" in audit_locator
 
 
+def test_privacy_governance_subject_locators_use_table_columns() -> None:
+    inventory = get_privacy_inventory_by_table()
+    expected_locator_fragments = {
+        "data_processing_authorizations": (
+            "data_processing_authorizations.subject_user_id"
+        ),
+        "consent_records": "consent_records.subject_user_id",
+        "privacy_notice_acceptances": ("privacy_notice_acceptances.subject_user_id"),
+    }
+
+    for table_name, locator_fragment in expected_locator_fragments.items():
+        assert locator_fragment in inventory[table_name].subject_locator
+        assert (
+            "direct: subject_user_id == subject_user_id"
+            not in inventory[table_name].subject_locator
+        )
+
+
 def test_inventory_entries_are_unique_and_have_required_contract_fields() -> None:
     table_names = [entry.table_name for entry in PRIVACY_DATA_INVENTORY]
     raw_provider_keys = _raw_inventory_provider_keys()
