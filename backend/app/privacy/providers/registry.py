@@ -18,10 +18,37 @@ class PrivacyProviderRegistryEntry:
     retention_policy_key: str
 
 
+def _add_provider_entry(
+    registry: dict[str, PrivacyProviderRegistryEntry],
+    *,
+    provider_key: str,
+    table_name: str,
+    purpose: str,
+    erasure_strategy: PrivacyErasureStrategy,
+    retention_policy_key: str,
+) -> None:
+    existing = registry.get(provider_key)
+    if existing is not None:
+        raise ValueError(
+            "Duplicate privacy provider key "
+            f"{provider_key!r}: {existing.table_name}/{existing.purpose} and "
+            f"{table_name}/{purpose}"
+        )
+
+    registry[provider_key] = PrivacyProviderRegistryEntry(
+        provider_key=provider_key,
+        table_name=table_name,
+        purpose=purpose,
+        erasure_strategy=erasure_strategy,
+        retention_policy_key=retention_policy_key,
+    )
+
+
 def build_privacy_provider_registry() -> dict[str, PrivacyProviderRegistryEntry]:
     registry: dict[str, PrivacyProviderRegistryEntry] = {}
     for inventory_entry in PRIVACY_DATA_INVENTORY:
-        registry[inventory_entry.export_provider_key] = PrivacyProviderRegistryEntry(
+        _add_provider_entry(
+            registry,
             provider_key=inventory_entry.export_provider_key,
             table_name=inventory_entry.table_name,
             purpose="export",
@@ -29,9 +56,9 @@ def build_privacy_provider_registry() -> dict[str, PrivacyProviderRegistryEntry]
             retention_policy_key=inventory_entry.retention_policy_key,
         )
         if inventory_entry.erasure_provider_key is not None:
-            erasure_key = inventory_entry.erasure_provider_key
-            registry[erasure_key] = PrivacyProviderRegistryEntry(
-                provider_key=erasure_key,
+            _add_provider_entry(
+                registry,
+                provider_key=inventory_entry.erasure_provider_key,
                 table_name=inventory_entry.table_name,
                 purpose="erasure",
                 erasure_strategy=inventory_entry.erasure_strategy,

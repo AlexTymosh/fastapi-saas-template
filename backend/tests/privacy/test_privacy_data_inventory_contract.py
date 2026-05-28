@@ -19,7 +19,6 @@ from app.privacy.providers.registry import build_privacy_provider_registry
 
 pytestmark = [pytest.mark.privacy, pytest.mark.contract]
 
-
 _ALLOWED_RETAIN_ONLY_STRATEGIES = {
     PrivacyErasureStrategy.RETAIN_AND_MINIMISE,
     PrivacyErasureStrategy.RETAIN_WITH_LEGAL_BASIS,
@@ -29,6 +28,15 @@ _ALLOWED_RETAIN_ONLY_STRATEGIES = {
 def _metadata_table_names() -> set[str]:
     import_all_models()
     return set(Base.metadata.tables)
+
+
+def _raw_inventory_provider_keys() -> list[str]:
+    keys: list[str] = []
+    for entry in PRIVACY_DATA_INVENTORY:
+        keys.append(entry.export_provider_key)
+        if entry.erasure_provider_key is not None:
+            keys.append(entry.erasure_provider_key)
+    return keys
 
 
 def test_privacy_inventory_accounts_for_all_current_model_tables() -> None:
@@ -67,10 +75,11 @@ def test_issue_328_core_tables_have_export_and_erasure_coverage() -> None:
 
 def test_inventory_entries_are_unique_and_have_required_contract_fields() -> None:
     table_names = [entry.table_name for entry in PRIVACY_DATA_INVENTORY]
-    provider_keys = get_privacy_provider_keys()
+    raw_provider_keys = _raw_inventory_provider_keys()
 
     assert len(table_names) == len(set(table_names))
-    assert len(provider_keys) == len(set(provider_keys))
+    assert len(raw_provider_keys) == len(set(raw_provider_keys))
+    assert set(raw_provider_keys) == get_privacy_provider_keys()
 
     for entry in PRIVACY_DATA_INVENTORY:
         assert entry.model_module.startswith("app.")
