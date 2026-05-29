@@ -445,6 +445,20 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
         data_categories=(PrivacyDataCategory.DSR_WORKFLOW,),
         fields=(
             PrivacyFieldInventory(
+                "request_type",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "DSR type explaining what request was made.",
+            ),
+            PrivacyFieldInventory(
+                "status",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Current DSR lifecycle status.",
+            ),
+            PrivacyFieldInventory(
                 "requester_user_id",
                 PrivacyFieldClassification.INDIRECT_IDENTIFIER,
                 True,
@@ -464,6 +478,83 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 True,
                 PrivacyFieldErasureAction.RETAIN_MINIMISED,
                 "Reviewer link for compliance auditability.",
+            ),
+            PrivacyFieldInventory(
+                "submitted_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when the DSR was submitted.",
+            ),
+            PrivacyFieldInventory(
+                "acknowledged_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when the DSR was acknowledged.",
+            ),
+            PrivacyFieldInventory(
+                "reviewed_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when review started or was recorded.",
+            ),
+            PrivacyFieldInventory(
+                "due_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Response deadline used to prove compliance timing.",
+            ),
+            PrivacyFieldInventory(
+                "extended_until",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Extended response deadline when a valid extension applies.",
+            ),
+            PrivacyFieldInventory(
+                "decided_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when the DSR decision was made.",
+            ),
+            PrivacyFieldInventory(
+                "fulfilled_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when the DSR was fulfilled.",
+            ),
+            PrivacyFieldInventory(
+                "cancelled_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when the DSR was cancelled.",
+            ),
+            PrivacyFieldInventory(
+                "decision_reason_code",
+                PrivacyFieldClassification.OPERATIONAL_REASON,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                "Structured decision reason for compliance export context.",
+            ),
+            PrivacyFieldInventory(
+                "rejection_reason_code",
+                PrivacyFieldClassification.OPERATIONAL_REASON,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                "Structured rejection reason for compliance export context.",
+            ),
+            PrivacyFieldInventory(
+                "extension_reason_code",
+                PrivacyFieldClassification.OPERATIONAL_REASON,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                "Structured extension reason for compliance export context.",
             ),
             PrivacyFieldInventory(
                 "requester_note",
@@ -570,6 +661,16 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Subject link for processing authorisation.",
             ),
             PrivacyFieldInventory(
+                "purpose_id",
+                PrivacyFieldClassification.RELATIONSHIP,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                (
+                    "Processing-purpose relationship; provider should resolve "
+                    "static purpose code/title for export context."
+                ),
+            ),
+            PrivacyFieldInventory(
                 "lawful_basis",
                 PrivacyFieldClassification.STRUCTURED_METADATA,
                 True,
@@ -603,6 +704,16 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 True,
                 PrivacyFieldErasureAction.RETAIN_MINIMISED,
                 "Subject link for consent proof.",
+            ),
+            PrivacyFieldInventory(
+                "purpose_id",
+                PrivacyFieldClassification.RELATIONSHIP,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                (
+                    "Processing-purpose relationship; provider should resolve "
+                    "static purpose code/title for export context."
+                ),
             ),
             PrivacyFieldInventory(
                 "privacy_notice_version",

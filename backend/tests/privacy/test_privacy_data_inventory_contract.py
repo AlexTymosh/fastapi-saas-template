@@ -84,6 +84,48 @@ def test_invite_inventory_exports_relationship_context() -> None:
     assert invite_fields["token_hash"].export is False
 
 
+def test_dsr_workflow_inventory_exports_lifecycle_context() -> None:
+    inventory = get_privacy_inventory_by_table()
+    dsr_fields = {
+        field.name: field for field in inventory["data_subject_requests"].fields
+    }
+    expected_exported_fields = {
+        "request_type",
+        "status",
+        "submitted_at",
+        "acknowledged_at",
+        "reviewed_at",
+        "due_at",
+        "extended_until",
+        "decided_at",
+        "fulfilled_at",
+        "cancelled_at",
+        "decision_reason_code",
+        "rejection_reason_code",
+        "extension_reason_code",
+    }
+
+    for field_name in expected_exported_fields:
+        assert dsr_fields[field_name].export is True
+
+    assert dsr_fields["request_type"].classification.name == "LIFECYCLE"
+    assert dsr_fields["status"].classification.name == "LIFECYCLE"
+    assert dsr_fields["due_at"].classification.name == "LIFECYCLE"
+    assert dsr_fields["decision_reason_code"].erasure_action.name == (
+        "RETAIN_MINIMISED"
+    )
+
+
+def test_governance_inventory_exports_purpose_links() -> None:
+    inventory = get_privacy_inventory_by_table()
+
+    for table_name in {"data_processing_authorizations", "consent_records"}:
+        fields = {field.name: field for field in inventory[table_name].fields}
+        assert fields["purpose_id"].export is True
+        assert fields["purpose_id"].classification.name == "RELATIONSHIP"
+        assert fields["purpose_id"].erasure_action.name == "RETAIN_MINIMISED"
+
+
 def test_subject_locators_cover_actor_side_identifiers() -> None:
     inventory = get_privacy_inventory_by_table()
 
