@@ -126,6 +126,38 @@ def test_governance_inventory_exports_purpose_links() -> None:
         assert fields["purpose_id"].erasure_action.name == "RETAIN_MINIMISED"
 
 
+def test_authorization_inventory_exports_validity_and_special_category() -> None:
+    inventory = get_privacy_inventory_by_table()
+    fields = {
+        field.name: field
+        for field in inventory["data_processing_authorizations"].fields
+    }
+
+    assert fields["special_category_condition"].export is True
+    assert fields["special_category_condition"].classification.name == (
+        "STRUCTURED_METADATA"
+    )
+    assert fields["special_category_condition"].erasure_action.name == "RETAIN"
+
+    for field_name in {"valid_from", "valid_until", "revoked_at"}:
+        assert fields[field_name].export is True
+        assert fields[field_name].classification.name == "LIFECYCLE"
+        assert fields[field_name].erasure_action.name == "RETAIN"
+
+
+def test_consent_inventory_exports_lifecycle_timestamps() -> None:
+    inventory = get_privacy_inventory_by_table()
+    fields = {field.name: field for field in inventory["consent_records"].fields}
+
+    for field_name in {"granted_at", "withdrawn_at"}:
+        assert fields[field_name].export is True
+        assert fields[field_name].classification.name == "LIFECYCLE"
+        assert fields[field_name].erasure_action.name == "RETAIN"
+
+    assert fields["withdrawal_reason_code"].export is True
+    assert fields["withdrawal_reason_code"].erasure_action.name == ("REVIEW_REQUIRED")
+
+
 def test_subject_locators_cover_actor_side_identifiers() -> None:
     inventory = get_privacy_inventory_by_table()
 

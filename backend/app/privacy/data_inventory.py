@@ -678,11 +678,42 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 "Compliance metadata explaining processing basis.",
             ),
             PrivacyFieldInventory(
+                "special_category_condition",
+                PrivacyFieldClassification.STRUCTURED_METADATA,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                (
+                    "Article 9/special-category condition explaining the "
+                    "additional basis for sensitive-data processing."
+                ),
+            ),
+            PrivacyFieldInventory(
                 "source",
                 PrivacyFieldClassification.STRUCTURED_METADATA,
                 True,
                 PrivacyFieldErasureAction.REVIEW_REQUIRED,
                 "Source may identify how the authorisation was obtained.",
+            ),
+            PrivacyFieldInventory(
+                "valid_from",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Start timestamp for the authorisation validity window.",
+            ),
+            PrivacyFieldInventory(
+                "valid_until",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "End timestamp for the authorisation validity window.",
+            ),
+            PrivacyFieldInventory(
+                "revoked_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when the authorisation was revoked.",
             ),
         ),
         export_provider_key="privacy_governance.authorizations",
@@ -721,6 +752,20 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 True,
                 PrivacyFieldErasureAction.RETAIN,
                 "Compliance metadata.",
+            ),
+            PrivacyFieldInventory(
+                "granted_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when consent was granted.",
+            ),
+            PrivacyFieldInventory(
+                "withdrawn_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when consent was withdrawn.",
             ),
             PrivacyFieldInventory(
                 "withdrawal_reason_code",
