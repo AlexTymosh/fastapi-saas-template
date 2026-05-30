@@ -360,6 +360,20 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 ),
             ),
             PrivacyFieldInventory(
+                "action",
+                PrivacyFieldClassification.STRUCTURED_METADATA,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Audit event action explaining what happened.",
+            ),
+            PrivacyFieldInventory(
+                "created_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Audit event timestamp explaining when the event occurred.",
+            ),
+            PrivacyFieldInventory(
                 "reason",
                 PrivacyFieldClassification.OPERATIONAL_REASON,
                 True,
@@ -803,6 +817,13 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 True,
                 PrivacyFieldErasureAction.RETAIN,
                 "Compliance metadata.",
+            ),
+            PrivacyFieldInventory(
+                "accepted_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Timestamp proving when the privacy notice was accepted.",
             ),
             PrivacyFieldInventory(
                 "source",

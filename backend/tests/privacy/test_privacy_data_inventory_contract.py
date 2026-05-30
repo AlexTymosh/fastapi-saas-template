@@ -158,6 +158,33 @@ def test_consent_inventory_exports_lifecycle_timestamps() -> None:
     assert fields["withdrawal_reason_code"].erasure_action.name == ("REVIEW_REQUIRED")
 
 
+def test_audit_inventory_exports_action_and_timestamp() -> None:
+    inventory = get_privacy_inventory_by_table()
+    fields = {field.name: field for field in inventory["audit_events"].fields}
+
+    assert fields["action"].export is True
+    assert fields["action"].classification.name == "STRUCTURED_METADATA"
+    assert fields["action"].erasure_action.name == "RETAIN"
+
+    assert fields["created_at"].export is True
+    assert fields["created_at"].classification.name == "LIFECYCLE"
+    assert fields["created_at"].erasure_action.name == "RETAIN"
+
+
+def test_notice_acceptance_inventory_exports_acceptance_time() -> None:
+    inventory = get_privacy_inventory_by_table()
+    fields = {
+        field.name: field for field in inventory["privacy_notice_acceptances"].fields
+    }
+
+    assert fields["accepted_at"].export is True
+    assert fields["accepted_at"].classification.name == "LIFECYCLE"
+    assert fields["accepted_at"].erasure_action.name == "RETAIN"
+
+    assert fields["notice_version"].export is True
+    assert fields["source"].export is True
+
+
 def test_subject_locators_cover_actor_side_identifiers() -> None:
     inventory = get_privacy_inventory_by_table()
 
