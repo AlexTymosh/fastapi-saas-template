@@ -126,6 +126,31 @@ def test_governance_inventory_exports_purpose_links() -> None:
         assert fields["purpose_id"].erasure_action.name == "RETAIN_MINIMISED"
 
 
+def test_export_artifact_inventory_classifies_processing_tokens() -> None:
+    inventory = get_privacy_inventory_by_table()
+    fields = {field.name: field for field in inventory["export_artifacts"].fields}
+
+    assert fields["processing_token"].export is False
+    assert fields["processing_token"].classification.name == "SECRET_OR_TOKEN"
+    assert fields["processing_token"].erasure_action.name == "DELETE"
+
+    assert fields["processing_lease_expires_at"].export is False
+    assert fields["processing_lease_expires_at"].classification.name == "LIFECYCLE"
+    assert fields["processing_lease_expires_at"].erasure_action.name == "DELETE"
+
+
+def test_authorization_inventory_exports_active_state() -> None:
+    inventory = get_privacy_inventory_by_table()
+    fields = {
+        field.name: field
+        for field in inventory["data_processing_authorizations"].fields
+    }
+
+    assert fields["active"].export is True
+    assert fields["active"].classification.name == "STRUCTURED_METADATA"
+    assert fields["active"].erasure_action.name == "RETAIN"
+
+
 def test_authorization_inventory_exports_validity_and_special_category() -> None:
     inventory = get_privacy_inventory_by_table()
     fields = {

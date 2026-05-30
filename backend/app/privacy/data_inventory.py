@@ -636,6 +636,26 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 ),
             ),
             PrivacyFieldInventory(
+                "processing_token",
+                PrivacyFieldClassification.SECRET_OR_TOKEN,
+                False,
+                PrivacyFieldErasureAction.DELETE,
+                (
+                    "Internal worker lease token; never export and remove when "
+                    "the artifact leaves processing."
+                ),
+            ),
+            PrivacyFieldInventory(
+                "processing_lease_expires_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                False,
+                PrivacyFieldErasureAction.DELETE,
+                (
+                    "Internal worker lease timestamp; do not export and clear "
+                    "with processing state."
+                ),
+            ),
+            PrivacyFieldInventory(
                 "storage_key",
                 PrivacyFieldClassification.INDIRECT_IDENTIFIER,
                 False,
@@ -700,6 +720,13 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                     "Article 9/special-category condition explaining the "
                     "additional basis for sensitive-data processing."
                 ),
+            ),
+            PrivacyFieldInventory(
+                "active",
+                PrivacyFieldClassification.STRUCTURED_METADATA,
+                True,
+                PrivacyFieldErasureAction.RETAIN,
+                "Current authorization state used with the validity window.",
             ),
             PrivacyFieldInventory(
                 "source",
