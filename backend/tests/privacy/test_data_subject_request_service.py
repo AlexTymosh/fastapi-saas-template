@@ -285,11 +285,19 @@ def test_state_machine_and_terminal_protection(migrated_session_factory) -> None
                 reviewer_user_id=user.id,
                 audit_context=audit_context,
             )
+            with pytest.raises(ConflictError, match="Use fulfil_request"):
+                await service.transition_status(
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.FULFILLED,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
             request = await service.transition_status(
                 request_id=request.id,
                 target_status=DataSubjectRequestStatus.FULFILLED,
                 reviewer_user_id=user.id,
                 audit_context=audit_context,
+                execution_verified=True,
             )
             assert request.status == DataSubjectRequestStatus.FULFILLED.value
             with pytest.raises(ConflictError):
@@ -327,7 +335,9 @@ def test_state_machine_submitted_to_approved(migrated_session_factory) -> None:
     run_async(_run())
 
 
-def test_state_machine_submitted_to_fulfilled(migrated_session_factory) -> None:
+def test_state_machine_rejects_direct_submitted_to_fulfilled_transition(
+    migrated_session_factory,
+) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:
             user = await _create_user(session, email="submitted-fulfilled@example.com")
@@ -339,14 +349,17 @@ def test_state_machine_submitted_to_fulfilled(migrated_session_factory) -> None:
                 request_type="access",
                 audit_context=audit_context,
             )
-            request = await service.transition_status(
-                request_id=request.id,
-                target_status=DataSubjectRequestStatus.FULFILLED,
-                reviewer_user_id=user.id,
-                audit_context=audit_context,
-            )
-            assert request.status == DataSubjectRequestStatus.FULFILLED.value
-            assert request.fulfilled_at is not None
+            with pytest.raises(ConflictError, match="Use fulfil_request"):
+                await service.transition_status(
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.FULFILLED,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
+
+            persisted = await service.get_request(request_id=request.id)
+            assert persisted.status == DataSubjectRequestStatus.SUBMITTED.value
+            assert persisted.fulfilled_at is None
 
     run_async(_run())
 
@@ -381,13 +394,29 @@ def test_terminal_states_reject_further_transitions(
                     reviewer_user_id=user.id,
                     audit_context=audit_context,
                 )
+            if terminal_status is DataSubjectRequestStatus.FULFILLED:
+                request = await service.transition_status(
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.APPROVED,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
 
-            request = await service.transition_status(
-                request_id=request.id,
-                target_status=terminal_status,
-                reviewer_user_id=user.id,
-                audit_context=audit_context,
-            )
+            if terminal_status is DataSubjectRequestStatus.FULFILLED:
+                request = await service.transition_status(
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.FULFILLED,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                    execution_verified=True,
+                )
+            else:
+                request = await service.transition_status(
+                    request_id=request.id,
+                    target_status=terminal_status,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
             with pytest.raises(ConflictError):
                 await service.transition_status(
                     request_id=request.id,

@@ -16,7 +16,11 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
+from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
+from app.privacy.repositories.export_artifacts import ExportArtifactRepository
+
+_FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset({DataSubjectRequestType.EXPORT.value})
 
 
 class DataSubjectRequestService:
@@ -44,7 +48,6 @@ class DataSubjectRequestService:
         DataSubjectRequestStatus.SUBMITTED.value: {
             DataSubjectRequestStatus.UNDER_REVIEW.value,
             DataSubjectRequestStatus.APPROVED.value,
-            DataSubjectRequestStatus.FULFILLED.value,
             DataSubjectRequestStatus.CANCELLED.value,
         },
         DataSubjectRequestStatus.UNDER_REVIEW.value: {
@@ -61,6 +64,7 @@ class DataSubjectRequestService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = DataSubjectRequestRepository(session)
         self.audit_events = AuditEventService(session)
+        self.export_artifacts = ExportArtifactRepository(session)
 
     async def submit_request(
         self,
@@ -161,11 +165,20 @@ class DataSubjectRequestService:
         audit_context: AuditContext,
         reason_code: str | None = None,
         now: datetime | None = None,
+        execution_verified: bool = False,
     ) -> DataSubjectRequest:
         reference_now = now or datetime.now(UTC)
         request = await self.get_request(request_id=request_id)
         current_status = request.status
         next_status = target_status.value
+
+        if (
+            target_status is DataSubjectRequestStatus.FULFILLED
+            and not execution_verified
+        ):
+            raise ConflictError(
+                detail=("Use fulfil_request() to fulfil data-subject requests")
+            )
 
         allowed = self._ALLOWED_TRANSITIONS.get(current_status, set())
         if next_status not in allowed:
@@ -332,12 +345,52 @@ class DataSubjectRequestService:
         request = await self.get_request(request_id=request_id)
         if request.status != DataSubjectRequestStatus.APPROVED.value:
             raise ConflictError(detail="Only approved requests can be fulfilled")
+        await self._ensure_execution_ready_for_fulfilment(request)
         return await self.transition_status(
             request_id=request_id,
             target_status=DataSubjectRequestStatus.FULFILLED,
             reviewer_user_id=reviewer_user_id,
             audit_context=audit_context,
+            execution_verified=True,
         )
+
+    async def _ensure_execution_ready_for_fulfilment(
+        self, request: DataSubjectRequest
+    ) -> None:
+        if request.request_type not in _FULFILMENT_PIPELINE_REQUEST_TYPES:
+            raise ConflictError(
+                detail=(
+                    "Execution pipeline is not implemented for "
+                    f"'{request.request_type}' data-subject requests"
+                )
+            )
+
+        artifacts = await self.export_artifacts.get_by_dsr_id(request.id)
+        now = datetime.now(UTC)
+        for artifact in artifacts:
+            if self._is_ready_export_artifact_usable(artifact, now=now):
+                return
+
+        raise ConflictError(
+            detail=(
+                "Export data-subject requests require a ready, non-expired "
+                "export artifact before fulfilment"
+            )
+        )
+
+    @staticmethod
+    def _is_ready_export_artifact_usable(
+        artifact: ExportArtifact, *, now: datetime
+    ) -> bool:
+        if artifact.status != ExportArtifactStatus.READY.value:
+            return False
+
+        expires_at = artifact.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        else:
+            expires_at = expires_at.astimezone(UTC)
+        return expires_at > now
 
     @staticmethod
     def _normalise_idempotency_key(key: str | None) -> str | None:
