@@ -45,6 +45,8 @@ Phase constraints:
 - self-service DSR submission only (`requester_user_id == subject_user_id`);
 - DSR submission payload accepts `request_type` only;
 - no unrestricted requester free-text notes in PR-2;
+- platform fulfilment is guarded: export requests require a ready, non-expired
+  export artifact before they can be marked fulfilled;
 - export artifact payload currently contains a minimal metadata-only JSON ZIP, not full cross-table subject data coverage.
 
 ## Platform API
@@ -116,7 +118,17 @@ Supported export artifact statuses:
 - expired
 - cancelled
 
-Current platform fulfil flow allows fulfilment only for approved DSRs. A later execution-architecture slice should further separate administrative approval, worker execution, delivery readiness, and final fulfilment.
+Current platform fulfil flow allows fulfilment only for approved DSRs and now
+requires execution evidence before final fulfilment:
+- export DSRs require at least one ready, non-expired export artifact;
+- erasure, rectification, restriction, objection, access, and portability DSRs
+  are blocked from fulfilment until their execution pipelines exist.
+
+A later execution-architecture slice should still introduce first-class worker
+execution records, retry state, partial fulfilment, and delivery evidence.
+Ready, non-expired export artifacts remain downloadable after their parent
+export DSR moves from `approved` to `fulfilled`; fulfilment records that the
+artifact is ready, not that the requester has already downloaded it.
 
 ## Export artifacts
 
@@ -126,6 +138,7 @@ Current behaviour:
 - platform users with `gdpr:export` can create a queued export artifact for an approved export DSR;
 - the worker command claims queued artifacts and generates a minimal JSON ZIP archive;
 - local storage is intended for development and tests only;
+- ready artifacts remain downloadable after export DSR fulfilment until expiry;
 - local download URLs are short-lived and HMAC-signed;
 - API responses do not expose storage keys, local filesystem paths, processing tokens, or raw export payloads;
 - audit metadata is minimised and does not include export payloads, signed URLs, or storage paths.
@@ -139,7 +152,7 @@ Not implemented in this phase:
 - production HTTP/S3 download flow;
 - erasure/anonymisation execution;
 - retention purge runner that deletes expired objects from storage;
-- DSR execution state machine that separates approval, worker execution, delivery readiness, and fulfilment;
+- full DSR worker execution state machine with retry/partial-failure handling;
 - authorised representative flows;
 - PDF/CSV export formats;
 - frontend/UI.

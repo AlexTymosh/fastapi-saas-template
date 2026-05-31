@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select
@@ -10,6 +11,12 @@ from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
+)
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
 )
 from app.users.services.users import UserService
 from tests.helpers.asyncio_runner import run_async
@@ -55,6 +62,39 @@ def _count_requests(session_factory) -> int:
             )
 
     return run_async(_run())
+
+
+def _create_ready_export_artifact_for_dsr(
+    session_factory, *, request_id, user_id
+) -> None:
+    async def _run():
+        request_uuid = (
+            request_id if isinstance(request_id, UUID) else UUID(str(request_id))
+        )
+        user_uuid = user_id if isinstance(user_id, UUID) else UUID(str(user_id))
+
+        async with session_factory() as session:
+            async with session.begin():
+                artifact = ExportArtifact(
+                    data_subject_request_id=request_uuid,
+                    requester_user_id=user_uuid,
+                    subject_user_id=user_uuid,
+                    status=ExportArtifactStatus.READY.value,
+                    format=ExportArtifactFormat.JSON_ZIP.value,
+                    storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                    storage_key=f"exports/{request_uuid}/ready.zip",
+                    filename="privacy-export.zip",
+                    content_type="application/zip",
+                    size_bytes=123,
+                    checksum_sha256="a" * 64,
+                    schema_version="1.0",
+                    queued_at=datetime.now(UTC),
+                    completed_at=datetime.now(UTC),
+                    expires_at=datetime.now(UTC) + timedelta(days=30),
+                )
+                session.add(artifact)
+
+    run_async(_run())
 
 
 def test_unauthenticated_user_cannot_submit_dsr(
@@ -269,12 +309,22 @@ def test_platform_permissions_and_review_lifecycle(
         ).status_code
         == 200
     )
-    assert (
-        compliance_client.client.post(
-            f"/api/v1/platform/privacy/data-subject-requests/{rid}/fulfil", json={}
-        ).status_code
-        == 200
+    premature_fulfilment = compliance_client.client.post(
+        f"/api/v1/platform/privacy/data-subject-requests/{rid}/fulfil", json={}
     )
+    assert premature_fulfilment.status_code == 409
+    assert "ready" in premature_fulfilment.text.lower()
+
+    _create_ready_export_artifact_for_dsr(
+        migrated_session_factory,
+        request_id=rid,
+        user_id=submitter.id,
+    )
+    fulfilled = compliance_client.client.post(
+        f"/api/v1/platform/privacy/data-subject-requests/{rid}/fulfil", json={}
+    )
+    assert fulfilled.status_code == 200
+    assert fulfilled.json()["status"] == DataSubjectRequestStatus.FULFILLED.value
 
     # JWT roles must not elevate without local platform_staff role mapping.
     jwt_only = authenticated_client_factory(
