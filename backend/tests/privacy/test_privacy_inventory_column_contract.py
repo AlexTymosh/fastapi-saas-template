@@ -37,6 +37,9 @@ _SUBJECT_OR_JOIN_FIELDS_BY_TABLE = {
         "reviewer_user_id",
         "requester_note",
         "internal_note",
+        "idempotency_key_hash",
+        "idempotency_fingerprint",
+        "idempotency_key_expires_at",
     },
     "export_artifacts": {
         "subject_user_id",
@@ -71,14 +74,27 @@ _HIGH_RISK_EXACT_COLUMN_NAMES = {
     "requester_note",
     "internal_note",
     "suspended_reason",
+    "idempotency_key_hash",
+    "idempotency_fingerprint",
+    "idempotency_key_expires_at",
 }
-_HIGH_RISK_SUFFIXES = ("_token", "_secret", "_password", "_passwd")
+_HIGH_RISK_NAME_FRAGMENTS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "idempotency",
+)
 _SENSITIVE_NON_EXPORT_COLUMNS = {
     "token_hash",
     "payload_json",
     "last_error",
     "storage_key",
     "processing_token",
+    "idempotency_key_hash",
+    "idempotency_fingerprint",
+    "idempotency_key_expires_at",
 }
 _SENSITIVE_NON_EXPORT_ACTIONS = {
     PrivacyFieldErasureAction.DELETE,
@@ -91,6 +107,9 @@ _SENSITIVE_COLUMN_ALLOWED_CLASSIFICATIONS = {
     "payload_json": {PrivacyFieldClassification.STRUCTURED_METADATA},
     "last_error": {PrivacyFieldClassification.OPERATIONAL_REASON},
     "storage_key": {PrivacyFieldClassification.INDIRECT_IDENTIFIER},
+    "idempotency_key_hash": {PrivacyFieldClassification.SECRET_OR_TOKEN},
+    "idempotency_fingerprint": {PrivacyFieldClassification.STRUCTURED_METADATA},
+    "idempotency_key_expires_at": {PrivacyFieldClassification.LIFECYCLE},
 }
 
 
@@ -108,8 +127,8 @@ def _declared_field_names(entry: PrivacyTableInventoryEntry) -> set[str]:
 
 
 def _is_high_risk_column(column_name: str) -> bool:
-    return column_name in _HIGH_RISK_EXACT_COLUMN_NAMES or column_name.endswith(
-        _HIGH_RISK_SUFFIXES
+    return column_name in _HIGH_RISK_EXACT_COLUMN_NAMES or any(
+        fragment in column_name for fragment in _HIGH_RISK_NAME_FRAGMENTS
     )
 
 
