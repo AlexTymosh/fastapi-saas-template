@@ -126,6 +126,9 @@ requires execution evidence before final fulfilment:
 
 A later execution-architecture slice should still introduce first-class worker
 execution records, retry state, partial fulfilment, and delivery evidence.
+Ready, non-expired export artifacts remain downloadable after their parent
+export DSR moves from `approved` to `fulfilled`; fulfilment records that the
+artifact is ready, not that the requester has already downloaded it.
 
 ## Export artifacts
 
@@ -135,6 +138,7 @@ Current behaviour:
 - platform users with `gdpr:export` can create a queued export artifact for an approved export DSR;
 - the worker command claims queued artifacts and generates a minimal JSON ZIP archive;
 - local storage is intended for development and tests only;
+- ready artifacts remain downloadable after export DSR fulfilment until expiry;
 - local download URLs are short-lived and HMAC-signed;
 - API responses do not expose storage keys, local filesystem paths, processing tokens, or raw export payloads;
 - audit metadata is minimised and does not include export payloads, signed URLs, or storage paths.

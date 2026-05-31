@@ -234,6 +234,37 @@ def test_user_can_create_download_url_for_own_ready_artifact(
     assert body["expires_in_seconds"] > 0
 
 
+def test_user_can_create_download_url_for_fulfilled_export_dsr(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _enable_privacy_exports(monkeypatch, tmp_path)
+    user = _provision_user(
+        migrated_session_factory,
+        "kc-export-download-fulfilled",
+        "export-download-fulfilled@example.com",
+    )
+    artifact_id = _create_ready_artifact(
+        migrated_session_factory,
+        user,
+        dsr_status="fulfilled",
+    )
+    client = authenticated_client_factory(
+        identity=identity_for(user.external_auth_id, user.email),
+        database_url=migrated_database_url,
+    )
+
+    response = client.client.post(
+        f"/api/v1/privacy/export-artifacts/{artifact_id}/download-url"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["url"].startswith("local://privacy-export/")
+
+
 def test_user_download_url_ttl_is_clamped_to_artifact_remaining_lifetime(
     authenticated_client_factory,
     migrated_database_url,
@@ -413,3 +444,40 @@ def test_platform_export_artifact_permissions(
     )
     assert created.status_code == 200
     assert created.json()["status"] == ExportArtifactStatus.QUEUED.value
+
+
+def test_platform_can_create_download_url_for_fulfilled_export_dsr(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _enable_privacy_exports(monkeypatch, tmp_path)
+    compliance = _provision_platform_actor(
+        migrated_session_factory,
+        "kc-export-download-fulfilled-compliance",
+        "export-download-fulfilled-compliance@example.com",
+        PlatformRole.COMPLIANCE_OFFICER,
+    )
+    subject = _provision_user(
+        migrated_session_factory,
+        "kc-export-download-fulfilled-subject",
+        "export-download-fulfilled-subject@example.com",
+    )
+    artifact_id = _create_ready_artifact(
+        migrated_session_factory,
+        subject,
+        dsr_status="fulfilled",
+    )
+    compliance_client = authenticated_client_factory(
+        identity=identity_for(compliance.external_auth_id, compliance.email),
+        database_url=migrated_database_url,
+    )
+
+    response = compliance_client.client.post(
+        f"/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["url"].startswith("local://privacy-export/")

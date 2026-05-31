@@ -32,6 +32,12 @@ from app.privacy.repositories.export_artifacts import ExportArtifactRepository
 from app.privacy.storage.local import LocalStorageAdapter
 
 DEFAULT_PROCESSING_LEASE_SECONDS = 3600
+_DOWNLOAD_ELIGIBLE_DSR_STATUSES = frozenset(
+    {
+        DataSubjectRequestStatus.APPROVED.value,
+        DataSubjectRequestStatus.FULFILLED.value,
+    }
+)
 
 
 def _ensure_aware_utc(value: datetime) -> datetime:
@@ -92,7 +98,7 @@ class ExportArtifactService:
         if (
             dsr is None
             or dsr.request_type != DataSubjectRequestType.EXPORT.value
-            or dsr.status != DataSubjectRequestStatus.APPROVED.value
+            or dsr.status not in _DOWNLOAD_ELIGIBLE_DSR_STATUSES
         ):
             raise ConflictError(
                 detail="Export artifact is no longer eligible for download"
