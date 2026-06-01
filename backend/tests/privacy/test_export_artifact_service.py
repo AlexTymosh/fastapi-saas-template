@@ -240,16 +240,17 @@ def test_recover_stale_processing_preserves_completed_dsr_execution_state(
             leases = await service.claim_queued_artifact_leases(batch_size=1)
             assert len(leases) == 1
 
-            completed_at = datetime.now(UTC)
             stale_artifact = await service.repo.get_by_id(stale_artifact.id)
             assert stale_artifact is not None
-            stale_artifact.queued_at = completed_at - timedelta(minutes=10)
-            stale_artifact.started_at = completed_at - timedelta(minutes=9)
-            stale_artifact.processing_lease_expires_at = completed_at - timedelta(
-                minutes=8
+            stale_started_at = datetime.now(UTC) - timedelta(minutes=10)
+            stale_artifact.queued_at = stale_started_at - timedelta(minutes=1)
+            stale_artifact.started_at = stale_started_at
+            stale_artifact.processing_lease_expires_at = datetime.now(UTC) - timedelta(
+                seconds=1
             )
             await service.repo.save(stale_artifact)
 
+            completed_at = datetime.now(UTC)
             await service.repo.create(
                 data_subject_request_id=dsr.id,
                 subject_user_id=dsr.subject_user_id,
@@ -265,8 +266,8 @@ def test_recover_stale_processing_preserves_completed_dsr_execution_state(
                 content_type="application/zip",
                 size_bytes=1,
                 checksum_sha256="0" * 64,
-                queued_at=completed_at - timedelta(minutes=5),
-                started_at=completed_at - timedelta(minutes=4),
+                queued_at=completed_at - timedelta(minutes=2),
+                started_at=completed_at - timedelta(minutes=1),
                 completed_at=completed_at,
                 expires_at=completed_at + timedelta(days=1),
                 downloaded_at=(
@@ -344,6 +345,107 @@ def test_recover_stale_processing_respects_newer_export_run(
             recovered = await service.recover_stale_processing_artifacts(limit=10)
 
             assert recovered == 1
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.QUEUED.value
+            )
+            assert persisted.execution_completed_at is None
+            assert persisted.execution_failed_at is None
+            assert persisted.execution_failure_reason_code is None
+            assert persisted.execution_failure_detail is None
+
+    run_async(_run())
+
+
+def test_old_ready_download_does_not_overwrite_newer_queued_run(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            old_artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            old_artifact.status = ExportArtifactStatus.READY.value
+            old_artifact.storage_key = f"exports/{old_artifact.id}/artifact.zip"
+            old_artifact.completed_at = datetime.now(UTC) - timedelta(minutes=2)
+            old_artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            service.storage.put_bytes(
+                old_artifact.storage_key,
+                b"payload",
+                "application/zip",
+            )
+            await service.repo.save(old_artifact)
+
+            await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            download = await service.generate_download_url(
+                artifact=old_artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            assert 0 < download.expires_in_seconds <= 60
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.QUEUED.value
+            )
+            assert persisted.execution_completed_at is None
+            assert persisted.execution_failed_at is None
+            assert persisted.execution_failure_reason_code is None
+            assert persisted.execution_failure_detail is None
+
+    run_async(_run())
+
+
+def test_old_processing_completion_does_not_overwrite_newer_queued_run(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            old_artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            leases = await service.claim_queued_artifact_leases(batch_size=1)
+            assert len(leases) == 1
+
+            await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            old_artifact = await service.repo.get_by_id(old_artifact.id)
+            assert old_artifact is not None
+
+            ready = await service.generate_export_artifact(
+                artifact=old_artifact,
+                generated_by_user_id=user.id,
+                processing_token=leases[0].processing_token,
+            )
+
+            assert ready.status == ExportArtifactStatus.READY.value
             persisted = await service.dsr_repo.get_by_id(dsr.id)
             assert persisted is not None
             assert (

@@ -114,11 +114,24 @@ class ExportArtifactService:
         failure_reason_code: str | None = None,
         failure_detail: str | None = None,
     ) -> None:
+        reference_now = _ensure_aware_utc(event_at or datetime.now(UTC))
+        latest_artifact = await self._latest_export_artifact_for_dsr(
+            artifact.data_subject_request_id
+        )
+        if latest_artifact is not None and latest_artifact.id != artifact.id:
+            (
+                execution_status,
+                event_at,
+                failure_reason_code,
+                failure_detail,
+            ) = await self._execution_state_for_dsr(latest_artifact, now=reference_now)
+            artifact = latest_artifact
+            reference_now = _ensure_aware_utc(event_at or reference_now)
+
         dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
         if dsr is None or dsr.request_type != DataSubjectRequestType.EXPORT.value:
             return
 
-        reference_now = _ensure_aware_utc(event_at or datetime.now(UTC))
         dsr.execution_status = execution_status.value
 
         if execution_status is DataSubjectRequestExecutionStatus.QUEUED:
@@ -157,6 +170,21 @@ class ExportArtifactService:
 
         await self.dsr_repo.save(dsr)
 
+    async def _latest_export_artifact_for_dsr(
+        self, data_subject_request_id: UUID
+    ) -> ExportArtifact | None:
+        artifacts = await self.repo.get_by_dsr_id(data_subject_request_id)
+        latest_artifact: ExportArtifact | None = None
+        latest_queued_at: datetime | None = None
+
+        for candidate in artifacts:
+            candidate_queued_at = _ensure_aware_utc(candidate.queued_at)
+            if latest_queued_at is None or candidate_queued_at > latest_queued_at:
+                latest_artifact = candidate
+                latest_queued_at = candidate_queued_at
+
+        return latest_artifact
+
     async def _execution_state_for_dsr(
         self,
         artifact: ExportArtifact,
@@ -168,16 +196,9 @@ class ExportArtifactService:
         str | None,
         str | None,
     ]:
-        artifacts = await self.repo.get_by_dsr_id(artifact.data_subject_request_id)
-        latest_artifact: ExportArtifact | None = None
-        latest_queued_at: datetime | None = None
-
-        for candidate in artifacts:
-            candidate_queued_at = _ensure_aware_utc(candidate.queued_at)
-            if latest_queued_at is None or candidate_queued_at > latest_queued_at:
-                latest_artifact = candidate
-                latest_queued_at = candidate_queued_at
-
+        latest_artifact = await self._latest_export_artifact_for_dsr(
+            artifact.data_subject_request_id
+        )
         if latest_artifact is None:
             return DataSubjectRequestExecutionStatus.NOT_STARTED, now, None, None
 
