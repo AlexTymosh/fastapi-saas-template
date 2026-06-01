@@ -138,6 +138,46 @@ def test_request_export_artifact_marks_dsr_execution_queued(
     run_async(_run())
 
 
+def test_request_export_artifact_clears_stale_completion_when_requeued(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            stale_time = datetime.now(UTC) - timedelta(days=1)
+            dsr.execution_status = DataSubjectRequestExecutionStatus.DELIVERED.value
+            dsr.execution_started_at = stale_time
+            dsr.execution_completed_at = stale_time
+            dsr.execution_failed_at = stale_time
+            dsr.execution_failure_reason_code = "old_failure"
+            dsr.execution_failure_detail = "Old failure detail"
+            service = ExportArtifactService(session)
+
+            await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.QUEUED.value
+            )
+            assert persisted.execution_started_at is None
+            assert persisted.execution_completed_at is None
+            assert persisted.execution_failed_at is None
+            assert persisted.execution_failure_reason_code is None
+            assert persisted.execution_failure_detail is None
+
+    run_async(_run())
+
+
 def test_claim_queued_artifact_marks_dsr_execution_processing(
     migrated_session_factory,
 ):

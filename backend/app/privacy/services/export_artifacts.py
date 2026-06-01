@@ -121,30 +121,38 @@ class ExportArtifactService:
         reference_now = _ensure_aware_utc(event_at or datetime.now(UTC))
         dsr.execution_status = execution_status.value
 
-        if execution_status is DataSubjectRequestExecutionStatus.PROCESSING:
-            if dsr.execution_started_at is None:
-                dsr.execution_started_at = reference_now
-
-        if execution_status is DataSubjectRequestExecutionStatus.READY:
-            dsr.execution_completed_at = reference_now
-
-        if execution_status is DataSubjectRequestExecutionStatus.FAILED:
-            dsr.execution_failed_at = reference_now
-            dsr.execution_failure_reason_code = failure_reason_code
-            dsr.execution_failure_detail = failure_detail
-        elif execution_status in {
-            DataSubjectRequestExecutionStatus.QUEUED,
-            DataSubjectRequestExecutionStatus.PROCESSING,
-            DataSubjectRequestExecutionStatus.READY,
-            DataSubjectRequestExecutionStatus.DELIVERED,
-        }:
+        if execution_status is DataSubjectRequestExecutionStatus.QUEUED:
+            dsr.execution_started_at = None
+            dsr.execution_completed_at = None
             dsr.execution_failed_at = None
             dsr.execution_failure_reason_code = None
             dsr.execution_failure_detail = None
 
-        if execution_status is DataSubjectRequestExecutionStatus.DELIVERED:
+        elif execution_status is DataSubjectRequestExecutionStatus.PROCESSING:
+            if dsr.execution_started_at is None:
+                dsr.execution_started_at = reference_now
+            dsr.execution_completed_at = None
+            dsr.execution_failed_at = None
+            dsr.execution_failure_reason_code = None
+            dsr.execution_failure_detail = None
+
+        elif execution_status is DataSubjectRequestExecutionStatus.READY:
+            dsr.execution_completed_at = reference_now
+            dsr.execution_failed_at = None
+            dsr.execution_failure_reason_code = None
+            dsr.execution_failure_detail = None
+
+        elif execution_status is DataSubjectRequestExecutionStatus.FAILED:
+            dsr.execution_failed_at = reference_now
+            dsr.execution_failure_reason_code = failure_reason_code
+            dsr.execution_failure_detail = failure_detail
+
+        elif execution_status is DataSubjectRequestExecutionStatus.DELIVERED:
             if dsr.execution_completed_at is None:
                 dsr.execution_completed_at = reference_now
+            dsr.execution_failed_at = None
+            dsr.execution_failure_reason_code = None
+            dsr.execution_failure_detail = None
 
         await self.dsr_repo.save(dsr)
 
