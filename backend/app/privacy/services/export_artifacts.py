@@ -18,6 +18,7 @@ from app.core.errors import ConflictError, NotFoundError
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.minimal import MinimalSubjectDataExporter
 from app.privacy.models.data_subject_request import (
+    DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
@@ -104,6 +105,166 @@ class ExportArtifactService:
                 detail="Export artifact is no longer eligible for download"
             )
 
+    async def _sync_export_dsr_execution_state(
+        self,
+        artifact: ExportArtifact,
+        *,
+        execution_status: DataSubjectRequestExecutionStatus,
+        event_at: datetime | None = None,
+        failure_reason_code: str | None = None,
+        failure_detail: str | None = None,
+    ) -> None:
+        reference_now = _ensure_aware_utc(event_at or datetime.now(UTC))
+        latest_artifact = await self._latest_export_artifact_for_dsr(
+            artifact.data_subject_request_id
+        )
+        if latest_artifact is not None and latest_artifact.id != artifact.id:
+            (
+                execution_status,
+                event_at,
+                failure_reason_code,
+                failure_detail,
+            ) = await self._execution_state_for_dsr(latest_artifact, now=reference_now)
+            artifact = latest_artifact
+            reference_now = _ensure_aware_utc(event_at or reference_now)
+
+        dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
+        if dsr is None or dsr.request_type != DataSubjectRequestType.EXPORT.value:
+            return
+
+        dsr.execution_status = execution_status.value
+
+        if execution_status is DataSubjectRequestExecutionStatus.QUEUED:
+            dsr.execution_started_at = None
+            dsr.execution_completed_at = None
+            dsr.execution_failed_at = None
+            dsr.execution_failure_reason_code = None
+            dsr.execution_failure_detail = None
+
+        elif execution_status is DataSubjectRequestExecutionStatus.PROCESSING:
+            if dsr.execution_started_at is None:
+                dsr.execution_started_at = reference_now
+            dsr.execution_completed_at = None
+            dsr.execution_failed_at = None
+            dsr.execution_failure_reason_code = None
+            dsr.execution_failure_detail = None
+
+        elif execution_status is DataSubjectRequestExecutionStatus.READY:
+            dsr.execution_completed_at = reference_now
+            dsr.execution_failed_at = None
+            dsr.execution_failure_reason_code = None
+            dsr.execution_failure_detail = None
+
+        elif execution_status is DataSubjectRequestExecutionStatus.FAILED:
+            dsr.execution_completed_at = None
+            dsr.execution_failed_at = reference_now
+            dsr.execution_failure_reason_code = failure_reason_code
+            dsr.execution_failure_detail = failure_detail
+
+        elif execution_status is DataSubjectRequestExecutionStatus.DELIVERED:
+            if dsr.execution_completed_at is None:
+                dsr.execution_completed_at = reference_now
+            dsr.execution_failed_at = None
+            dsr.execution_failure_reason_code = None
+            dsr.execution_failure_detail = None
+
+        await self.dsr_repo.save(dsr)
+
+    async def _latest_export_artifact_for_dsr(
+        self, data_subject_request_id: UUID
+    ) -> ExportArtifact | None:
+        artifacts = await self.repo.get_by_dsr_id(data_subject_request_id)
+        latest_artifact: ExportArtifact | None = None
+        latest_queued_at: datetime | None = None
+
+        for candidate in artifacts:
+            candidate_queued_at = _ensure_aware_utc(candidate.queued_at)
+            if latest_queued_at is None or candidate_queued_at > latest_queued_at:
+                latest_artifact = candidate
+                latest_queued_at = candidate_queued_at
+
+        return latest_artifact
+
+    async def _execution_state_for_dsr(
+        self,
+        artifact: ExportArtifact,
+        *,
+        now: datetime,
+    ) -> tuple[
+        DataSubjectRequestExecutionStatus,
+        datetime | None,
+        str | None,
+        str | None,
+    ]:
+        latest_artifact = await self._latest_export_artifact_for_dsr(
+            artifact.data_subject_request_id
+        )
+        if latest_artifact is None:
+            return DataSubjectRequestExecutionStatus.NOT_STARTED, now, None, None
+
+        candidate = latest_artifact
+        event_at: datetime | None
+
+        if candidate.downloaded_at is not None or candidate.download_count > 0:
+            event_at = candidate.downloaded_at or candidate.completed_at or now
+            return (
+                DataSubjectRequestExecutionStatus.DELIVERED,
+                _ensure_aware_utc(event_at),
+                None,
+                None,
+            )
+
+        if candidate.status == ExportArtifactStatus.READY.value:
+            expires_at = _ensure_aware_utc(candidate.expires_at)
+            if expires_at > now:
+                event_at = _ensure_aware_utc(candidate.completed_at or now)
+                return DataSubjectRequestExecutionStatus.READY, event_at, None, None
+            return (
+                DataSubjectRequestExecutionStatus.FAILED,
+                expires_at,
+                "artifact_expired",
+                "Export artifact expired before delivery",
+            )
+
+        if candidate.status == ExportArtifactStatus.PROCESSING.value:
+            lease_expires_at = candidate.processing_lease_expires_at
+            if lease_expires_at is not None:
+                lease_expires_at = _ensure_aware_utc(lease_expires_at)
+            if lease_expires_at is not None and lease_expires_at > now:
+                event_at = _ensure_aware_utc(candidate.started_at or now)
+                return (
+                    DataSubjectRequestExecutionStatus.PROCESSING,
+                    event_at,
+                    None,
+                    None,
+                )
+            event_at = _ensure_aware_utc(candidate.queued_at)
+            return DataSubjectRequestExecutionStatus.QUEUED, event_at, None, None
+
+        if candidate.status == ExportArtifactStatus.QUEUED.value:
+            event_at = _ensure_aware_utc(candidate.queued_at)
+            return DataSubjectRequestExecutionStatus.QUEUED, event_at, None, None
+
+        if candidate.status == ExportArtifactStatus.EXPIRED.value:
+            expires_at = _ensure_aware_utc(candidate.expires_at)
+            return (
+                DataSubjectRequestExecutionStatus.FAILED,
+                expires_at,
+                "artifact_expired",
+                "Export artifact expired before delivery",
+            )
+
+        if candidate.status == ExportArtifactStatus.FAILED.value:
+            event_at = candidate.failed_at or candidate.started_at or now
+            return (
+                DataSubjectRequestExecutionStatus.FAILED,
+                _ensure_aware_utc(event_at),
+                candidate.failure_reason_code,
+                candidate.failure_detail,
+            )
+
+        return DataSubjectRequestExecutionStatus.NOT_STARTED, now, None, None
+
     async def request_export_artifact(
         self,
         *,
@@ -126,6 +287,7 @@ class ExportArtifactService:
                 )
             )
 
+        queued_at = datetime.now(UTC)
         artifact = await self.repo.create(
             data_subject_request_id=dsr.id,
             subject_user_id=dsr.subject_user_id,
@@ -135,9 +297,14 @@ class ExportArtifactService:
             storage_backend=ExportArtifactStorageBackend.LOCAL.value,
             schema_version=self.settings.privacy_exports.schema_version,
             requested_by_user_id=requested_by_user_id,
-            queued_at=datetime.now(UTC),
-            expires_at=datetime.now(UTC)
+            queued_at=queued_at,
+            expires_at=queued_at
             + timedelta(days=self.settings.privacy_exports.artifact_retention_days),
+        )
+        await self._sync_export_dsr_execution_state(
+            artifact,
+            execution_status=DataSubjectRequestExecutionStatus.QUEUED,
+            event_at=queued_at,
         )
         await self._record_event(
             audit_context, AuditAction.EXPORT_ARTIFACT_REQUESTED, artifact
@@ -202,7 +369,12 @@ class ExportArtifactService:
         url = self.storage.generate_download_url(
             artifact.storage_key, effective_ttl_seconds
         )
-        await self.repo.increment_download_count(artifact)
+        updated_artifact = await self.repo.increment_download_count(artifact)
+        await self._sync_export_dsr_execution_state(
+            updated_artifact,
+            execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
+            event_at=updated_artifact.downloaded_at,
+        )
         await self._record_event(
             audit_context, AuditAction.EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED, artifact
         )
@@ -225,6 +397,12 @@ class ExportArtifactService:
         rows = await self.repo.claim_queued_batch(
             batch_size, lease_seconds=DEFAULT_PROCESSING_LEASE_SECONDS
         )
+        for row in rows:
+            await self._sync_export_dsr_execution_state(
+                row,
+                execution_status=DataSubjectRequestExecutionStatus.PROCESSING,
+                event_at=row.started_at,
+            )
         return [
             ProcessingExportLease(
                 artifact_id=row.id, processing_token=row.processing_token
@@ -247,6 +425,20 @@ class ExportArtifactService:
     async def recover_stale_processing_artifacts(self, *, limit: int) -> int:
         now = datetime.now(UTC)
         recovered = await self.repo.recover_stale_processing(now=now, limit=limit)
+        for artifact in recovered:
+            (
+                execution_status,
+                event_at,
+                failure_reason_code,
+                failure_detail,
+            ) = await self._execution_state_for_dsr(artifact, now=now)
+            await self._sync_export_dsr_execution_state(
+                artifact,
+                execution_status=execution_status,
+                event_at=event_at,
+                failure_reason_code=failure_reason_code,
+                failure_detail=failure_detail,
+            )
         return len(recovered)
 
     async def claim_and_generate_next_batch(
@@ -277,13 +469,19 @@ class ExportArtifactService:
         token = processing_token or artifact.processing_token
         if token is None:
             token = str(uuid4())
+            now = datetime.now(UTC)
             artifact.processing_token = token
-            artifact.processing_lease_expires_at = datetime.now(UTC) + timedelta(
+            artifact.processing_lease_expires_at = now + timedelta(
                 seconds=DEFAULT_PROCESSING_LEASE_SECONDS
             )
             if artifact.started_at is None:
-                artifact.started_at = datetime.now(UTC)
+                artifact.started_at = now
             await self.repo.save(artifact)
+            await self._sync_export_dsr_execution_state(
+                artifact,
+                execution_status=DataSubjectRequestExecutionStatus.PROCESSING,
+                event_at=artifact.started_at,
+            )
 
         try:
             prepared = await self.prepare_export_archive(
@@ -400,6 +598,11 @@ class ExportArtifactService:
         artifact.checksum_sha256 = prepared.checksum_sha256
         artifact.generated_by_user_id = generated_by_user_id
         ready = await self.repo.mark_ready(artifact)
+        await self._sync_export_dsr_execution_state(
+            ready,
+            execution_status=DataSubjectRequestExecutionStatus.READY,
+            event_at=ready.completed_at,
+        )
         await self._record_event(
             AuditContext(actor_user_id=generated_by_user_id),
             AuditAction.EXPORT_ARTIFACT_GENERATED,
@@ -432,6 +635,13 @@ class ExportArtifactService:
         failed = await self.repo.mark_failed(
             artifact, reason_code=code, detail="Export generation failed"
         )
+        await self._sync_export_dsr_execution_state(
+            failed,
+            execution_status=DataSubjectRequestExecutionStatus.FAILED,
+            event_at=failed.failed_at,
+            failure_reason_code=code,
+            failure_detail=failed.failure_detail,
+        )
         await self._record_event(
             AuditContext(actor_user_id=generated_by_user_id),
             AuditAction.EXPORT_ARTIFACT_FAILED,
@@ -444,12 +654,25 @@ class ExportArtifactService:
         candidates = await self.repo.list_expired_ready(now=now_value, limit=1000)
         expired = 0
         for artifact in candidates:
-            await self.repo.mark_expired(artifact)
+            expired_artifact = await self.repo.mark_expired(artifact)
             expired += 1
+            (
+                execution_status,
+                event_at,
+                failure_reason_code,
+                failure_detail,
+            ) = await self._execution_state_for_dsr(expired_artifact, now=now_value)
+            await self._sync_export_dsr_execution_state(
+                expired_artifact,
+                execution_status=execution_status,
+                event_at=event_at,
+                failure_reason_code=failure_reason_code,
+                failure_detail=failure_detail,
+            )
             await self._record_event(
                 AuditContext(actor_user_id=None),
                 AuditAction.EXPORT_ARTIFACT_EXPIRED,
-                artifact,
+                expired_artifact,
             )
         return expired
 

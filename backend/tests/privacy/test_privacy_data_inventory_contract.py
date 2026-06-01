@@ -92,6 +92,11 @@ def test_dsr_workflow_inventory_exports_lifecycle_context() -> None:
     expected_exported_fields = {
         "request_type",
         "status",
+        "execution_status",
+        "execution_started_at",
+        "execution_completed_at",
+        "execution_failed_at",
+        "execution_failure_reason_code",
         "submitted_at",
         "acknowledged_at",
         "reviewed_at",
@@ -110,6 +115,11 @@ def test_dsr_workflow_inventory_exports_lifecycle_context() -> None:
 
     assert dsr_fields["request_type"].classification.name == "LIFECYCLE"
     assert dsr_fields["status"].classification.name == "LIFECYCLE"
+    assert dsr_fields["execution_status"].classification.name == "LIFECYCLE"
+    assert dsr_fields["execution_failure_detail"].export is False
+    assert (
+        dsr_fields["execution_failure_detail"].erasure_action.name == "REVIEW_REQUIRED"
+    )
     assert dsr_fields["due_at"].classification.name == "LIFECYCLE"
     assert dsr_fields["decision_reason_code"].erasure_action.name == (
         "RETAIN_MINIMISED"

@@ -13,6 +13,7 @@ from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.core.errors import BadRequestError, ConflictError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
+    DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
 )
 from app.privacy.models.export_artifact import (
@@ -109,6 +110,10 @@ def test_submit_request_calculates_due_and_self_subject(
             assert request.requester_user_id == user.id
             assert request.subject_user_id == user.id
             assert request.status == DataSubjectRequestStatus.SUBMITTED.value
+            assert (
+                request.execution_status
+                == DataSubjectRequestExecutionStatus.NOT_STARTED.value
+            )
             expected_due = now + timedelta(days=service.DEFAULT_DUE_DAYS)
             assert request.due_at.replace(tzinfo=UTC) == expected_due
 

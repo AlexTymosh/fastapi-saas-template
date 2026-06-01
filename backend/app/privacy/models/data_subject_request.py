@@ -31,8 +31,21 @@ class DataSubjectRequestStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class DataSubjectRequestExecutionStatus(StrEnum):
+    NOT_STARTED = "not_started"
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+    PARTIALLY_FULFILLED = "partially_fulfilled"
+    DELIVERED = "delivered"
+
+
 _REQUEST_TYPE_VALUES = ", ".join(repr(item.value) for item in DataSubjectRequestType)
 _STATUS_VALUES = ", ".join(repr(item.value) for item in DataSubjectRequestStatus)
+_EXECUTION_STATUS_VALUES = ", ".join(
+    repr(item.value) for item in DataSubjectRequestExecutionStatus
+)
 
 
 class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
@@ -46,6 +59,10 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
             f"status IN ({_STATUS_VALUES})",
             name="data_subject_requests_status_valid",
         ),
+        CheckConstraint(
+            f"execution_status IN ({_EXECUTION_STATUS_VALUES})",
+            name="data_subject_requests_execution_status_valid",
+        ),
         Index(
             "ix_data_subject_requests_subject_status_created",
             "subject_user_id",
@@ -58,6 +75,11 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
             "created_at",
         ),
         Index("ix_data_subject_requests_status_due", "status", "due_at"),
+        Index(
+            "ix_data_subject_requests_execution_status_due",
+            "execution_status",
+            "due_at",
+        ),
         Index("ix_data_subject_requests_type_status", "request_type", "status"),
         Index(
             "ix_data_subject_requests_idempotency_key_hash",
@@ -75,6 +97,12 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         default=DataSubjectRequestStatus.SUBMITTED.value,
         server_default=sa.text("'submitted'"),
+    )
+    execution_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=DataSubjectRequestExecutionStatus.NOT_STARTED.value,
+        server_default=sa.text("'not_started'"),
     )
 
     requester_user_id: Mapped[UUID | None] = mapped_column(
@@ -109,6 +137,22 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
     )
     cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    execution_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    execution_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    execution_failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    execution_failure_reason_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    execution_failure_detail: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
     )
 
     decision_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

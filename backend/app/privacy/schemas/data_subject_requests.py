@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason_payload
 from app.privacy.models.data_subject_request import (
+    DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
@@ -22,6 +23,11 @@ class DataSubjectRequestResponse(BaseModel):
     id: UUID
     request_type: DataSubjectRequestType
     status: DataSubjectRequestStatus
+    execution_status: DataSubjectRequestExecutionStatus
+    execution_started_at: datetime | None
+    execution_completed_at: datetime | None
+    execution_failed_at: datetime | None
+    execution_failure_reason_code: str | None
     requester_user_id: UUID | None
     subject_user_id: UUID | None
     submitted_at: datetime
@@ -56,6 +62,11 @@ class PlatformDataSubjectRequestResponse(BaseModel):
     id: UUID
     request_type: DataSubjectRequestType
     status: DataSubjectRequestStatus
+    execution_status: DataSubjectRequestExecutionStatus
+    execution_started_at: datetime | None
+    execution_completed_at: datetime | None
+    execution_failed_at: datetime | None
+    execution_failure_reason_code: str | None
     requester_user_id: UUID | None
     subject_user_id: UUID | None
     reviewer_user_id: UUID | None
