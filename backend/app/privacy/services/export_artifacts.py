@@ -169,89 +169,79 @@ class ExportArtifactService:
         str | None,
     ]:
         artifacts = await self.repo.get_by_dsr_id(artifact.data_subject_request_id)
-        delivered_at: datetime | None = None
-        ready_at: datetime | None = None
-        processing_at: datetime | None = None
-        queued_at: datetime | None = None
-        failed_at: datetime | None = None
-        failure_reason_code: str | None = None
-        failure_detail: str | None = None
+        latest_artifact: ExportArtifact | None = None
+        latest_queued_at: datetime | None = None
 
         for candidate in artifacts:
-            if candidate.downloaded_at is not None or candidate.download_count > 0:
-                event_at = candidate.downloaded_at or candidate.completed_at or now
-                event_at = _ensure_aware_utc(event_at)
-                if delivered_at is None or event_at > delivered_at:
-                    delivered_at = event_at
-                continue
+            candidate_queued_at = _ensure_aware_utc(candidate.queued_at)
+            if latest_queued_at is None or candidate_queued_at > latest_queued_at:
+                latest_artifact = candidate
+                latest_queued_at = candidate_queued_at
 
-            if candidate.status == ExportArtifactStatus.READY.value:
-                expires_at = _ensure_aware_utc(candidate.expires_at)
-                if expires_at > now:
-                    event_at = _ensure_aware_utc(candidate.completed_at or now)
-                    if ready_at is None or event_at > ready_at:
-                        ready_at = event_at
-                    continue
+        if latest_artifact is None:
+            return DataSubjectRequestExecutionStatus.NOT_STARTED, now, None, None
 
-                if failed_at is None or expires_at > failed_at:
-                    failed_at = expires_at
-                    failure_reason_code = "artifact_expired"
-                    failure_detail = "Export artifact expired before delivery"
-                continue
+        candidate = latest_artifact
+        event_at: datetime | None
 
-            if candidate.status == ExportArtifactStatus.PROCESSING.value:
-                lease_expires_at = candidate.processing_lease_expires_at
-                if lease_expires_at is None:
-                    continue
-                if _ensure_aware_utc(lease_expires_at) <= now:
-                    continue
-                event_at = _ensure_aware_utc(candidate.started_at or now)
-                if processing_at is None or event_at > processing_at:
-                    processing_at = event_at
-                continue
-
-            if candidate.status == ExportArtifactStatus.QUEUED.value:
-                event_at = _ensure_aware_utc(candidate.queued_at)
-                if queued_at is None or event_at > queued_at:
-                    queued_at = event_at
-                continue
-
-            if candidate.status == ExportArtifactStatus.EXPIRED.value:
-                event_at = _ensure_aware_utc(candidate.expires_at)
-                if failed_at is None or event_at > failed_at:
-                    failed_at = event_at
-                    failure_reason_code = "artifact_expired"
-                    failure_detail = "Export artifact expired before delivery"
-                continue
-
-            if candidate.status == ExportArtifactStatus.FAILED.value:
-                event_at = candidate.failed_at or candidate.started_at or now
-                event_at = _ensure_aware_utc(event_at)
-                if failed_at is None or event_at > failed_at:
-                    failed_at = event_at
-                    failure_reason_code = candidate.failure_reason_code
-                    failure_detail = candidate.failure_detail
-
-        if delivered_at is not None:
-            return DataSubjectRequestExecutionStatus.DELIVERED, delivered_at, None, None
-        if ready_at is not None:
-            return DataSubjectRequestExecutionStatus.READY, ready_at, None, None
-        if processing_at is not None:
+        if candidate.downloaded_at is not None or candidate.download_count > 0:
+            event_at = candidate.downloaded_at or candidate.completed_at or now
             return (
-                DataSubjectRequestExecutionStatus.PROCESSING,
-                processing_at,
+                DataSubjectRequestExecutionStatus.DELIVERED,
+                _ensure_aware_utc(event_at),
                 None,
                 None,
             )
-        if queued_at is not None:
-            return DataSubjectRequestExecutionStatus.QUEUED, queued_at, None, None
-        if failed_at is not None:
+
+        if candidate.status == ExportArtifactStatus.READY.value:
+            expires_at = _ensure_aware_utc(candidate.expires_at)
+            if expires_at > now:
+                event_at = _ensure_aware_utc(candidate.completed_at or now)
+                return DataSubjectRequestExecutionStatus.READY, event_at, None, None
             return (
                 DataSubjectRequestExecutionStatus.FAILED,
-                failed_at,
-                failure_reason_code,
-                failure_detail,
+                expires_at,
+                "artifact_expired",
+                "Export artifact expired before delivery",
             )
+
+        if candidate.status == ExportArtifactStatus.PROCESSING.value:
+            lease_expires_at = candidate.processing_lease_expires_at
+            if lease_expires_at is not None:
+                lease_expires_at = _ensure_aware_utc(lease_expires_at)
+            if lease_expires_at is not None and lease_expires_at > now:
+                event_at = _ensure_aware_utc(candidate.started_at or now)
+                return (
+                    DataSubjectRequestExecutionStatus.PROCESSING,
+                    event_at,
+                    None,
+                    None,
+                )
+            event_at = _ensure_aware_utc(candidate.queued_at)
+            return DataSubjectRequestExecutionStatus.QUEUED, event_at, None, None
+
+        if candidate.status == ExportArtifactStatus.QUEUED.value:
+            event_at = _ensure_aware_utc(candidate.queued_at)
+            return DataSubjectRequestExecutionStatus.QUEUED, event_at, None, None
+
+        if candidate.status == ExportArtifactStatus.EXPIRED.value:
+            expires_at = _ensure_aware_utc(candidate.expires_at)
+            return (
+                DataSubjectRequestExecutionStatus.FAILED,
+                expires_at,
+                "artifact_expired",
+                "Export artifact expired before delivery",
+            )
+
+        if candidate.status == ExportArtifactStatus.FAILED.value:
+            event_at = candidate.failed_at or candidate.started_at or now
+            return (
+                DataSubjectRequestExecutionStatus.FAILED,
+                _ensure_aware_utc(event_at),
+                candidate.failure_reason_code,
+                candidate.failure_detail,
+            )
+
         return DataSubjectRequestExecutionStatus.NOT_STARTED, now, None, None
 
     async def request_export_artifact(
