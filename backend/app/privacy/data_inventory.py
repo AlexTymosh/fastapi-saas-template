@@ -584,6 +584,36 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 PrivacyFieldErasureAction.REVIEW_REQUIRED,
                 "Internal compliance note; do not export by default.",
             ),
+            PrivacyFieldInventory(
+                "idempotency_key_hash",
+                PrivacyFieldClassification.SECRET_OR_TOKEN,
+                False,
+                PrivacyFieldErasureAction.DELETE,
+                (
+                    "Hashed request-derived idempotency credential; never "
+                    "export and remove when idempotency retention permits."
+                ),
+            ),
+            PrivacyFieldInventory(
+                "idempotency_fingerprint",
+                PrivacyFieldClassification.SECRET_OR_TOKEN,
+                False,
+                PrivacyFieldErasureAction.DELETE,
+                (
+                    "Internal request fingerprint used only for idempotency "
+                    "conflict detection; do not export."
+                ),
+            ),
+            PrivacyFieldInventory(
+                "idempotency_key_expires_at",
+                PrivacyFieldClassification.LIFECYCLE,
+                False,
+                PrivacyFieldErasureAction.DELETE,
+                (
+                    "Internal idempotency TTL timestamp; do not export and "
+                    "remove with expired idempotency metadata."
+                ),
+            ),
         ),
         export_provider_key="dsr.workflow_records",
         erasure_provider_key="dsr.minimise_workflow_identifiers",
@@ -668,6 +698,23 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 True,
                 PrivacyFieldErasureAction.RETAIN_MINIMISED,
                 "Integrity metadata for generated artifact.",
+            ),
+            PrivacyFieldInventory(
+                "failure_reason_code",
+                PrivacyFieldClassification.OPERATIONAL_REASON,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                "Structured failure reason for export artifact processing.",
+            ),
+            PrivacyFieldInventory(
+                "failure_detail",
+                PrivacyFieldClassification.OPERATIONAL_REASON,
+                False,
+                PrivacyFieldErasureAction.REVIEW_REQUIRED,
+                (
+                    "Internal failure detail may contain personal data; "
+                    "do not export by default."
+                ),
             ),
         ),
         export_provider_key="export_artifacts.subject_or_actor_metadata",
