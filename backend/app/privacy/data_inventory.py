@@ -699,6 +699,23 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
                 PrivacyFieldErasureAction.RETAIN_MINIMISED,
                 "Integrity metadata for generated artifact.",
             ),
+            PrivacyFieldInventory(
+                "failure_reason_code",
+                PrivacyFieldClassification.OPERATIONAL_REASON,
+                True,
+                PrivacyFieldErasureAction.RETAIN_MINIMISED,
+                "Structured failure reason for export artifact processing.",
+            ),
+            PrivacyFieldInventory(
+                "failure_detail",
+                PrivacyFieldClassification.OPERATIONAL_REASON,
+                False,
+                PrivacyFieldErasureAction.REVIEW_REQUIRED,
+                (
+                    "Internal failure detail may contain personal data; "
+                    "do not export by default."
+                ),
+            ),
         ),
         export_provider_key="export_artifacts.subject_or_actor_metadata",
         erasure_provider_key=(

@@ -48,6 +48,8 @@ _SUBJECT_OR_JOIN_FIELDS_BY_TABLE = {
         "generated_by_user_id",
         "processing_token",
         "storage_key",
+        "failure_reason_code",
+        "failure_detail",
     },
     "data_processing_authorizations": {"subject_user_id", "purpose_id", "source"},
     "consent_records": {
@@ -74,6 +76,8 @@ _HIGH_RISK_EXACT_COLUMN_NAMES = {
     "requester_note",
     "internal_note",
     "suspended_reason",
+    "failure_reason_code",
+    "failure_detail",
     "idempotency_key_hash",
     "idempotency_fingerprint",
     "idempotency_key_expires_at",
@@ -85,6 +89,8 @@ _HIGH_RISK_NAME_FRAGMENTS = (
     "passwd",
     "credential",
     "idempotency",
+    "reason",
+    "detail",
 )
 _SENSITIVE_NON_EXPORT_COLUMNS = {
     "token_hash",
@@ -92,6 +98,7 @@ _SENSITIVE_NON_EXPORT_COLUMNS = {
     "last_error",
     "storage_key",
     "processing_token",
+    "failure_detail",
     "idempotency_key_hash",
     "idempotency_fingerprint",
     "idempotency_key_expires_at",
@@ -107,6 +114,7 @@ _SENSITIVE_COLUMN_ALLOWED_CLASSIFICATIONS = {
     "payload_json": {PrivacyFieldClassification.STRUCTURED_METADATA},
     "last_error": {PrivacyFieldClassification.OPERATIONAL_REASON},
     "storage_key": {PrivacyFieldClassification.INDIRECT_IDENTIFIER},
+    "failure_detail": {PrivacyFieldClassification.OPERATIONAL_REASON},
     "idempotency_key_hash": {PrivacyFieldClassification.SECRET_OR_TOKEN},
     "idempotency_fingerprint": {PrivacyFieldClassification.SECRET_OR_TOKEN},
     "idempotency_key_expires_at": {PrivacyFieldClassification.LIFECYCLE},
