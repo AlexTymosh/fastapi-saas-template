@@ -441,6 +441,103 @@ def test_generate_export_artifact_fails_when_dsr_no_longer_eligible(
     run_async(_run())
 
 
+def test_mark_expired_artifacts_marks_dsr_failed_when_only_ready_artifact_expires(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            expired_at = datetime.now(UTC) - timedelta(seconds=1)
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.completed_at = expired_at - timedelta(minutes=1)
+            artifact.expires_at = expired_at
+            await service.repo.save(artifact)
+            dsr.execution_status = DataSubjectRequestExecutionStatus.READY.value
+            dsr.execution_completed_at = artifact.completed_at
+            await service.dsr_repo.save(dsr)
+
+            expired = await service.mark_expired_artifacts(now=datetime.now(UTC))
+
+            assert expired == 1
+            persisted_artifact = await service.repo.get_by_id(artifact.id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.status == ExportArtifactStatus.EXPIRED.value
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert persisted.execution_completed_at is None
+            assert persisted.execution_failed_at is not None
+            assert persisted.execution_failure_reason_code == "artifact_expired"
+            assert (
+                persisted.execution_failure_detail
+                == "Export artifact expired before delivery"
+            )
+
+    run_async(_run())
+
+
+def test_mark_expired_artifacts_preserves_delivered_dsr_execution_state(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            downloaded_at = datetime.now(UTC) - timedelta(minutes=1)
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.completed_at = downloaded_at - timedelta(minutes=1)
+            artifact.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            artifact.downloaded_at = downloaded_at
+            artifact.download_count = 1
+            await service.repo.save(artifact)
+            dsr.execution_status = DataSubjectRequestExecutionStatus.DELIVERED.value
+            dsr.execution_completed_at = artifact.completed_at
+            await service.dsr_repo.save(dsr)
+
+            expired = await service.mark_expired_artifacts(now=datetime.now(UTC))
+
+            assert expired == 1
+            persisted_artifact = await service.repo.get_by_id(artifact.id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.status == ExportArtifactStatus.EXPIRED.value
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.DELIVERED.value
+            )
+            assert persisted.execution_completed_at is not None
+            assert persisted.execution_failed_at is None
+            assert persisted.execution_failure_reason_code is None
+            assert persisted.execution_failure_detail is None
+
+    run_async(_run())
+
+
 def test_generate_download_url_marks_dsr_execution_delivered(
     migrated_session_factory,
 ):
