@@ -16,7 +16,11 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
 )
-from app.privacy.models.export_artifact import ExportArtifactStatus
+from app.privacy.models.export_artifact import (
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
+)
 from app.privacy.services.export_artifacts import ExportArtifactService
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -205,6 +209,90 @@ def test_claim_queued_artifact_marks_dsr_execution_processing(
                 == DataSubjectRequestExecutionStatus.PROCESSING.value
             )
             assert persisted.execution_started_at is not None
+
+    run_async(_run())
+
+
+@pytest.mark.parametrize(
+    "completed_status",
+    [
+        DataSubjectRequestExecutionStatus.READY,
+        DataSubjectRequestExecutionStatus.DELIVERED,
+    ],
+)
+def test_recover_stale_processing_preserves_completed_dsr_execution_state(
+    migrated_session_factory,
+    completed_status: DataSubjectRequestExecutionStatus,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            stale_artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            leases = await service.claim_queued_artifact_leases(batch_size=1)
+            assert len(leases) == 1
+
+            stale_artifact = await service.repo.get_by_id(stale_artifact.id)
+            assert stale_artifact is not None
+            stale_artifact.processing_lease_expires_at = datetime.now(UTC) - timedelta(
+                seconds=1
+            )
+            await service.repo.save(stale_artifact)
+
+            completed_at = datetime.now(UTC)
+            await service.repo.create(
+                data_subject_request_id=dsr.id,
+                subject_user_id=dsr.subject_user_id,
+                requester_user_id=dsr.requester_user_id,
+                status=ExportArtifactStatus.READY.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                schema_version="1.0",
+                requested_by_user_id=user.id,
+                generated_by_user_id=user.id,
+                storage_key=f"exports/{uuid4()}/artifact.zip",
+                filename="artifact.zip",
+                content_type="application/zip",
+                size_bytes=1,
+                checksum_sha256="0" * 64,
+                queued_at=completed_at - timedelta(minutes=5),
+                started_at=completed_at - timedelta(minutes=4),
+                completed_at=completed_at,
+                expires_at=completed_at + timedelta(days=1),
+                downloaded_at=(
+                    completed_at
+                    if completed_status is DataSubjectRequestExecutionStatus.DELIVERED
+                    else None
+                ),
+                download_count=(
+                    1
+                    if completed_status is DataSubjectRequestExecutionStatus.DELIVERED
+                    else 0
+                ),
+            )
+            dsr.execution_status = completed_status.value
+            dsr.execution_started_at = completed_at - timedelta(minutes=4)
+            dsr.execution_completed_at = completed_at
+            await service.dsr_repo.save(dsr)
+
+            recovered = await service.recover_stale_processing_artifacts(limit=10)
+
+            assert recovered == 1
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert persisted.execution_status == completed_status.value
+            assert persisted.execution_completed_at is not None
+            assert persisted.execution_failed_at is None
+            assert persisted.execution_failure_reason_code is None
+            assert persisted.execution_failure_detail is None
 
     run_async(_run())
 

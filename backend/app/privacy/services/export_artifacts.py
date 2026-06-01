@@ -156,6 +156,42 @@ class ExportArtifactService:
 
         await self.dsr_repo.save(dsr)
 
+    async def _completed_execution_state_for_dsr(
+        self,
+        artifact: ExportArtifact,
+        *,
+        now: datetime,
+    ) -> tuple[DataSubjectRequestExecutionStatus, datetime | None] | None:
+        artifacts = await self.repo.get_by_dsr_id(artifact.data_subject_request_id)
+        delivered_at: datetime | None = None
+        ready_at: datetime | None = None
+
+        for candidate in artifacts:
+            if candidate.status != ExportArtifactStatus.READY.value:
+                continue
+
+            if candidate.downloaded_at is not None or candidate.download_count > 0:
+                event_at = candidate.downloaded_at or candidate.completed_at or now
+                event_at = _ensure_aware_utc(event_at)
+                if delivered_at is None or event_at > delivered_at:
+                    delivered_at = event_at
+                continue
+
+            expires_at = _ensure_aware_utc(candidate.expires_at)
+            if expires_at <= now:
+                continue
+
+            event_at = candidate.completed_at or now
+            event_at = _ensure_aware_utc(event_at)
+            if ready_at is None or event_at > ready_at:
+                ready_at = event_at
+
+        if delivered_at is not None:
+            return DataSubjectRequestExecutionStatus.DELIVERED, delivered_at
+        if ready_at is not None:
+            return DataSubjectRequestExecutionStatus.READY, ready_at
+        return None
+
     async def request_export_artifact(
         self,
         *,
@@ -317,6 +353,19 @@ class ExportArtifactService:
         now = datetime.now(UTC)
         recovered = await self.repo.recover_stale_processing(now=now, limit=limit)
         for artifact in recovered:
+            completed_state = await self._completed_execution_state_for_dsr(
+                artifact,
+                now=now,
+            )
+            if completed_state is not None:
+                execution_status, event_at = completed_state
+                await self._sync_export_dsr_execution_state(
+                    artifact,
+                    execution_status=execution_status,
+                    event_at=event_at,
+                )
+                continue
+
             await self._sync_export_dsr_execution_state(
                 artifact,
                 execution_status=DataSubjectRequestExecutionStatus.QUEUED,
