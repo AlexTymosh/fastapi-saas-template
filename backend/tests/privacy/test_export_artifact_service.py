@@ -13,6 +13,7 @@ from app.core.config.settings import get_settings
 from app.core.errors import ConflictError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
+    DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
 )
 from app.privacy.models.export_artifact import ExportArtifactStatus
@@ -106,6 +107,68 @@ def test_request_requires_approved_export_dsr(migrated_session_factory):
     run_async(_run())
 
 
+def test_request_export_artifact_marks_dsr_execution_queued(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+
+            await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.QUEUED.value
+            )
+            assert persisted.execution_started_at is None
+            assert persisted.execution_completed_at is None
+            assert persisted.execution_failed_at is None
+
+    run_async(_run())
+
+
+def test_claim_queued_artifact_marks_dsr_execution_processing(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            leases = await service.claim_queued_artifact_leases(batch_size=1)
+
+            assert len(leases) == 1
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.PROCESSING.value
+            )
+            assert persisted.execution_started_at is not None
+
+    run_async(_run())
+
+
 def test_generate_export_artifact_marks_ready(migrated_session_factory):
     async def _run():
         async with migrated_session_factory() as session:
@@ -131,6 +194,16 @@ def test_generate_export_artifact_marks_ready(migrated_session_factory):
             assert ready.size_bytes is not None and ready.size_bytes > 0
             assert ready.checksum_sha256 is not None
             assert service.storage.exists(ready.storage_key)
+
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.READY.value
+            )
+            assert persisted.execution_started_at is not None
+            assert persisted.execution_completed_at is not None
+            assert persisted.execution_failed_at is None
 
     run_async(_run())
 
@@ -196,6 +269,16 @@ def test_generate_export_artifact_too_large_marks_failed(
             assert failed.failure_reason_code == "artifact_too_large"
             assert failed.storage_key is None
 
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert persisted.execution_failed_at is not None
+            assert persisted.execution_failure_reason_code == "artifact_too_large"
+            assert persisted.execution_failure_detail == "Export generation failed"
+
     run_async(_run())
 
 
@@ -226,6 +309,48 @@ def test_generate_export_artifact_fails_when_dsr_no_longer_eligible(
             assert failed.status == ExportArtifactStatus.FAILED.value
             assert failed.failure_reason_code == "dsr_not_export_eligible"
             assert failed.storage_key is None
+
+    run_async(_run())
+
+
+def test_generate_download_url_marks_dsr_execution_delivered(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            service.storage.put_bytes(
+                artifact.storage_key,
+                b"payload",
+                "application/zip",
+            )
+
+            download = await service.generate_download_url(
+                artifact=artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            assert 0 < download.expires_in_seconds <= 60
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert (
+                persisted.execution_status
+                == DataSubjectRequestExecutionStatus.DELIVERED.value
+            )
+            assert persisted.execution_completed_at is not None
 
     run_async(_run())
 
