@@ -11,7 +11,16 @@ from sqlalchemy.dialects import postgresql
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.core.errors import BadRequestError, ConflictError
-from app.privacy.models.data_subject_request import DataSubjectRequestStatus
+from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
+    DataSubjectRequestStatus,
+)
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
+)
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.services.data_subject_requests import DataSubjectRequestService
 from app.users.models.user import User
@@ -39,6 +48,32 @@ async def _create_user(session, *, email: str = "subject@example.com") -> User:
     await session.flush()
     await session.refresh(user)
     return user
+
+
+async def _create_ready_export_artifact(
+    session,
+    *,
+    request: DataSubjectRequest,
+    user: User,
+    expires_at: datetime | None = None,
+) -> ExportArtifact:
+    artifact = ExportArtifact(
+        data_subject_request_id=request.id,
+        subject_user_id=request.subject_user_id,
+        requester_user_id=request.requester_user_id,
+        status=ExportArtifactStatus.READY.value,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        schema_version="1.0",
+        requested_by_user_id=user.id,
+        queued_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        expires_at=expires_at or datetime.now(UTC) + timedelta(days=1),
+    )
+    session.add(artifact)
+    await session.flush()
+    await session.refresh(artifact)
+    return artifact
 
 
 def test_idempotency_requester_lock_uses_no_key_update() -> None:
@@ -292,18 +327,27 @@ def test_state_machine_and_terminal_protection(migrated_session_factory) -> None
                     reviewer_user_id=user.id,
                     audit_context=audit_context,
                 )
+            with pytest.raises(
+                ConflictError,
+                match="Execution pipeline is not implemented",
+            ):
+                await service.fulfil_request(
+                    request_id=request.id,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
+
             request = await service.transition_status(
                 request_id=request.id,
-                target_status=DataSubjectRequestStatus.FULFILLED,
+                target_status=DataSubjectRequestStatus.CANCELLED,
                 reviewer_user_id=user.id,
                 audit_context=audit_context,
-                execution_verified=True,
             )
-            assert request.status == DataSubjectRequestStatus.FULFILLED.value
+            assert request.status == DataSubjectRequestStatus.CANCELLED.value
             with pytest.raises(ConflictError):
                 await service.transition_status(
                     request_id=request.id,
-                    target_status=DataSubjectRequestStatus.CANCELLED,
+                    target_status=DataSubjectRequestStatus.UNDER_REVIEW,
                     reviewer_user_id=user.id,
                     audit_context=audit_context,
                 )
@@ -364,6 +408,43 @@ def test_state_machine_rejects_direct_submitted_to_fulfilled_transition(
     run_async(_run())
 
 
+def test_transition_status_rejects_execution_verified_bypass_argument(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="bypass-argument@example.com")
+            service = DataSubjectRequestService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+
+            request = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="export",
+                audit_context=audit_context,
+            )
+            request = await service.transition_status(
+                request_id=request.id,
+                target_status=DataSubjectRequestStatus.APPROVED,
+                reviewer_user_id=user.id,
+                audit_context=audit_context,
+            )
+
+            with pytest.raises(TypeError):
+                await service.transition_status(  # type: ignore[call-arg]
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.FULFILLED,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                    execution_verified=True,
+                )
+
+            persisted = await service.get_request(request_id=request.id)
+            assert persisted.status == DataSubjectRequestStatus.APPROVED.value
+            assert persisted.fulfilled_at is None
+
+    run_async(_run())
+
+
 @pytest.mark.parametrize(
     "terminal_status",
     [
@@ -384,7 +465,11 @@ def test_terminal_states_reject_further_transitions(
             audit_context = AuditContext(actor_user_id=user.id)
             request = await service.submit_request(
                 requester_user_id=user.id,
-                request_type="access",
+                request_type=(
+                    "export"
+                    if terminal_status is DataSubjectRequestStatus.FULFILLED
+                    else "access"
+                ),
                 audit_context=audit_context,
             )
             if terminal_status is DataSubjectRequestStatus.REJECTED:
@@ -403,12 +488,15 @@ def test_terminal_states_reject_further_transitions(
                 )
 
             if terminal_status is DataSubjectRequestStatus.FULFILLED:
-                request = await service.transition_status(
+                await _create_ready_export_artifact(
+                    session,
+                    request=request,
+                    user=user,
+                )
+                request = await service.fulfil_request(
                     request_id=request.id,
-                    target_status=DataSubjectRequestStatus.FULFILLED,
                     reviewer_user_id=user.id,
                     audit_context=audit_context,
-                    execution_verified=True,
                 )
             else:
                 request = await service.transition_status(
