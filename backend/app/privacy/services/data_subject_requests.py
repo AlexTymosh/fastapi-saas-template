@@ -165,6 +165,30 @@ class DataSubjectRequestService:
         audit_context: AuditContext,
         reason_code: str | None = None,
         now: datetime | None = None,
+    ) -> DataSubjectRequest:
+        if target_status is DataSubjectRequestStatus.FULFILLED:
+            raise ConflictError(
+                detail=("Use fulfil_request() to fulfil data-subject requests")
+            )
+
+        return await self._transition_status(
+            request_id=request_id,
+            target_status=target_status,
+            reviewer_user_id=reviewer_user_id,
+            audit_context=audit_context,
+            reason_code=reason_code,
+            now=now,
+        )
+
+    async def _transition_status(
+        self,
+        *,
+        request_id: UUID,
+        target_status: DataSubjectRequestStatus,
+        reviewer_user_id: UUID | None,
+        audit_context: AuditContext,
+        reason_code: str | None = None,
+        now: datetime | None = None,
         execution_verified: bool = False,
     ) -> DataSubjectRequest:
         reference_now = now or datetime.now(UTC)
@@ -346,7 +370,7 @@ class DataSubjectRequestService:
         if request.status != DataSubjectRequestStatus.APPROVED.value:
             raise ConflictError(detail="Only approved requests can be fulfilled")
         await self._ensure_execution_ready_for_fulfilment(request)
-        return await self.transition_status(
+        return await self._transition_status(
             request_id=request_id,
             target_status=DataSubjectRequestStatus.FULFILLED,
             reviewer_user_id=reviewer_user_id,
