@@ -596,7 +596,7 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
             ),
             PrivacyFieldInventory(
                 "idempotency_fingerprint",
-                PrivacyFieldClassification.STRUCTURED_METADATA,
+                PrivacyFieldClassification.SECRET_OR_TOKEN,
                 False,
                 PrivacyFieldErasureAction.DELETE,
                 (

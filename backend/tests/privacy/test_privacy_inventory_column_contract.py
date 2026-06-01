@@ -108,7 +108,7 @@ _SENSITIVE_COLUMN_ALLOWED_CLASSIFICATIONS = {
     "last_error": {PrivacyFieldClassification.OPERATIONAL_REASON},
     "storage_key": {PrivacyFieldClassification.INDIRECT_IDENTIFIER},
     "idempotency_key_hash": {PrivacyFieldClassification.SECRET_OR_TOKEN},
-    "idempotency_fingerprint": {PrivacyFieldClassification.STRUCTURED_METADATA},
+    "idempotency_fingerprint": {PrivacyFieldClassification.SECRET_OR_TOKEN},
     "idempotency_key_expires_at": {PrivacyFieldClassification.LIFECYCLE},
 }
 
