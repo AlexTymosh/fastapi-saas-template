@@ -73,3 +73,5 @@ def downgrade() -> None:
         batch_op.drop_column("execution_failure_reason_code")
         batch_op.drop_column("execution_failed_at")
         batch_op.drop_column("execution_completed_at")
+        batch_op.drop_column("execution_started_at")
+        batch_op.drop_column("execution_status")
