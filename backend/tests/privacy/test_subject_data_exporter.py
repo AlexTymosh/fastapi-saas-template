@@ -657,3 +657,159 @@ def test_audit_export_minimises_non_subject_actor_fields(
             assert "staff-admin-browser" not in encoded_payload
 
     run_async(_run())
+
+
+def test_dsr_export_redacts_non_subject_reviewer_from_subject_records(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            subject = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"dsr-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            reviewer = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"dsr-reviewer-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add_all([subject, reviewer])
+            await session.flush()
+
+            dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+                requester_user_id=subject.id,
+                subject_user_id=subject.id,
+                reviewer_user_id=reviewer.id,
+                requester_note="Subject visible request note",
+                submitted_at=now - timedelta(days=1),
+                reviewed_at=now,
+                due_at=now + timedelta(days=29),
+            )
+            session.add(dsr)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=subject.id,
+                    requester_user_id=subject.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["dsr.workflow_records"]
+            dsr_record = next(
+                item for item in records if item["payload"]["id"] == str(dsr.id)
+            )
+            dsr_payload = dsr_record["payload"]
+            redacted_fields = set(dsr_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert dsr_record["record_kind"] == "data"
+            assert dsr_payload["subject_user_id"] == str(subject.id)
+            assert dsr_payload["requester_user_id"] == str(subject.id)
+            assert dsr_payload["has_reviewer"] is True
+            assert "reviewer_user_id" not in dsr_payload
+            assert "reviewer_user_id" in redacted_fields
+            assert str(reviewer.id) not in encoded_payload
+            assert reviewer.email not in encoded_payload
+
+    run_async(_run())
+
+
+def test_export_artifacts_redact_platform_actors_from_subject_owned_rows(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            subject = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"artifact-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            platform_actor = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"artifact-actor-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add_all([subject, platform_actor])
+            await session.flush()
+
+            dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+                requester_user_id=subject.id,
+                subject_user_id=subject.id,
+                submitted_at=now - timedelta(days=1),
+                due_at=now + timedelta(days=29),
+            )
+            session.add(dsr)
+            await session.flush()
+
+            artifact = ExportArtifact(
+                data_subject_request_id=dsr.id,
+                subject_user_id=subject.id,
+                requester_user_id=subject.id,
+                requested_by_user_id=platform_actor.id,
+                generated_by_user_id=platform_actor.id,
+                status=ExportArtifactStatus.READY.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                storage_key=f"exports/{uuid4()}/artifact.zip",
+                filename="privacy-export-subject.zip",
+                content_type="application/zip",
+                size_bytes=128,
+                checksum_sha256="b" * 64,
+                schema_version="1.0",
+                queued_at=now - timedelta(hours=1),
+                started_at=now - timedelta(minutes=45),
+                completed_at=now - timedelta(minutes=30),
+                expires_at=now + timedelta(days=7),
+                download_count=0,
+            )
+            session.add(artifact)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=subject.id,
+                    requester_user_id=subject.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["export_artifacts.subject_or_actor_metadata"]
+            artifact_record = next(
+                item for item in records if item["payload"]["id"] == str(artifact.id)
+            )
+            artifact_payload = artifact_record["payload"]
+            redacted_fields = set(artifact_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert artifact_record["record_kind"] == "data"
+            assert artifact_payload["subject_user_id"] == str(subject.id)
+            assert artifact_payload["requester_user_id"] == str(subject.id)
+            assert artifact_payload["has_requested_by"] is True
+            assert artifact_payload["has_generated_by"] is True
+            assert "requested_by_user_id" not in artifact_payload
+            assert "generated_by_user_id" not in artifact_payload
+            assert "requested_by_user_id" in redacted_fields
+            assert "generated_by_user_id" in redacted_fields
+            assert str(platform_actor.id) not in encoded_payload
+            assert platform_actor.email not in encoded_payload
+
+    run_async(_run())

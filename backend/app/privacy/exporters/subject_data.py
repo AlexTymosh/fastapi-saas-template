@@ -417,7 +417,7 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
             if self._is_reviewer_only_record(row, context):
                 yield self._reviewer_reference_record(row)
                 continue
-            yield self._subject_request_record(row)
+            yield self._subject_request_record(row, context)
 
     @staticmethod
     def _is_reviewer_only_record(
@@ -429,43 +429,49 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
             and row.requester_user_id != context.subject_user_id
         )
 
-    def _subject_request_record(self, row: DataSubjectRequest) -> PrivacyExportRecord:
-        return self._record(
-            {
-                "id": row.id,
-                "request_type": row.request_type,
-                "status": row.status,
-                "execution_status": row.execution_status,
-                "requester_user_id": row.requester_user_id,
-                "subject_user_id": row.subject_user_id,
-                "reviewer_user_id": row.reviewer_user_id,
-                "submitted_at": row.submitted_at,
-                "acknowledged_at": row.acknowledged_at,
-                "reviewed_at": row.reviewed_at,
-                "decided_at": row.decided_at,
-                "fulfilled_at": row.fulfilled_at,
-                "cancelled_at": row.cancelled_at,
-                "execution_started_at": row.execution_started_at,
-                "execution_completed_at": row.execution_completed_at,
-                "execution_failed_at": row.execution_failed_at,
-                "execution_failure_reason_code": (row.execution_failure_reason_code),
-                "decision_reason_code": row.decision_reason_code,
-                "rejection_reason_code": row.rejection_reason_code,
-                "extension_reason_code": row.extension_reason_code,
-                "requester_note": row.requester_note,
-                "due_at": row.due_at,
-                "extended_until": row.extended_until,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            },
-            redacted_fields=(
-                "internal_note",
-                "idempotency_key_hash",
-                "idempotency_fingerprint",
-                "idempotency_key_expires_at",
-                "execution_failure_detail",
-            ),
-        )
+    def _subject_request_record(
+        self, row: DataSubjectRequest, context: PrivacyProviderContext
+    ) -> PrivacyExportRecord:
+        payload: dict[str, object] = {
+            "id": row.id,
+            "request_type": row.request_type,
+            "status": row.status,
+            "execution_status": row.execution_status,
+            "requester_user_id": row.requester_user_id,
+            "subject_user_id": row.subject_user_id,
+            "submitted_at": row.submitted_at,
+            "acknowledged_at": row.acknowledged_at,
+            "reviewed_at": row.reviewed_at,
+            "decided_at": row.decided_at,
+            "fulfilled_at": row.fulfilled_at,
+            "cancelled_at": row.cancelled_at,
+            "execution_started_at": row.execution_started_at,
+            "execution_completed_at": row.execution_completed_at,
+            "execution_failed_at": row.execution_failed_at,
+            "execution_failure_reason_code": row.execution_failure_reason_code,
+            "decision_reason_code": row.decision_reason_code,
+            "rejection_reason_code": row.rejection_reason_code,
+            "extension_reason_code": row.extension_reason_code,
+            "requester_note": row.requester_note,
+            "due_at": row.due_at,
+            "extended_until": row.extended_until,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        redacted_fields = [
+            "internal_note",
+            "idempotency_key_hash",
+            "idempotency_fingerprint",
+            "idempotency_key_expires_at",
+            "execution_failure_detail",
+        ]
+        if row.reviewer_user_id == context.subject_user_id:
+            payload["reviewer_user_id"] = row.reviewer_user_id
+        elif row.reviewer_user_id is not None:
+            payload["has_reviewer"] = True
+            redacted_fields.append("reviewer_user_id")
+
+        return self._record(payload, redacted_fields=tuple(redacted_fields))
 
     def _reviewer_reference_record(
         self, row: DataSubjectRequest
@@ -530,7 +536,7 @@ class ExportArtifactMetadataExportProvider(_BaseSubjectExportProvider):
             if self._is_actor_only_record(row, context):
                 yield self._actor_reference_record(row, context)
                 continue
-            yield self._subject_artifact_record(row)
+            yield self._subject_artifact_record(row, context)
 
     @staticmethod
     def _is_actor_only_record(
@@ -545,41 +551,56 @@ class ExportArtifactMetadataExportProvider(_BaseSubjectExportProvider):
             )
         )
 
-    def _subject_artifact_record(self, row: ExportArtifact) -> PrivacyExportRecord:
-        return self._record(
-            {
-                "id": row.id,
-                "data_subject_request_id": row.data_subject_request_id,
-                "subject_user_id": row.subject_user_id,
-                "requester_user_id": row.requester_user_id,
-                "requested_by_user_id": row.requested_by_user_id,
-                "generated_by_user_id": row.generated_by_user_id,
-                "status": row.status,
-                "format": row.format,
-                "storage_backend": row.storage_backend,
-                "filename": row.filename,
-                "content_type": row.content_type,
-                "size_bytes": row.size_bytes,
-                "checksum_sha256": row.checksum_sha256,
-                "schema_version": row.schema_version,
-                "failure_reason_code": row.failure_reason_code,
-                "queued_at": row.queued_at,
-                "started_at": row.started_at,
-                "completed_at": row.completed_at,
-                "failed_at": row.failed_at,
-                "expires_at": row.expires_at,
-                "downloaded_at": row.downloaded_at,
-                "download_count": row.download_count,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            },
-            redacted_fields=(
-                "storage_key",
-                "processing_token",
-                "processing_lease_expires_at",
-                "failure_detail",
-            ),
+    def _subject_artifact_record(
+        self, row: ExportArtifact, context: PrivacyProviderContext
+    ) -> PrivacyExportRecord:
+        payload: dict[str, object] = {
+            "id": row.id,
+            "data_subject_request_id": row.data_subject_request_id,
+            "subject_user_id": row.subject_user_id,
+            "requester_user_id": row.requester_user_id,
+            "status": row.status,
+            "format": row.format,
+            "storage_backend": row.storage_backend,
+            "filename": row.filename,
+            "content_type": row.content_type,
+            "size_bytes": row.size_bytes,
+            "checksum_sha256": row.checksum_sha256,
+            "schema_version": row.schema_version,
+            "failure_reason_code": row.failure_reason_code,
+            "queued_at": row.queued_at,
+            "started_at": row.started_at,
+            "completed_at": row.completed_at,
+            "failed_at": row.failed_at,
+            "expires_at": row.expires_at,
+            "downloaded_at": row.downloaded_at,
+            "download_count": row.download_count,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        redacted_fields = [
+            "storage_key",
+            "processing_token",
+            "processing_lease_expires_at",
+            "failure_detail",
+        ]
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="requested_by_user_id",
+            actor_user_id=row.requested_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_requested_by",
         )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="generated_by_user_id",
+            actor_user_id=row.generated_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_generated_by",
+        )
+        return self._record(payload, redacted_fields=tuple(redacted_fields))
 
     def _actor_reference_record(
         self, row: ExportArtifact, context: PrivacyProviderContext
@@ -954,6 +975,24 @@ def _serialise_record(record: PrivacyExportRecord) -> dict[str, object]:
         "payload": _json_value(record.payload),
         "redacted_fields": list(record.redacted_fields),
     }
+
+
+def _include_or_minimise_actor_field(
+    payload: dict[str, object],
+    redacted_fields: list[str],
+    *,
+    field_name: str,
+    actor_user_id: UUID | None,
+    subject_user_id: UUID,
+    presence_field: str,
+) -> None:
+    if actor_user_id is None:
+        return
+    if actor_user_id == subject_user_id:
+        payload[field_name] = actor_user_id
+        return
+    payload[presence_field] = True
+    redacted_fields.append(field_name)
 
 
 def _json_value(value: object) -> object:
