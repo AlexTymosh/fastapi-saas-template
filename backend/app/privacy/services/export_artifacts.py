@@ -16,7 +16,7 @@ from app.audit.services.audit_events import AuditEventService
 from app.core.config.settings import get_settings
 from app.core.errors import ConflictError, NotFoundError
 from app.privacy.exporters.base import ExportContext
-from app.privacy.exporters.minimal import MinimalSubjectDataExporter
+from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
 from app.privacy.models.data_subject_request import (
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
@@ -532,7 +532,7 @@ class ExportArtifactService:
             raise ValueError("dsr_not_export_eligible")
 
         now = datetime.now(UTC)
-        payload = MinimalSubjectDataExporter().export_subject_data(
+        payload = await CrossTableSubjectDataExporter(self.session).export_subject_data(
             ExportContext(
                 artifact_id=artifact.id,
                 data_subject_request_id=dsr.id,
