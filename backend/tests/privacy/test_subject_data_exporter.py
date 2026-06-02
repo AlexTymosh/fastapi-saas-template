@@ -50,6 +50,7 @@ def test_cross_table_subject_export_includes_current_dsr_scope(
                 email_verified=True,
                 first_name="Ada",
                 last_name="Lovelace",
+                suspended_reason="Contains free-text user suspension note",
             )
             organisation = Organisation(
                 name="Example Ltd",
@@ -149,6 +150,10 @@ def test_cross_table_subject_export_includes_current_dsr_scope(
             assert payload["request_type"] == "export"
             data = payload["data"]
             assert data["users.profile"]
+            user_record = data["users.profile"][0]
+            user_payload = user_record["payload"]
+            assert "suspended_reason" not in user_payload
+            assert "suspended_reason" in user_record["redacted_fields"]
             assert data["memberships.by_subject"]
             assert data["organisations.by_subject_membership"]
             org_record = data["organisations.by_subject_membership"][0]
@@ -179,6 +184,7 @@ def test_cross_table_subject_export_includes_current_dsr_scope(
             notices = payload["manifest"]["redaction_notices"]
             assert notices
             encoded_payload = json.dumps(payload, sort_keys=True)
+            assert "Contains free-text user suspension note" not in encoded_payload
             assert "Contains free-text organisation review note" not in encoded_payload
 
     run_async(_run())

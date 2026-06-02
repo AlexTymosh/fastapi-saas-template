@@ -89,10 +89,10 @@ class UserProfileExportProvider(_BaseSubjectExportProvider):
                 "onboarding_completed": user.onboarding_completed,
                 "status": user.status,
                 "suspended_at": user.suspended_at,
-                "suspended_reason": user.suspended_reason,
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
-            }
+            },
+            redacted_fields=("suspended_reason",),
         )
 
 
