@@ -175,7 +175,7 @@ class InvitesBySubjectExportProvider(_BaseSubjectExportProvider):
             if self._is_revoker_only_record(row, subject_email):
                 yield self._revoker_reference_record(row)
                 continue
-            yield self._subject_invite_record(row)
+            yield self._subject_invite_record(row, context)
 
     @staticmethod
     def _is_revoker_only_record(row: Invite, subject_email: str | None) -> bool:
@@ -185,22 +185,30 @@ class InvitesBySubjectExportProvider(_BaseSubjectExportProvider):
             return True
         return row.email.strip().lower() != subject_email
 
-    def _subject_invite_record(self, row: Invite) -> PrivacyExportRecord:
-        return self._record(
-            {
-                "id": row.id,
-                "email": row.email,
-                "organisation_id": row.organisation_id,
-                "role": row.role,
-                "status": row.status,
-                "expires_at": row.expires_at,
-                "revoked_at": row.revoked_at,
-                "revoked_by_user_id": row.revoked_by_user_id,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            },
-            redacted_fields=("token_hash",),
+    def _subject_invite_record(
+        self, row: Invite, context: PrivacyProviderContext
+    ) -> PrivacyExportRecord:
+        payload: dict[str, object] = {
+            "id": row.id,
+            "email": row.email,
+            "organisation_id": row.organisation_id,
+            "role": row.role,
+            "status": row.status,
+            "expires_at": row.expires_at,
+            "revoked_at": row.revoked_at,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        redacted_fields = ["token_hash"]
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="revoked_by_user_id",
+            actor_user_id=row.revoked_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_revoker",
         )
+        return self._record(payload, redacted_fields=tuple(redacted_fields))
 
     def _revoker_reference_record(self, row: Invite) -> PrivacyExportRecord:
         return self._record(
@@ -349,7 +357,7 @@ class PlatformStaffBySubjectExportProvider(_BaseSubjectExportProvider):
             if self._is_creator_only_record(row, context):
                 yield self._creator_reference_record(row)
                 continue
-            yield self._subject_staff_record(row)
+            yield self._subject_staff_record(row, context)
 
     @staticmethod
     def _is_creator_only_record(
@@ -360,20 +368,28 @@ class PlatformStaffBySubjectExportProvider(_BaseSubjectExportProvider):
             and row.user_id != context.subject_user_id
         )
 
-    def _subject_staff_record(self, row: PlatformStaff) -> PrivacyExportRecord:
-        return self._record(
-            {
-                "id": row.id,
-                "user_id": row.user_id,
-                "role": row.role,
-                "status": row.status,
-                "created_by_user_id": row.created_by_user_id,
-                "suspended_at": row.suspended_at,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            },
-            redacted_fields=("suspended_reason",),
+    def _subject_staff_record(
+        self, row: PlatformStaff, context: PrivacyProviderContext
+    ) -> PrivacyExportRecord:
+        payload: dict[str, object] = {
+            "id": row.id,
+            "user_id": row.user_id,
+            "role": row.role,
+            "status": row.status,
+            "suspended_at": row.suspended_at,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        redacted_fields = ["suspended_reason"]
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="created_by_user_id",
+            actor_user_id=row.created_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_creator",
         )
+        return self._record(payload, redacted_fields=tuple(redacted_fields))
 
     def _creator_reference_record(self, row: PlatformStaff) -> PrivacyExportRecord:
         return self._record(
