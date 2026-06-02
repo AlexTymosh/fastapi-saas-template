@@ -6,7 +6,12 @@ from uuid import uuid4
 
 import pytest
 
-from app.audit.models.audit_event import AuditAction, AuditCategory, AuditEvent
+from app.audit.models.audit_event import (
+    AuditAction,
+    AuditCategory,
+    AuditEvent,
+    AuditTargetType,
+)
 from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation
@@ -577,5 +582,78 @@ def test_platform_staff_export_redacts_free_text_suspension_reason(
             assert "suspended_reason" not in subject_payload
             assert "suspended_reason" in subject_record["redacted_fields"]
             assert "Free text staff reason" not in json.dumps(payload)
+
+    run_async(_run())
+
+
+def test_audit_export_minimises_non_subject_actor_fields(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            subject = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"audit-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            staff_actor = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"audit-staff-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add_all([subject, staff_actor])
+            await session.flush()
+
+            audit_event = AuditEvent(
+                actor_user_id=staff_actor.id,
+                category=AuditCategory.COMPLIANCE.value,
+                action="user_suspended",
+                target_type=AuditTargetType.USER.value,
+                target_id=subject.id,
+                reason="internal free text must not be exported",
+                metadata_json={"status": "suspended", "unsafe": staff_actor.email},
+                ip_address="203.0.113.10",
+                user_agent="staff-admin-browser",
+                created_at=now,
+            )
+            session.add(audit_event)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=subject.id,
+                    requester_user_id=subject.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["audit.subject_actor_or_target_join_events"]
+            audit_record = next(
+                item for item in records if item["payload"]["id"] == str(audit_event.id)
+            )
+            audit_payload = audit_record["payload"]
+            redacted_fields = set(audit_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert audit_payload["target_type"] == AuditTargetType.USER.value
+            assert audit_payload["target_id"] == str(subject.id)
+            assert audit_payload["has_actor"] is True
+            assert "actor_user_id" not in audit_payload
+            assert "ip_address" not in audit_payload
+            assert "user_agent" not in audit_payload
+            assert "actor_user_id" in redacted_fields
+            assert "ip_address" in redacted_fields
+            assert "user_agent" in redacted_fields
+            assert "metadata_json.unsafe" in redacted_fields
+            assert str(staff_actor.id) not in encoded_payload
+            assert staff_actor.email not in encoded_payload
+            assert "203.0.113.10" not in encoded_payload
+            assert "staff-admin-browser" not in encoded_payload
 
     run_async(_run())

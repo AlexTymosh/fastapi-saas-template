@@ -295,27 +295,36 @@ class AuditSubjectEventsExportProvider(_BaseSubjectExportProvider):
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:
-            metadata, redacted_metadata = _safe_audit_metadata(row.metadata_json)
-            redacted_fields = []
-            if row.reason is not None:
-                redacted_fields.append("reason")
-            redacted_fields.extend(redacted_metadata)
-            yield self._record(
-                {
-                    "id": row.id,
-                    "actor_user_id": row.actor_user_id,
-                    "category": row.category,
-                    "action": row.action,
-                    "target_type": row.target_type,
-                    "target_id": row.target_id,
-                    "metadata_json": metadata,
-                    "ip_address": row.ip_address,
-                    "user_agent": row.user_agent,
-                    "legal_hold_until": row.legal_hold_until,
-                    "created_at": row.created_at,
-                },
-                redacted_fields=tuple(redacted_fields),
-            )
+            yield self._audit_record(row, context)
+
+    def _audit_record(
+        self, row: AuditEvent, context: PrivacyProviderContext
+    ) -> PrivacyExportRecord:
+        metadata, redacted_metadata = _safe_audit_metadata(row.metadata_json)
+        payload: dict[str, object] = {
+            "id": row.id,
+            "category": row.category,
+            "action": row.action,
+            "target_type": row.target_type,
+            "target_id": row.target_id,
+            "metadata_json": metadata,
+            "legal_hold_until": row.legal_hold_until,
+            "created_at": row.created_at,
+        }
+        redacted_fields = []
+        if row.reason is not None:
+            redacted_fields.append("reason")
+        redacted_fields.extend(redacted_metadata)
+
+        if row.actor_user_id == context.subject_user_id:
+            payload["actor_user_id"] = row.actor_user_id
+            payload["ip_address"] = row.ip_address
+            payload["user_agent"] = row.user_agent
+        else:
+            payload["has_actor"] = row.actor_user_id is not None
+            redacted_fields.extend(("actor_user_id", "ip_address", "user_agent"))
+
+        return self._record(payload, redacted_fields=tuple(redacted_fields))
 
 
 class PlatformStaffBySubjectExportProvider(_BaseSubjectExportProvider):
