@@ -1120,3 +1120,97 @@ def test_audit_export_does_not_join_actor_only_target_ids(
             assert other_actor.email not in encoded_payload
 
     run_async(_run())
+
+
+def test_export_artifact_provider_omits_non_ready_artifacts(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            subject = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"artifact-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add(subject)
+            await session.flush()
+
+            dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+                requester_user_id=subject.id,
+                subject_user_id=subject.id,
+                submitted_at=now - timedelta(days=1),
+                due_at=now + timedelta(days=29),
+            )
+            session.add(dsr)
+            await session.flush()
+
+            ready_artifact = ExportArtifact(
+                data_subject_request_id=dsr.id,
+                subject_user_id=subject.id,
+                requester_user_id=subject.id,
+                status=ExportArtifactStatus.READY.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                storage_key=f"exports/{uuid4()}/ready.zip",
+                filename="privacy-export-ready.zip",
+                content_type="application/zip",
+                size_bytes=256,
+                checksum_sha256="a" * 64,
+                schema_version="1.0",
+                queued_at=now - timedelta(hours=2),
+                started_at=now - timedelta(hours=1),
+                completed_at=now - timedelta(minutes=30),
+                expires_at=now + timedelta(days=7),
+                download_count=0,
+            )
+            processing_artifact = ExportArtifact(
+                data_subject_request_id=dsr.id,
+                subject_user_id=subject.id,
+                requester_user_id=subject.id,
+                status=ExportArtifactStatus.PROCESSING.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                storage_key=f"exports/{uuid4()}/processing.zip",
+                filename="privacy-export-processing.zip",
+                content_type="application/zip",
+                size_bytes=None,
+                checksum_sha256=None,
+                schema_version="1.0",
+                queued_at=now - timedelta(minutes=5),
+                started_at=now - timedelta(minutes=4),
+                expires_at=now + timedelta(days=7),
+                download_count=0,
+            )
+            session.add_all([ready_artifact, processing_artifact])
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=processing_artifact.id,
+                    data_subject_request_id=dsr.id,
+                    subject_user_id=subject.id,
+                    requester_user_id=subject.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["export_artifacts.subject_or_actor_metadata"]
+            artifact_records_json = json.dumps(records, sort_keys=True)
+
+            assert any(
+                item["payload"]["id"] == str(ready_artifact.id) for item in records
+            )
+            assert all(
+                item["payload"]["id"] != str(processing_artifact.id) for item in records
+            )
+            assert "privacy-export-ready.zip" in artifact_records_json
+            assert "privacy-export-processing.zip" not in artifact_records_json
+            assert str(processing_artifact.id) not in artifact_records_json
+
+    run_async(_run())

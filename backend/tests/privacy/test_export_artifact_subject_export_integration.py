@@ -110,7 +110,8 @@ def test_worker_generated_archive_uses_cross_table_subject_exporter(
             assert profile_payload["email"] == user.email
             assert profile_payload["first_name"] == "Ada"
             assert data["dsr.workflow_records"]
-            assert data["export_artifacts.subject_or_actor_metadata"]
+            artifact_records = data["export_artifacts.subject_or_actor_metadata"]
+            assert artifact_records == []
 
             persisted = await service.dsr_repo.get_by_id(dsr.id)
             assert persisted is not None

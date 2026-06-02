@@ -16,7 +16,10 @@ from app.outbox.models.outbox_event import OutboxEvent
 from app.platform.models.platform_staff import PlatformStaff
 from app.privacy.exporters.base import ExportContext
 from app.privacy.models.data_subject_request import DataSubjectRequest
-from app.privacy.models.export_artifact import ExportArtifact
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactStatus,
+)
 from app.privacy.models.privacy_governance import (
     ConsentRecord,
     DataProcessingAuthorization,
@@ -539,11 +542,14 @@ class ExportArtifactMetadataExportProvider(_BaseSubjectExportProvider):
         stmt = (
             select(ExportArtifact)
             .where(
-                or_(
-                    ExportArtifact.subject_user_id == context.subject_user_id,
-                    ExportArtifact.requester_user_id == context.subject_user_id,
-                    ExportArtifact.requested_by_user_id == context.subject_user_id,
-                    ExportArtifact.generated_by_user_id == context.subject_user_id,
+                and_(
+                    ExportArtifact.status == ExportArtifactStatus.READY.value,
+                    or_(
+                        ExportArtifact.subject_user_id == context.subject_user_id,
+                        ExportArtifact.requester_user_id == context.subject_user_id,
+                        ExportArtifact.requested_by_user_id == context.subject_user_id,
+                        ExportArtifact.generated_by_user_id == context.subject_user_id,
+                    ),
                 )
             )
             .order_by(ExportArtifact.created_at.asc(), ExportArtifact.id.asc())
@@ -909,9 +915,12 @@ async def _get_subject_export_artifact_ids(
     session: AsyncSession, subject_user_id: UUID
 ) -> tuple[UUID, ...]:
     stmt = select(ExportArtifact.id).where(
-        or_(
-            ExportArtifact.subject_user_id == subject_user_id,
-            ExportArtifact.requester_user_id == subject_user_id,
+        and_(
+            ExportArtifact.status == ExportArtifactStatus.READY.value,
+            or_(
+                ExportArtifact.subject_user_id == subject_user_id,
+                ExportArtifact.requester_user_id == subject_user_id,
+            ),
         )
     )
     return tuple((await session.execute(stmt)).scalars().all())
