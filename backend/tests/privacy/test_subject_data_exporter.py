@@ -11,6 +11,7 @@ from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import Membership, MembershipRole
 from app.organisations.models.organisation import Organisation
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType
+from app.platform.models.platform_staff import PlatformStaff
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
 from app.privacy.models.data_subject_request import (
@@ -356,5 +357,219 @@ def test_export_minimises_actor_only_export_artifact_rows(
             assert str(other_dsr.id) not in encoded_payload
             assert requester.email not in encoded_payload
             assert "privacy-export-other-subject.zip" not in encoded_payload
+
+    run_async(_run())
+
+
+def test_invite_export_minimises_revoker_only_rows(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            revoker = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"revoker-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            invitee = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"invitee-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            organisation = Organisation(name="Sensitive Org", slug=f"org-{uuid4()}")
+            session.add_all([revoker, invitee, organisation])
+            await session.flush()
+
+            invite = Invite(
+                email=invitee.email,
+                organisation_id=organisation.id,
+                role=MembershipRole.MEMBER,
+                status=InviteStatus.REVOKED,
+                token_hash="secret-token-hash",
+                expires_at=now + timedelta(days=1),
+                revoked_at=now,
+                revoked_by_user_id=revoker.id,
+            )
+            session.add(invite)
+            await session.flush()
+
+            outbox = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=invite.id,
+                payload_json={
+                    "invite_id": str(invite.id),
+                    "organisation_id": str(organisation.id),
+                    "email": invitee.email,
+                    "encrypted_raw_token": "encrypted-secret-token",
+                    "role": MembershipRole.MEMBER.value,
+                },
+            )
+            session.add(outbox)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=revoker.id,
+                    requester_user_id=revoker.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            invite_records = payload["data"]["invites.by_subject_email_or_revoker"]
+            invite_record = next(
+                item
+                for item in invite_records
+                if item["payload"]["id"] == str(invite.id)
+            )
+            invite_payload = invite_record["payload"]
+            redacted_fields = set(invite_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert invite_record["record_kind"] == "reference"
+            assert invite_payload["revoked_by_user_id"] == str(revoker.id)
+            assert invite_payload["status"] == InviteStatus.REVOKED.value
+            assert "email" not in invite_payload
+            assert "organisation_id" not in invite_payload
+            assert "role" not in invite_payload
+            assert "expires_at" not in invite_payload
+            assert "email" in redacted_fields
+            assert "organisation_id" in redacted_fields
+            assert "role" in redacted_fields
+            assert "token_hash" in redacted_fields
+            assert payload["data"]["outbox.subject_references"] == []
+            assert str(invitee.id) not in encoded_payload
+            assert invitee.email not in encoded_payload
+            assert str(organisation.id) not in encoded_payload
+
+    run_async(_run())
+
+
+def test_platform_staff_export_minimises_creator_only_rows(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            creator = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"creator-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            staff_user = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"staff-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add_all([creator, staff_user])
+            await session.flush()
+
+            staff = PlatformStaff(
+                user_id=staff_user.id,
+                role="compliance_officer",
+                status="suspended",
+                created_by_user_id=creator.id,
+                suspended_at=now,
+                suspended_reason="Private staff suspension note",
+            )
+            session.add(staff)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=creator.id,
+                    requester_user_id=creator.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["platform_staff.by_subject_or_creator"]
+            creator_record = next(
+                item for item in records if item["payload"]["id"] == str(staff.id)
+            )
+            creator_payload = creator_record["payload"]
+            redacted_fields = set(creator_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert creator_record["record_kind"] == "reference"
+            assert creator_payload["created_by_user_id"] == str(creator.id)
+            assert "user_id" not in creator_payload
+            assert "role" not in creator_payload
+            assert "status" not in creator_payload
+            assert "suspended_at" not in creator_payload
+            assert "suspended_reason" not in creator_payload
+            assert "user_id" in redacted_fields
+            assert "role" in redacted_fields
+            assert "status" in redacted_fields
+            assert "suspended_reason" in redacted_fields
+            assert str(staff_user.id) not in encoded_payload
+            assert staff_user.email not in encoded_payload
+            assert "Private staff suspension note" not in encoded_payload
+
+    run_async(_run())
+
+
+def test_platform_staff_export_redacts_free_text_suspension_reason(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            staff_user = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"staff-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add(staff_user)
+            await session.flush()
+
+            staff = PlatformStaff(
+                user_id=staff_user.id,
+                role="compliance_officer",
+                status="suspended",
+                created_by_user_id=staff_user.id,
+                suspended_at=now,
+                suspended_reason="Free text staff reason",
+            )
+            session.add(staff)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=staff_user.id,
+                    requester_user_id=staff_user.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["platform_staff.by_subject_or_creator"]
+            subject_record = next(
+                item for item in records if item["payload"]["id"] == str(staff.id)
+            )
+            subject_payload = subject_record["payload"]
+
+            assert subject_record["record_kind"] == "data"
+            assert subject_payload["user_id"] == str(staff_user.id)
+            assert subject_payload["role"] == "compliance_officer"
+            assert subject_payload["status"] == "suspended"
+            assert "suspended_reason" not in subject_payload
+            assert "suspended_reason" in subject_record["redacted_fields"]
+            assert "Free text staff reason" not in json.dumps(payload)
 
     run_async(_run())

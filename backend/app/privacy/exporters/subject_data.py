@@ -172,21 +172,55 @@ class InvitesBySubjectExportProvider(_BaseSubjectExportProvider):
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:
-            yield self._record(
-                {
-                    "id": row.id,
-                    "email": row.email,
-                    "organisation_id": row.organisation_id,
-                    "role": row.role,
-                    "status": row.status,
-                    "expires_at": row.expires_at,
-                    "revoked_at": row.revoked_at,
-                    "revoked_by_user_id": row.revoked_by_user_id,
-                    "created_at": row.created_at,
-                    "updated_at": row.updated_at,
-                },
-                redacted_fields=("token_hash",),
-            )
+            if self._is_revoker_only_record(row, subject_email):
+                yield self._revoker_reference_record(row)
+                continue
+            yield self._subject_invite_record(row)
+
+    @staticmethod
+    def _is_revoker_only_record(row: Invite, subject_email: str | None) -> bool:
+        if row.revoked_by_user_id is None:
+            return False
+        if subject_email is None:
+            return True
+        return row.email.strip().lower() != subject_email
+
+    def _subject_invite_record(self, row: Invite) -> PrivacyExportRecord:
+        return self._record(
+            {
+                "id": row.id,
+                "email": row.email,
+                "organisation_id": row.organisation_id,
+                "role": row.role,
+                "status": row.status,
+                "expires_at": row.expires_at,
+                "revoked_at": row.revoked_at,
+                "revoked_by_user_id": row.revoked_by_user_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            redacted_fields=("token_hash",),
+        )
+
+    def _revoker_reference_record(self, row: Invite) -> PrivacyExportRecord:
+        return self._record(
+            {
+                "id": row.id,
+                "revoked_by_user_id": row.revoked_by_user_id,
+                "status": row.status,
+                "revoked_at": row.revoked_at,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            record_kind=PrivacyExportRecordKind.REFERENCE,
+            redacted_fields=(
+                "email",
+                "organisation_id",
+                "role",
+                "expires_at",
+                "token_hash",
+            ),
+        )
 
 
 class OutboxSubjectReferencesExportProvider(_BaseSubjectExportProvider):
@@ -303,19 +337,52 @@ class PlatformStaffBySubjectExportProvider(_BaseSubjectExportProvider):
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:
-            yield self._record(
-                {
-                    "id": row.id,
-                    "user_id": row.user_id,
-                    "role": row.role,
-                    "status": row.status,
-                    "created_by_user_id": row.created_by_user_id,
-                    "suspended_at": row.suspended_at,
-                    "suspended_reason": row.suspended_reason,
-                    "created_at": row.created_at,
-                    "updated_at": row.updated_at,
-                }
-            )
+            if self._is_creator_only_record(row, context):
+                yield self._creator_reference_record(row)
+                continue
+            yield self._subject_staff_record(row)
+
+    @staticmethod
+    def _is_creator_only_record(
+        row: PlatformStaff, context: PrivacyProviderContext
+    ) -> bool:
+        return (
+            row.created_by_user_id == context.subject_user_id
+            and row.user_id != context.subject_user_id
+        )
+
+    def _subject_staff_record(self, row: PlatformStaff) -> PrivacyExportRecord:
+        return self._record(
+            {
+                "id": row.id,
+                "user_id": row.user_id,
+                "role": row.role,
+                "status": row.status,
+                "created_by_user_id": row.created_by_user_id,
+                "suspended_at": row.suspended_at,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            redacted_fields=("suspended_reason",),
+        )
+
+    def _creator_reference_record(self, row: PlatformStaff) -> PrivacyExportRecord:
+        return self._record(
+            {
+                "id": row.id,
+                "created_by_user_id": row.created_by_user_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            record_kind=PrivacyExportRecordKind.REFERENCE,
+            redacted_fields=(
+                "user_id",
+                "role",
+                "status",
+                "suspended_at",
+                "suspended_reason",
+            ),
+        )
 
 
 class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
@@ -760,12 +827,15 @@ async def _get_subject_email(
 async def _get_subject_invite_ids(
     session: AsyncSession, subject_user_id: UUID
 ) -> tuple[UUID, ...]:
-    conditions = [Invite.revoked_by_user_id == subject_user_id]
     subject_email = await _get_subject_email(session, subject_user_id)
-    if subject_email is not None:
-        conditions.append(func.lower(Invite.email) == subject_email)
+    if subject_email is None:
+        return ()
 
-    stmt = select(Invite.id).where(or_(*conditions)).order_by(Invite.created_at.asc())
+    stmt = (
+        select(Invite.id)
+        .where(func.lower(Invite.email) == subject_email)
+        .order_by(Invite.created_at.asc())
+    )
     return tuple((await session.execute(stmt)).scalars().all())
 
 
