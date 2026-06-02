@@ -316,12 +316,13 @@ class AuditSubjectEventsExportProvider(_BaseSubjectExportProvider):
             "target_type": row.target_type,
             "target_id": row.target_id,
             "metadata_json": metadata,
-            "legal_hold_until": row.legal_hold_until,
             "created_at": row.created_at,
         }
         redacted_fields = []
         if row.reason is not None:
             redacted_fields.append("reason")
+        if row.legal_hold_until is not None:
+            redacted_fields.append("legal_hold_until")
         redacted_fields.extend(redacted_metadata)
 
         if row.actor_user_id == context.subject_user_id:
@@ -899,7 +900,6 @@ async def _get_subject_dsr_ids(
         or_(
             DataSubjectRequest.subject_user_id == subject_user_id,
             DataSubjectRequest.requester_user_id == subject_user_id,
-            DataSubjectRequest.reviewer_user_id == subject_user_id,
         )
     )
     return tuple((await session.execute(stmt)).scalars().all())
@@ -912,8 +912,6 @@ async def _get_subject_export_artifact_ids(
         or_(
             ExportArtifact.subject_user_id == subject_user_id,
             ExportArtifact.requester_user_id == subject_user_id,
-            ExportArtifact.requested_by_user_id == subject_user_id,
-            ExportArtifact.generated_by_user_id == subject_user_id,
         )
     )
     return tuple((await session.execute(stmt)).scalars().all())
@@ -922,12 +920,7 @@ async def _get_subject_export_artifact_ids(
 async def _get_subject_platform_staff_ids(
     session: AsyncSession, subject_user_id: UUID
 ) -> tuple[UUID, ...]:
-    stmt = select(PlatformStaff.id).where(
-        or_(
-            PlatformStaff.user_id == subject_user_id,
-            PlatformStaff.created_by_user_id == subject_user_id,
-        )
-    )
+    stmt = select(PlatformStaff.id).where(PlatformStaff.user_id == subject_user_id)
     return tuple((await session.execute(stmt)).scalars().all())
 
 

@@ -941,3 +941,182 @@ def test_platform_staff_export_redacts_non_subject_creator_from_subject_rows(
             assert creator.email not in encoded_payload
 
     run_async(_run())
+
+
+def test_audit_export_omits_legal_hold_timestamps(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            legal_hold_until = datetime(2099, 1, 1, tzinfo=UTC)
+            subject = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"legal-hold-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add(subject)
+            await session.flush()
+
+            audit_event = AuditEvent(
+                actor_user_id=subject.id,
+                category=AuditCategory.COMPLIANCE.value,
+                action="legal_hold_timestamp_marker",
+                target_type=AuditTargetType.USER.value,
+                target_id=subject.id,
+                legal_hold_until=legal_hold_until,
+                created_at=now,
+            )
+            session.add(audit_event)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=subject.id,
+                    requester_user_id=subject.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["audit.subject_actor_or_target_join_events"]
+            audit_record = next(
+                item for item in records if item["payload"]["id"] == str(audit_event.id)
+            )
+            audit_payload = audit_record["payload"]
+            redacted_fields = set(audit_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert "legal_hold_until" not in audit_payload
+            assert "legal_hold_until" in redacted_fields
+            assert legal_hold_until.isoformat() not in encoded_payload
+
+    run_async(_run())
+
+
+def test_audit_export_does_not_join_actor_only_target_ids(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            subject = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"audit-actor-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            owner = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"audit-target-owner-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            other_actor = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"audit-other-actor-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add_all([subject, owner, other_actor])
+            await session.flush()
+
+            reviewer_only_dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+                requester_user_id=owner.id,
+                subject_user_id=owner.id,
+                reviewer_user_id=subject.id,
+                submitted_at=now - timedelta(days=1),
+                reviewed_at=now,
+                due_at=now + timedelta(days=29),
+            )
+            session.add(reviewer_only_dsr)
+            await session.flush()
+
+            actor_only_artifact = ExportArtifact(
+                data_subject_request_id=reviewer_only_dsr.id,
+                subject_user_id=owner.id,
+                requester_user_id=owner.id,
+                requested_by_user_id=subject.id,
+                generated_by_user_id=subject.id,
+                status=ExportArtifactStatus.READY.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                storage_key=f"exports/{uuid4()}/artifact.zip",
+                filename="privacy-export-other-subject.zip",
+                content_type="application/zip",
+                size_bytes=128,
+                checksum_sha256="c" * 64,
+                schema_version="1.0",
+                queued_at=now - timedelta(hours=1),
+                started_at=now - timedelta(minutes=45),
+                completed_at=now - timedelta(minutes=30),
+                expires_at=now + timedelta(days=7),
+                download_count=0,
+            )
+            creator_only_staff = PlatformStaff(
+                user_id=owner.id,
+                role="compliance_officer",
+                status="active",
+                created_by_user_id=subject.id,
+            )
+            session.add_all([actor_only_artifact, creator_only_staff])
+            await session.flush()
+
+            audit_events = [
+                AuditEvent(
+                    actor_user_id=other_actor.id,
+                    category=AuditCategory.COMPLIANCE.value,
+                    action="reviewer_only_dsr_target_join_marker",
+                    target_type=AuditTargetType.DATA_SUBJECT_REQUEST.value,
+                    target_id=reviewer_only_dsr.id,
+                    created_at=now,
+                ),
+                AuditEvent(
+                    actor_user_id=other_actor.id,
+                    category=AuditCategory.COMPLIANCE.value,
+                    action="actor_only_artifact_target_join_marker",
+                    target_type=AuditTargetType.EXPORT_ARTIFACT.value,
+                    target_id=actor_only_artifact.id,
+                    created_at=now,
+                ),
+                AuditEvent(
+                    actor_user_id=other_actor.id,
+                    category=AuditCategory.COMPLIANCE.value,
+                    action="creator_only_staff_target_join_marker",
+                    target_type=AuditTargetType.PLATFORM_STAFF.value,
+                    target_id=creator_only_staff.id,
+                    created_at=now,
+                ),
+            ]
+            session.add_all(audit_events)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=subject.id,
+                    requester_user_id=subject.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["audit.subject_actor_or_target_join_events"]
+            exported_audit_ids = {item["payload"]["id"] for item in records}
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert str(audit_events[0].id) not in exported_audit_ids
+            assert str(audit_events[1].id) not in exported_audit_ids
+            assert str(audit_events[2].id) not in exported_audit_ids
+            assert "reviewer_only_dsr_target_join_marker" not in encoded_payload
+            assert "actor_only_artifact_target_join_marker" not in encoded_payload
+            assert "creator_only_staff_target_join_marker" not in encoded_payload
+            assert other_actor.email not in encoded_payload
+
+    run_async(_run())
