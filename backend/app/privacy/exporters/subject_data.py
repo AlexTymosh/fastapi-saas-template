@@ -338,42 +338,96 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:
-            yield self._record(
-                {
-                    "id": row.id,
-                    "request_type": row.request_type,
-                    "status": row.status,
-                    "execution_status": row.execution_status,
-                    "requester_user_id": row.requester_user_id,
-                    "subject_user_id": row.subject_user_id,
-                    "reviewer_user_id": row.reviewer_user_id,
-                    "submitted_at": row.submitted_at,
-                    "acknowledged_at": row.acknowledged_at,
-                    "reviewed_at": row.reviewed_at,
-                    "decided_at": row.decided_at,
-                    "fulfilled_at": row.fulfilled_at,
-                    "cancelled_at": row.cancelled_at,
-                    "execution_started_at": row.execution_started_at,
-                    "execution_completed_at": row.execution_completed_at,
-                    "execution_failed_at": row.execution_failed_at,
-                    "execution_failure_reason_code": row.execution_failure_reason_code,
-                    "decision_reason_code": row.decision_reason_code,
-                    "rejection_reason_code": row.rejection_reason_code,
-                    "extension_reason_code": row.extension_reason_code,
-                    "requester_note": row.requester_note,
-                    "due_at": row.due_at,
-                    "extended_until": row.extended_until,
-                    "created_at": row.created_at,
-                    "updated_at": row.updated_at,
-                },
-                redacted_fields=(
-                    "internal_note",
-                    "idempotency_key_hash",
-                    "idempotency_fingerprint",
-                    "idempotency_key_expires_at",
-                    "execution_failure_detail",
-                ),
-            )
+            if self._is_reviewer_only_record(row, context):
+                yield self._reviewer_reference_record(row)
+                continue
+            yield self._subject_request_record(row)
+
+    @staticmethod
+    def _is_reviewer_only_record(
+        row: DataSubjectRequest, context: PrivacyProviderContext
+    ) -> bool:
+        return (
+            row.reviewer_user_id == context.subject_user_id
+            and row.subject_user_id != context.subject_user_id
+            and row.requester_user_id != context.subject_user_id
+        )
+
+    def _subject_request_record(self, row: DataSubjectRequest) -> PrivacyExportRecord:
+        return self._record(
+            {
+                "id": row.id,
+                "request_type": row.request_type,
+                "status": row.status,
+                "execution_status": row.execution_status,
+                "requester_user_id": row.requester_user_id,
+                "subject_user_id": row.subject_user_id,
+                "reviewer_user_id": row.reviewer_user_id,
+                "submitted_at": row.submitted_at,
+                "acknowledged_at": row.acknowledged_at,
+                "reviewed_at": row.reviewed_at,
+                "decided_at": row.decided_at,
+                "fulfilled_at": row.fulfilled_at,
+                "cancelled_at": row.cancelled_at,
+                "execution_started_at": row.execution_started_at,
+                "execution_completed_at": row.execution_completed_at,
+                "execution_failed_at": row.execution_failed_at,
+                "execution_failure_reason_code": (row.execution_failure_reason_code),
+                "decision_reason_code": row.decision_reason_code,
+                "rejection_reason_code": row.rejection_reason_code,
+                "extension_reason_code": row.extension_reason_code,
+                "requester_note": row.requester_note,
+                "due_at": row.due_at,
+                "extended_until": row.extended_until,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            redacted_fields=(
+                "internal_note",
+                "idempotency_key_hash",
+                "idempotency_fingerprint",
+                "idempotency_key_expires_at",
+                "execution_failure_detail",
+            ),
+        )
+
+    def _reviewer_reference_record(
+        self, row: DataSubjectRequest
+    ) -> PrivacyExportRecord:
+        return self._record(
+            {
+                "id": row.id,
+                "reviewer_user_id": row.reviewer_user_id,
+                "status": row.status,
+                "execution_status": row.execution_status,
+                "reviewed_at": row.reviewed_at,
+                "decided_at": row.decided_at,
+                "fulfilled_at": row.fulfilled_at,
+                "cancelled_at": row.cancelled_at,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            record_kind=PrivacyExportRecordKind.REFERENCE,
+            redacted_fields=(
+                "request_type",
+                "requester_user_id",
+                "subject_user_id",
+                "submitted_at",
+                "acknowledged_at",
+                "due_at",
+                "extended_until",
+                "decision_reason_code",
+                "rejection_reason_code",
+                "extension_reason_code",
+                "requester_note",
+                "internal_note",
+                "idempotency_key_hash",
+                "idempotency_fingerprint",
+                "idempotency_key_expires_at",
+                "execution_failure_detail",
+                "execution_failure_reason_code",
+            ),
+        )
 
 
 class ExportArtifactMetadataExportProvider(_BaseSubjectExportProvider):

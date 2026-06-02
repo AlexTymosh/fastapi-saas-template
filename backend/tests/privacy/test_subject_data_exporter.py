@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -162,5 +163,82 @@ def test_cross_table_subject_export_includes_current_dsr_scope(
             assert audit_payload["metadata_json"] == {"request_type": "export"}
             notices = payload["manifest"]["redaction_notices"]
             assert notices
+
+    run_async(_run())
+
+
+def test_dsr_export_minimises_reviewer_only_requests(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            reviewer = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"reviewer-{uuid4()}@example.com",
+                email_verified=True,
+                first_name="Reviewer",
+            )
+            requester = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"requester-{uuid4()}@example.com",
+                email_verified=True,
+                first_name="Requester",
+            )
+            session.add_all([reviewer, requester])
+            await session.flush()
+
+            reviewed_dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+                requester_user_id=requester.id,
+                subject_user_id=requester.id,
+                reviewer_user_id=reviewer.id,
+                requester_note="Other subject private note",
+                internal_note="Internal reviewer note",
+                submitted_at=now - timedelta(days=1),
+                reviewed_at=now,
+                decided_at=now,
+                due_at=now + timedelta(days=29),
+            )
+            session.add(reviewed_dsr)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=reviewer.id,
+                    requester_user_id=reviewer.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["dsr.workflow_records"]
+            reviewer_record = next(
+                item
+                for item in records
+                if item["payload"]["id"] == str(reviewed_dsr.id)
+            )
+            reviewer_payload = reviewer_record["payload"]
+            redacted_fields = set(reviewer_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert reviewer_record["record_kind"] == "reference"
+            assert reviewer_payload["reviewer_user_id"] == str(reviewer.id)
+            assert reviewer_payload["status"] == DataSubjectRequestStatus.APPROVED.value
+            assert "requester_user_id" not in reviewer_payload
+            assert "subject_user_id" not in reviewer_payload
+            assert "requester_note" not in reviewer_payload
+            assert "internal_note" not in reviewer_payload
+            assert "requester_user_id" in redacted_fields
+            assert "subject_user_id" in redacted_fields
+            assert "requester_note" in redacted_fields
+            assert str(requester.id) not in encoded_payload
+            assert requester.email not in encoded_payload
+            assert "Other subject private note" not in encoded_payload
 
     run_async(_run())
