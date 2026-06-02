@@ -17,6 +17,12 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
 )
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
+)
 from app.privacy.models.privacy_governance import (
     ConsentRecord,
     DataProcessingAuthorization,
@@ -44,7 +50,11 @@ def test_cross_table_subject_export_includes_current_dsr_scope(
                 first_name="Ada",
                 last_name="Lovelace",
             )
-            organisation = Organisation(name="Example Ltd", slug=f"org-{uuid4()}")
+            organisation = Organisation(
+                name="Example Ltd",
+                slug=f"org-{uuid4()}",
+                suspended_reason="Contains free-text organisation review note",
+            )
             session.add_all([user, organisation])
             await session.flush()
 
@@ -140,6 +150,10 @@ def test_cross_table_subject_export_includes_current_dsr_scope(
             assert data["users.profile"]
             assert data["memberships.by_subject"]
             assert data["organisations.by_subject_membership"]
+            org_record = data["organisations.by_subject_membership"][0]
+            org_payload = org_record["payload"]
+            assert "suspended_reason" not in org_payload
+            assert "suspended_reason" in org_record["redacted_fields"]
             assert data["invites.by_subject_email_or_revoker"]
             assert data["outbox.subject_references"]
             assert data["audit.subject_actor_or_target_join_events"]
@@ -163,6 +177,8 @@ def test_cross_table_subject_export_includes_current_dsr_scope(
             assert audit_payload["metadata_json"] == {"request_type": "export"}
             notices = payload["manifest"]["redaction_notices"]
             assert notices
+            encoded_payload = json.dumps(payload, sort_keys=True)
+            assert "Contains free-text organisation review note" not in encoded_payload
 
     run_async(_run())
 
@@ -240,5 +256,105 @@ def test_dsr_export_minimises_reviewer_only_requests(
             assert str(requester.id) not in encoded_payload
             assert requester.email not in encoded_payload
             assert "Other subject private note" not in encoded_payload
+
+    run_async(_run())
+
+
+def test_export_minimises_actor_only_export_artifact_rows(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            actor = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"actor-{uuid4()}@example.com",
+                email_verified=True,
+                first_name="Actor",
+            )
+            requester = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"artifact-owner-{uuid4()}@example.com",
+                email_verified=True,
+                first_name="Owner",
+            )
+            session.add_all([actor, requester])
+            await session.flush()
+
+            other_dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+                requester_user_id=requester.id,
+                subject_user_id=requester.id,
+                submitted_at=now - timedelta(days=1),
+                due_at=now + timedelta(days=29),
+            )
+            session.add(other_dsr)
+            await session.flush()
+
+            actor_artifact = ExportArtifact(
+                data_subject_request_id=other_dsr.id,
+                subject_user_id=requester.id,
+                requester_user_id=requester.id,
+                requested_by_user_id=actor.id,
+                generated_by_user_id=actor.id,
+                status=ExportArtifactStatus.READY.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                storage_key=f"exports/{uuid4()}/artifact.zip",
+                filename="privacy-export-other-subject.zip",
+                content_type="application/zip",
+                size_bytes=128,
+                checksum_sha256="a" * 64,
+                schema_version="1.0",
+                queued_at=now - timedelta(hours=1),
+                started_at=now - timedelta(minutes=45),
+                completed_at=now - timedelta(minutes=30),
+                expires_at=now + timedelta(days=7),
+                download_count=0,
+            )
+            session.add(actor_artifact)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=actor.id,
+                    requester_user_id=actor.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["export_artifacts.subject_or_actor_metadata"]
+            artifact_record = next(
+                item
+                for item in records
+                if item["payload"]["id"] == str(actor_artifact.id)
+            )
+            artifact_payload = artifact_record["payload"]
+            redacted_fields = set(artifact_record["redacted_fields"])
+            encoded_payload = json.dumps(payload, sort_keys=True)
+
+            assert artifact_record["record_kind"] == "reference"
+            assert artifact_payload["requested_by_user_id"] == str(actor.id)
+            assert artifact_payload["generated_by_user_id"] == str(actor.id)
+            assert artifact_payload["status"] == ExportArtifactStatus.READY.value
+            assert "data_subject_request_id" not in artifact_payload
+            assert "subject_user_id" not in artifact_payload
+            assert "requester_user_id" not in artifact_payload
+            assert "filename" not in artifact_payload
+            assert "checksum_sha256" not in artifact_payload
+            assert "data_subject_request_id" in redacted_fields
+            assert "subject_user_id" in redacted_fields
+            assert "requester_user_id" in redacted_fields
+            assert "filename" in redacted_fields
+            assert str(requester.id) not in encoded_payload
+            assert str(other_dsr.id) not in encoded_payload
+            assert requester.email not in encoded_payload
+            assert "privacy-export-other-subject.zip" not in encoded_payload
 
     run_async(_run())

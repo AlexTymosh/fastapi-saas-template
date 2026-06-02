@@ -146,10 +146,10 @@ class OrganisationsBySubjectMembershipExportProvider(_BaseSubjectExportProvider)
                     "status": row.status,
                     "deleted_at": row.deleted_at,
                     "suspended_at": row.suspended_at,
-                    "suspended_reason": row.suspended_reason,
                     "created_at": row.created_at,
                     "updated_at": row.updated_at,
-                }
+                },
+                redacted_fields=("suspended_reason",),
             )
 
 
@@ -451,40 +451,108 @@ class ExportArtifactMetadataExportProvider(_BaseSubjectExportProvider):
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:
-            yield self._record(
-                {
-                    "id": row.id,
-                    "data_subject_request_id": row.data_subject_request_id,
-                    "subject_user_id": row.subject_user_id,
-                    "requester_user_id": row.requester_user_id,
-                    "requested_by_user_id": row.requested_by_user_id,
-                    "generated_by_user_id": row.generated_by_user_id,
-                    "status": row.status,
-                    "format": row.format,
-                    "storage_backend": row.storage_backend,
-                    "filename": row.filename,
-                    "content_type": row.content_type,
-                    "size_bytes": row.size_bytes,
-                    "checksum_sha256": row.checksum_sha256,
-                    "schema_version": row.schema_version,
-                    "failure_reason_code": row.failure_reason_code,
-                    "queued_at": row.queued_at,
-                    "started_at": row.started_at,
-                    "completed_at": row.completed_at,
-                    "failed_at": row.failed_at,
-                    "expires_at": row.expires_at,
-                    "downloaded_at": row.downloaded_at,
-                    "download_count": row.download_count,
-                    "created_at": row.created_at,
-                    "updated_at": row.updated_at,
-                },
-                redacted_fields=(
-                    "storage_key",
-                    "processing_token",
-                    "processing_lease_expires_at",
-                    "failure_detail",
-                ),
+            if self._is_actor_only_record(row, context):
+                yield self._actor_reference_record(row, context)
+                continue
+            yield self._subject_artifact_record(row)
+
+    @staticmethod
+    def _is_actor_only_record(
+        row: ExportArtifact, context: PrivacyProviderContext
+    ) -> bool:
+        return (
+            row.subject_user_id != context.subject_user_id
+            and row.requester_user_id != context.subject_user_id
+            and (
+                row.requested_by_user_id == context.subject_user_id
+                or row.generated_by_user_id == context.subject_user_id
             )
+        )
+
+    def _subject_artifact_record(self, row: ExportArtifact) -> PrivacyExportRecord:
+        return self._record(
+            {
+                "id": row.id,
+                "data_subject_request_id": row.data_subject_request_id,
+                "subject_user_id": row.subject_user_id,
+                "requester_user_id": row.requester_user_id,
+                "requested_by_user_id": row.requested_by_user_id,
+                "generated_by_user_id": row.generated_by_user_id,
+                "status": row.status,
+                "format": row.format,
+                "storage_backend": row.storage_backend,
+                "filename": row.filename,
+                "content_type": row.content_type,
+                "size_bytes": row.size_bytes,
+                "checksum_sha256": row.checksum_sha256,
+                "schema_version": row.schema_version,
+                "failure_reason_code": row.failure_reason_code,
+                "queued_at": row.queued_at,
+                "started_at": row.started_at,
+                "completed_at": row.completed_at,
+                "failed_at": row.failed_at,
+                "expires_at": row.expires_at,
+                "downloaded_at": row.downloaded_at,
+                "download_count": row.download_count,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            redacted_fields=(
+                "storage_key",
+                "processing_token",
+                "processing_lease_expires_at",
+                "failure_detail",
+            ),
+        )
+
+    def _actor_reference_record(
+        self, row: ExportArtifact, context: PrivacyProviderContext
+    ) -> PrivacyExportRecord:
+        requested_by_user_id = (
+            row.requested_by_user_id
+            if row.requested_by_user_id == context.subject_user_id
+            else None
+        )
+        generated_by_user_id = (
+            row.generated_by_user_id
+            if row.generated_by_user_id == context.subject_user_id
+            else None
+        )
+        return self._record(
+            {
+                "id": row.id,
+                "requested_by_user_id": requested_by_user_id,
+                "generated_by_user_id": generated_by_user_id,
+                "status": row.status,
+                "format": row.format,
+                "storage_backend": row.storage_backend,
+                "failure_reason_code": row.failure_reason_code,
+                "queued_at": row.queued_at,
+                "started_at": row.started_at,
+                "completed_at": row.completed_at,
+                "failed_at": row.failed_at,
+                "expires_at": row.expires_at,
+                "downloaded_at": row.downloaded_at,
+                "download_count": row.download_count,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            },
+            record_kind=PrivacyExportRecordKind.REFERENCE,
+            redacted_fields=(
+                "data_subject_request_id",
+                "subject_user_id",
+                "requester_user_id",
+                "filename",
+                "content_type",
+                "size_bytes",
+                "checksum_sha256",
+                "schema_version",
+                "storage_key",
+                "processing_token",
+                "processing_lease_expires_at",
+                "failure_detail",
+            ),
+        )
 
 
 class ProcessingAuthorizationsExportProvider(_BaseSubjectExportProvider):
