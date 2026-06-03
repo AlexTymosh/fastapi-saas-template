@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import AuditContext
@@ -30,7 +31,9 @@ from app.privacy.models.export_artifact import (
 )
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
+from app.privacy.storage.base import StorageAdapter
 from app.privacy.storage.local import LocalStorageAdapter
+from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 
 DEFAULT_PROCESSING_LEASE_SECONDS = 3600
 _DOWNLOAD_ELIGIBLE_DSR_STATUSES = frozenset(
@@ -47,6 +50,13 @@ def _ensure_aware_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _optional_secret_value(secret: SecretStr | None) -> str | None:
+    if secret is None:
+        return None
+    value = secret.get_secret_value().strip()
+    return value or None
+
+
 @dataclass(frozen=True)
 class ProcessingExportLease:
     artifact_id: UUID
@@ -56,6 +66,7 @@ class ProcessingExportLease:
 @dataclass(frozen=True)
 class PreparedExportArchive:
     artifact_id: UUID
+    storage_backend: str
     storage_key: str
     filename: str
     content_type: str
@@ -77,16 +88,46 @@ class ExportArtifactService:
         self.dsr_repo = DataSubjectRequestRepository(session)
         self.audit = AuditEventService(session)
         self.settings = get_settings()
-        self.storage = self._build_storage()
+        self._storage_adapters: dict[str, StorageAdapter] = {}
 
-    def _build_storage(self) -> LocalStorageAdapter:
-        backend = self.settings.privacy_exports.storage_backend
+    @property
+    def storage(self) -> StorageAdapter:
+        return self._storage_for_backend()
+
+    def _storage_for_backend(self, backend: str | None = None) -> StorageAdapter:
+        selected_backend = backend or self.settings.privacy_exports.storage_backend
+        storage = self._storage_adapters.get(selected_backend)
+        if storage is None:
+            storage = self._build_storage(selected_backend)
+            self._storage_adapters[selected_backend] = storage
+        return storage
+
+    def _build_storage(self, backend: str) -> StorageAdapter:
+        exports = self.settings.privacy_exports
+
         if backend == ExportArtifactStorageBackend.LOCAL.value:
             return LocalStorageAdapter(
-                self.settings.privacy_exports.local_storage_path,
-                self.settings.privacy_exports.local_signing_secret,
+                exports.local_storage_path,
+                exports.local_signing_secret,
             )
-        raise NotImplementedError("s3_compatible storage is not implemented")
+
+        if backend == ExportArtifactStorageBackend.S3_COMPATIBLE.value:
+            return S3CompatibleStorageAdapter(
+                bucket_name=exports.s3_bucket_name or "",
+                region_name=exports.s3_region_name or "",
+                endpoint_url=exports.s3_endpoint_url,
+                access_key_id=_optional_secret_value(exports.s3_access_key_id),
+                secret_access_key=_optional_secret_value(exports.s3_secret_access_key),
+                key_prefix=exports.s3_key_prefix,
+                server_side_encryption=exports.s3_server_side_encryption,
+                sse_kms_key_id=exports.s3_sse_kms_key_id,
+                addressing_style=exports.s3_addressing_style,
+                connect_timeout_seconds=exports.s3_connect_timeout_seconds,
+                read_timeout_seconds=exports.s3_read_timeout_seconds,
+                max_attempts=exports.s3_max_attempts,
+            )
+
+        raise ValueError(f"Unsupported export artifact storage backend: {backend}")
 
     def _ensure_exports_enabled(self) -> None:
         if not self.settings.privacy_exports.enabled:
@@ -294,7 +335,7 @@ class ExportArtifactService:
             requester_user_id=dsr.requester_user_id,
             status=ExportArtifactStatus.QUEUED.value,
             format=ExportArtifactFormat.JSON_ZIP.value,
-            storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+            storage_backend=self.settings.privacy_exports.storage_backend,
             schema_version=self.settings.privacy_exports.schema_version,
             requested_by_user_id=requested_by_user_id,
             queued_at=queued_at,
@@ -366,9 +407,8 @@ class ExportArtifactService:
             self.settings.privacy_exports.download_url_ttl_seconds,
             remaining_seconds,
         )
-        url = self.storage.generate_download_url(
-            artifact.storage_key, effective_ttl_seconds
-        )
+        storage = self._storage_for_backend(artifact.storage_backend)
+        url = storage.generate_download_url(artifact.storage_key, effective_ttl_seconds)
         updated_artifact = await self.repo.increment_download_count(artifact)
         await self._sync_export_dsr_execution_state(
             updated_artifact,
@@ -560,6 +600,7 @@ class ExportArtifactService:
         storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
         return PreparedExportArchive(
             artifact_id=artifact.id,
+            storage_backend=artifact.storage_backend,
             storage_key=storage_key,
             filename=f"privacy-export-{artifact.id}.zip",
             content_type="application/zip",
@@ -569,8 +610,11 @@ class ExportArtifactService:
         )
 
     def write_prepared_export_archive(self, prepared: PreparedExportArchive) -> None:
-        self.storage.put_bytes(
-            prepared.storage_key, prepared.archive_bytes, prepared.content_type
+        storage = self._storage_for_backend(prepared.storage_backend)
+        storage.put_bytes(
+            prepared.storage_key,
+            prepared.archive_bytes,
+            prepared.content_type,
         )
 
     async def mark_generated_export_artifact_ready(

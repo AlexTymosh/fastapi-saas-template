@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 from functools import lru_cache
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlsplit
 
@@ -499,6 +500,70 @@ class PrivacyExportsSettings(BaseModel):
     max_artifact_size_bytes: int = Field(default=10_485_760, gt=0)
     schema_version: str = "1.0"
     local_signing_secret: str = _DEFAULT_LOCAL_EXPORT_SIGNING_SECRET
+    s3_endpoint_url: str | None = None
+    s3_region_name: str | None = None
+    s3_bucket_name: str | None = None
+    s3_allow_plaintext_private_network: bool = False
+    s3_key_prefix: str = "privacy-exports"
+    s3_access_key_id: SecretStr | None = None
+    s3_secret_access_key: SecretStr | None = None
+    s3_server_side_encryption: Literal["AES256", "aws:kms"] | None = "AES256"
+    s3_sse_kms_key_id: str | None = None
+    s3_addressing_style: Literal["virtual", "path"] = "virtual"
+    s3_connect_timeout_seconds: float = Field(default=3.0, gt=0)
+    s3_read_timeout_seconds: float = Field(default=10.0, gt=0)
+    s3_max_attempts: int = Field(default=3, gt=0, le=10)
+
+    @field_validator(
+        "s3_region_name",
+        "s3_bucket_name",
+        "s3_sse_kms_key_id",
+    )
+    @classmethod
+    def normalise_optional_s3_text(cls, value: str | None) -> str | None:
+        return _normalise_optional_string(value)
+
+    @field_validator("s3_access_key_id", "s3_secret_access_key")
+    @classmethod
+    def normalise_optional_s3_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value().strip()
+        if not secret:
+            return None
+        return SecretStr(secret)
+
+    @field_validator("s3_endpoint_url")
+    @classmethod
+    def validate_s3_endpoint_url(cls, value: str | None) -> str | None:
+        normalised = _normalise_optional_string(value)
+        if normalised is None:
+            return None
+        scheme = _url_scheme(normalised)
+        if scheme not in {"http", "https"}:
+            raise ValueError("PRIVACY_EXPORTS__S3_ENDPOINT_URL must use http(s)")
+        return normalised.rstrip("/")
+
+    @field_validator("s3_key_prefix")
+    @classmethod
+    def validate_s3_key_prefix(cls, value: str) -> str:
+        normalised = _normalise_optional_string(value)
+        if normalised is None:
+            return ""
+        candidate = normalised.strip("/")
+        if "\\" in candidate or ":" in candidate or "//" in candidate:
+            raise ValueError("PRIVACY_EXPORTS__S3_KEY_PREFIX is not a safe path")
+        parsed = PurePosixPath(candidate)
+        if parsed.is_absolute() or any(
+            part in {"", ".", ".."} for part in parsed.parts
+        ):
+            raise ValueError("PRIVACY_EXPORTS__S3_KEY_PREFIX is not a safe path")
+        return "/".join(parsed.parts)
+
+    @field_validator("s3_server_side_encryption", mode="before")
+    @classmethod
+    def normalise_s3_server_side_encryption(cls, value: str | None) -> str | None:
+        return _normalise_optional_string(value)
 
 
 class ProcessorGovernanceSettings(BaseModel):
@@ -568,7 +633,7 @@ class Settings(BaseSettings):
     def validate_environment_security(self) -> Settings:
         env = self.app.environment
 
-        self._validate_privacy_exports_backend_supported()
+        self._validate_privacy_exports_storage_settings()
 
         if env in {"staging", "prod"}:
             if not self.auth.enabled:
@@ -760,33 +825,61 @@ class Settings(BaseSettings):
                 f"{env}: " + ", ".join(invalid_transfers)
             )
 
-    def _validate_privacy_exports_backend_supported(self) -> None:
-        if self.privacy_exports.storage_backend != "s3_compatible":
+    def _validate_privacy_exports_storage_settings(self) -> None:
+        exports = self.privacy_exports
+        if exports.storage_backend != "s3_compatible" or not exports.enabled:
             return
 
-        raise ValueError(
-            "PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible is reserved for "
-            "a future export storage adapter and is not supported yet"
-        )
+        missing = []
+        if not exports.s3_bucket_name:
+            missing.append("PRIVACY_EXPORTS__S3_BUCKET_NAME")
+        if not exports.s3_region_name:
+            missing.append("PRIVACY_EXPORTS__S3_REGION_NAME")
+        if missing:
+            raise ValueError(
+                "S3-compatible privacy export storage requires: " + ", ".join(missing)
+            )
+
+        has_access_key = exports.s3_access_key_id is not None
+        has_secret_key = exports.s3_secret_access_key is not None
+        if has_access_key != has_secret_key:
+            raise ValueError(
+                "PRIVACY_EXPORTS__S3_ACCESS_KEY_ID and "
+                "PRIVACY_EXPORTS__S3_SECRET_ACCESS_KEY must be set together"
+            )
+
+        if (
+            exports.s3_sse_kms_key_id is not None
+            and exports.s3_server_side_encryption != "aws:kms"
+        ):
+            raise ValueError(
+                "PRIVACY_EXPORTS__S3_SSE_KMS_KEY_ID requires "
+                "PRIVACY_EXPORTS__S3_SERVER_SIDE_ENCRYPTION=aws:kms"
+            )
 
     def _validate_privacy_exports_security(self, *, env: str) -> None:
         if not self.privacy_exports.enabled:
             return
-        if self.privacy_exports.storage_backend != "local":
-            return
 
-        signing_secret = self.privacy_exports.local_signing_secret.strip()
-        if signing_secret == _DEFAULT_LOCAL_EXPORT_SIGNING_SECRET:
+        if self.privacy_exports.storage_backend == "local":
             raise ValueError(
-                "PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET must be changed in "
-                f"{env} when PRIVACY_EXPORTS__STORAGE_BACKEND=local"
+                "PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible is required in "
+                f"{env} when privacy exports are enabled"
             )
 
-        if len(signing_secret) < 32:
+        exports = self.privacy_exports
+        if exports.storage_backend != "s3_compatible":
+            return
+
+        if (
+            exports.s3_endpoint_url is not None
+            and _url_scheme(exports.s3_endpoint_url) != "https"
+            and not exports.s3_allow_plaintext_private_network
+        ):
             raise ValueError(
-                "PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET must be at least "
-                "32 characters in staging/prod when "
-                "PRIVACY_EXPORTS__STORAGE_BACKEND=local"
+                "PRIVACY_EXPORTS__S3_ENDPOINT_URL must use https:// in "
+                f"{env} unless "
+                "PRIVACY_EXPORTS__S3_ALLOW_PLAINTEXT_PRIVATE_NETWORK=true"
             )
 
     def _required_processor_names(self) -> set[str]:
@@ -799,6 +892,11 @@ class Settings(BaseSettings):
             required_processors.add("vault")
         if self.observability.metrics_enabled and self.observability.exporter == "otlp":
             required_processors.add("otlp")
+        if (
+            self.privacy_exports.enabled
+            and self.privacy_exports.storage_backend == "s3_compatible"
+        ):
+            required_processors.add("privacy_export_storage")
         return required_processors
 
     def _validate_production_transport_security(self) -> None:
