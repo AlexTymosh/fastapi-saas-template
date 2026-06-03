@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -23,25 +24,18 @@ def _subject_export_provider_types() -> tuple[type[Any], ...]:
     return provider_types
 
 
-def test_subject_export_provider_keys_match_inventory_export_keys() -> None:
-    inventory_entries = _inventory_export_entries()
-    provider_types = _subject_export_provider_types()
-
-    concrete_provider_keys = {
-        provider_type.provider_key for provider_type in provider_types
+def _subject_export_provider_entries() -> dict[str, type[Any]]:
+    return {
+        provider_type.provider_key: provider_type
+        for provider_type in _subject_export_provider_types()
     }
 
-    assert concrete_provider_keys == set(inventory_entries)
 
-
-def test_subject_export_provider_table_names_match_inventory_entries() -> None:
+def test_subject_export_provider_keys_match_inventory_export_keys() -> None:
     inventory_entries = _inventory_export_entries()
+    provider_entries = _subject_export_provider_entries()
 
-    for provider_type in _subject_export_provider_types():
-        provider_key = provider_type.provider_key
-        inventory_entry = inventory_entries[provider_key]
-
-        assert provider_type.table_name == inventory_entry.table_name
+    assert set(provider_entries) == set(inventory_entries)
 
 
 def test_subject_export_provider_keys_are_unique() -> None:
@@ -52,8 +46,15 @@ def test_subject_export_provider_keys_are_unique() -> None:
     assert len(provider_keys) == len(set(provider_keys))
 
 
-def test_subject_export_providers_expose_async_export_iterator_contract() -> None:
-    for provider_type in _subject_export_provider_types():
-        method = getattr(provider_type, "iter_export_records", None)
+def test_subject_export_provider_table_names_match_inventory() -> None:
+    inventory_entries = _inventory_export_entries()
 
-        assert callable(method), provider_type.provider_key
+    for provider_key, provider_type in _subject_export_provider_entries().items():
+        assert provider_type.table_name == inventory_entries[provider_key].table_name
+
+
+def test_subject_export_providers_expose_async_generator_iterators() -> None:
+    for provider_type in _subject_export_provider_types():
+        iterator = provider_type.iter_export_records
+
+        assert inspect.isasyncgenfunction(iterator), provider_type.provider_key
