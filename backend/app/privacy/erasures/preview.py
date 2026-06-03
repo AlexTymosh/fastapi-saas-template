@@ -121,10 +121,10 @@ def _preview_entry(plan_entry: ErasureProviderPlanEntry) -> ErasurePreviewEntry:
 def _readiness_for_plan_entry(
     plan_entry: ErasureProviderPlanEntry,
 ) -> ErasurePreviewReadiness:
-    if plan_entry.requires_manual_review:
-        return ErasurePreviewReadiness.MANUAL_REVIEW_REQUIRED
     if plan_entry.execution_mode is ErasureExecutionMode.NOT_APPLICABLE:
         return ErasurePreviewReadiness.NOT_APPLICABLE
     if plan_entry.execution_mode is ErasureExecutionMode.RETAIN_WITH_LEGAL_BASIS:
         return ErasurePreviewReadiness.RETAIN_ONLY
+    if plan_entry.requires_manual_review:
+        return ErasurePreviewReadiness.MANUAL_REVIEW_REQUIRED
     return ErasurePreviewReadiness.AUTOMATIC

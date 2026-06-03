@@ -34,6 +34,11 @@ rejects non-`erase` request types and returns:
 - manual-review requirement;
 - automatic/manual/retain-only/not-applicable provider groups.
 
+Retain-with-legal-basis providers are grouped as `retain_only` before the
+manual-review fallback is applied. They may still carry
+`requires_manual_review=true`, but they are not mixed into the generic
+`manual_review_required` provider group.
+
 The preview deliberately does not query the database yet. Database-row counting
 and operator-facing diff previews should be added in the next implementation
 slice together with the first concrete erasure providers.

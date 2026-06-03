@@ -4,8 +4,10 @@ from uuid import uuid4
 
 import pytest
 
+from app.privacy.data_inventory import PrivacyErasureStrategy
 from app.privacy.erasures.plan import (
     ErasureExecutionMode,
+    ErasureProviderPlanEntry,
     build_erasure_provider_plan,
 )
 from app.privacy.erasures.preview import (
@@ -54,12 +56,13 @@ def test_erasure_preview_marks_manual_review_entries_as_blocking() -> None:
 
     assert manual_entries
     assert preview.blocked_by_manual_review is True
-    assert set(preview.manual_review_provider_keys) == {
+    assert set(preview.manual_review_provider_keys) <= {
         entry.provider_key for entry in manual_entries
     }
     assert all(
-        entry.readiness is ErasurePreviewReadiness.MANUAL_REVIEW_REQUIRED
-        for entry in manual_entries
+        entry.requires_manual_review
+        for entry in preview.entries
+        if entry.readiness is ErasurePreviewReadiness.MANUAL_REVIEW_REQUIRED
     )
 
 
@@ -90,6 +93,33 @@ def test_erasure_preview_keeps_automatic_mutations_separate() -> None:
     )
 
 
+def test_erasure_preview_preserves_retain_only_classification() -> None:
+    plan = (
+        ErasureProviderPlanEntry(
+            provider_key="organisations.review_subject_references",
+            table_name="organisations",
+            strategy=PrivacyErasureStrategy.RETAIN_WITH_LEGAL_BASIS,
+            execution_mode=ErasureExecutionMode.RETAIN_WITH_LEGAL_BASIS,
+            retention_policy_key="tenant_profile",
+            requires_manual_review=True,
+        ),
+    )
+    preview = build_erasure_preview(
+        request_id=uuid4(),
+        subject_user_id=uuid4(),
+        request_type=DataSubjectRequestType.ERASE,
+        plan=plan,
+    )
+
+    entry = preview.entries[0]
+
+    assert entry.readiness is ErasurePreviewReadiness.RETAIN_ONLY
+    assert entry.requires_manual_review is True
+    assert preview.retain_only_provider_keys == (entry.provider_key,)
+    assert preview.manual_review_provider_keys == ()
+    assert preview.blocked_by_manual_review is True
+
+
 def test_erasure_preview_exposes_non_mutating_provider_groups() -> None:
     preview = build_erasure_preview(
         request_id=uuid4(),
@@ -108,5 +138,7 @@ def test_erasure_preview_exposes_non_mutating_provider_groups() -> None:
         if entry.readiness is ErasurePreviewReadiness.NOT_APPLICABLE
     }
 
+    assert retain_only_keys
     assert set(preview.retain_only_provider_keys) == retain_only_keys
     assert set(preview.not_applicable_provider_keys) == not_applicable_keys
+    assert not retain_only_keys.intersection(preview.manual_review_provider_keys)
