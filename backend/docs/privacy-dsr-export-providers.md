@@ -50,6 +50,22 @@ Audit rows are exported with allowlisted structured metadata only. Free-text
 reason fields are reported through redaction notices rather than copied into the
 subject export.
 
+## Contract guardrails
+
+The subject export implementation must stay aligned with the privacy inventory.
+
+Required checks:
+
+- every inventory `export_provider_key` has exactly one concrete subject export
+  provider;
+- every concrete subject export provider points to the same table as the
+  matching inventory entry;
+- provider keys are unique;
+- concrete providers expose the async `iter_export_records()` contract.
+
+A dedicated contract test should enforce these rules so future personal-data
+models cannot silently enter the inventory without export-provider coverage.
+
 ## Remaining work
 
 This is not the final 328-3 implementation.
@@ -62,4 +78,5 @@ Remaining follow-up work:
 - add production object storage;
 - add erasure/anonymisation providers;
 - add retention purge for expired export objects;
-- add larger integration tests on PostgreSQL-compatible JSON predicates.
+- add larger integration tests on PostgreSQL-compatible JSON predicates;
+- add a versioned export payload schema contract.
