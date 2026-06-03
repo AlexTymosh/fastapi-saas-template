@@ -523,6 +523,16 @@ class PrivacyExportsSettings(BaseModel):
     def normalise_optional_s3_text(cls, value: str | None) -> str | None:
         return _normalise_optional_string(value)
 
+    @field_validator("s3_access_key_id", "s3_secret_access_key")
+    @classmethod
+    def normalise_optional_s3_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value().strip()
+        if not secret:
+            return None
+        return SecretStr(secret)
+
     @field_validator("s3_endpoint_url")
     @classmethod
     def validate_s3_endpoint_url(cls, value: str | None) -> str | None:

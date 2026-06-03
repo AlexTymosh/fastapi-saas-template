@@ -69,6 +69,57 @@ def test_s3_export_access_key_pair_must_be_complete() -> None:
         Settings(privacy_exports=_s3_export_settings(s3_access_key_id="access-key"))
 
 
+@pytest.mark.parametrize(
+    "credentials",
+    [
+        {
+            "s3_access_key_id": "access-key",
+            "s3_secret_access_key": "   ",
+        },
+        {
+            "s3_access_key_id": "   ",
+            "s3_secret_access_key": "secret-key",
+        },
+    ],
+)
+def test_s3_export_blank_credential_pair_fails_fast(
+    credentials: dict[str, str],
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="S3_ACCESS_KEY_ID.*S3_SECRET_ACCESS_KEY",
+    ):
+        Settings(privacy_exports=_s3_export_settings(**credentials))
+
+
+def test_s3_export_blank_credentials_are_treated_as_missing() -> None:
+    settings = Settings(
+        privacy_exports=_s3_export_settings(
+            s3_access_key_id="   ",
+            s3_secret_access_key="\t",
+        )
+    )
+
+    assert settings.privacy_exports.s3_access_key_id is None
+    assert settings.privacy_exports.s3_secret_access_key is None
+
+
+def test_s3_export_credentials_are_trimmed_when_configured() -> None:
+    settings = Settings(
+        privacy_exports=_s3_export_settings(
+            s3_access_key_id="  access-key  ",
+            s3_secret_access_key="  secret-key  ",
+        )
+    )
+
+    assert settings.privacy_exports.s3_access_key_id is not None
+    assert settings.privacy_exports.s3_secret_access_key is not None
+    assert settings.privacy_exports.s3_access_key_id.get_secret_value() == "access-key"
+    assert (
+        settings.privacy_exports.s3_secret_access_key.get_secret_value() == "secret-key"
+    )
+
+
 def test_s3_kms_key_requires_kms_encryption_mode() -> None:
     with pytest.raises(ValueError, match="S3_SSE_KMS_KEY_ID"):
         Settings(privacy_exports=_s3_export_settings(s3_sse_kms_key_id="kms-key"))
