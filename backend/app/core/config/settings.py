@@ -503,6 +503,7 @@ class PrivacyExportsSettings(BaseModel):
     s3_endpoint_url: str | None = None
     s3_region_name: str | None = None
     s3_bucket_name: str | None = None
+    s3_allow_plaintext_private_network: bool = False
     s3_key_prefix: str = "privacy-exports"
     s3_access_key_id: SecretStr | None = None
     s3_secret_access_key: SecretStr | None = None
@@ -854,6 +855,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible is required in "
                 f"{env} when privacy exports are enabled"
+            )
+
+        exports = self.privacy_exports
+        if exports.storage_backend != "s3_compatible":
+            return
+
+        if (
+            exports.s3_endpoint_url is not None
+            and _url_scheme(exports.s3_endpoint_url) != "https"
+            and not exports.s3_allow_plaintext_private_network
+        ):
+            raise ValueError(
+                "PRIVACY_EXPORTS__S3_ENDPOINT_URL must use https:// in "
+                f"{env} unless "
+                "PRIVACY_EXPORTS__S3_ALLOW_PLAINTEXT_PRIVATE_NETWORK=true"
             )
 
     def _required_processor_names(self) -> set[str]:

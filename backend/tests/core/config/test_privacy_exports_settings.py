@@ -5,9 +5,20 @@ import pytest
 from app.core.config.settings import Settings
 
 
-def _staging_settings_kwargs() -> dict[str, object]:
+def _s3_export_settings(**overrides: object) -> dict[str, object]:
+    settings: dict[str, object] = {
+        "enabled": True,
+        "storage_backend": "s3_compatible",
+        "s3_region_name": "eu-west-2",
+        "s3_bucket_name": "privacy-exports",
+    }
+    settings.update(overrides)
+    return settings
+
+
+def _staging_settings_kwargs(*, environment: str = "staging") -> dict[str, object]:
     return {
-        "app": {"environment": "staging"},
+        "app": {"environment": environment},
         "auth": {
             "enabled": True,
             "issuer_url": "https://idp.example.com",
@@ -22,12 +33,7 @@ def _staging_settings_kwargs() -> dict[str, object]:
             "edge_assertion_secret": "x" * 32,
         },
         "outbox": {"invite_delivery_enabled": False},
-        "privacy_exports": {
-            "enabled": True,
-            "storage_backend": "s3_compatible",
-            "s3_region_name": "eu-west-2",
-            "s3_bucket_name": "privacy-exports",
-        },
+        "privacy_exports": _s3_export_settings(),
     }
 
 
@@ -60,28 +66,12 @@ def test_s3_export_access_key_pair_must_be_complete() -> None:
         ValueError,
         match="S3_ACCESS_KEY_ID.*S3_SECRET_ACCESS_KEY",
     ):
-        Settings(
-            privacy_exports={
-                "enabled": True,
-                "storage_backend": "s3_compatible",
-                "s3_region_name": "eu-west-2",
-                "s3_bucket_name": "privacy-exports",
-                "s3_access_key_id": "access-key",
-            }
-        )
+        Settings(privacy_exports=_s3_export_settings(s3_access_key_id="access-key"))
 
 
 def test_s3_kms_key_requires_kms_encryption_mode() -> None:
     with pytest.raises(ValueError, match="S3_SSE_KMS_KEY_ID"):
-        Settings(
-            privacy_exports={
-                "enabled": True,
-                "storage_backend": "s3_compatible",
-                "s3_region_name": "eu-west-2",
-                "s3_bucket_name": "privacy-exports",
-                "s3_sse_kms_key_id": "kms-key",
-            }
-        )
+        Settings(privacy_exports=_s3_export_settings(s3_sse_kms_key_id="kms-key"))
 
 
 def test_enabled_local_export_storage_is_rejected_in_staging() -> None:
@@ -100,6 +90,42 @@ def test_enabled_s3_export_storage_is_allowed_in_staging() -> None:
     settings = Settings(**_staging_settings_kwargs())
 
     assert settings.privacy_exports.storage_backend == "s3_compatible"
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+def test_protected_s3_export_storage_rejects_plaintext_endpoint(
+    environment: str,
+) -> None:
+    kwargs = _staging_settings_kwargs(environment=environment)
+    kwargs["privacy_exports"] = _s3_export_settings(
+        s3_endpoint_url="http://minio.internal:9000",
+    )
+
+    with pytest.raises(ValueError, match="S3_ENDPOINT_URL.*https"):
+        Settings(**kwargs)
+
+
+def test_staging_s3_export_storage_allows_plaintext_private_network_override() -> None:
+    kwargs = _staging_settings_kwargs()
+    kwargs["privacy_exports"] = _s3_export_settings(
+        s3_endpoint_url="http://minio.internal:9000",
+        s3_allow_plaintext_private_network=True,
+    )
+
+    settings = Settings(**kwargs)
+
+    assert settings.privacy_exports.s3_endpoint_url == "http://minio.internal:9000"
+    assert settings.privacy_exports.s3_allow_plaintext_private_network is True
+
+
+def test_local_s3_export_storage_allows_plaintext_endpoint_for_dev_adapters() -> None:
+    settings = Settings(
+        privacy_exports=_s3_export_settings(
+            s3_endpoint_url="http://localhost:9000",
+        )
+    )
+
+    assert settings.privacy_exports.s3_endpoint_url == "http://localhost:9000"
 
 
 def test_default_local_export_signing_secret_is_allowed_when_exports_disabled() -> None:
