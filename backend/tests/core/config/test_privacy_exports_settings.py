@@ -5,7 +5,7 @@ import pytest
 from app.core.config.settings import Settings
 
 
-def _staging_settings_kwargs(*, local_signing_secret: str) -> dict[str, object]:
+def _staging_settings_kwargs() -> dict[str, object]:
     return {
         "app": {"environment": "staging"},
         "auth": {
@@ -24,29 +24,28 @@ def _staging_settings_kwargs(*, local_signing_secret: str) -> dict[str, object]:
         "outbox": {"invite_delivery_enabled": False},
         "privacy_exports": {
             "enabled": True,
-            "storage_backend": "local",
-            "local_signing_secret": local_signing_secret,
+            "storage_backend": "s3_compatible",
+            "s3_region_name": "eu-west-2",
+            "s3_bucket_name": "privacy-exports",
         },
     }
 
 
-def test_unsupported_export_storage_backend_is_rejected_before_runtime() -> None:
-    with pytest.raises(
-        ValueError, match="PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible"
-    ):
-        Settings(
-            privacy_exports={
-                "enabled": False,
-                "storage_backend": "s3_compatible",
-            }
-        )
+def test_disabled_s3_export_storage_backend_is_allowed_before_runtime() -> None:
+    settings = Settings(
+        privacy_exports={
+            "enabled": False,
+            "storage_backend": "s3_compatible",
+        }
+    )
+
+    assert settings.privacy_exports.storage_backend == "s3_compatible"
 
 
-def test_enabled_unsupported_export_storage_backend_is_rejected_before_runtime() -> (
-    None
-):
+def test_enabled_s3_export_storage_requires_bucket_and_region() -> None:
     with pytest.raises(
-        ValueError, match="PRIVACY_EXPORTS__STORAGE_BACKEND=s3_compatible"
+        ValueError,
+        match="S3_BUCKET_NAME.*S3_REGION_NAME",
     ):
         Settings(
             privacy_exports={
@@ -56,21 +55,55 @@ def test_enabled_unsupported_export_storage_backend_is_rejected_before_runtime()
         )
 
 
-def test_default_local_export_signing_secret_is_rejected_in_staging() -> None:
-    with pytest.raises(ValueError, match="PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET"):
+def test_s3_export_access_key_pair_must_be_complete() -> None:
+    with pytest.raises(
+        ValueError,
+        match="S3_ACCESS_KEY_ID.*S3_SECRET_ACCESS_KEY",
+    ):
         Settings(
-            **_staging_settings_kwargs(local_signing_secret="dev-only-signing-secret")
+            privacy_exports={
+                "enabled": True,
+                "storage_backend": "s3_compatible",
+                "s3_region_name": "eu-west-2",
+                "s3_bucket_name": "privacy-exports",
+                "s3_access_key_id": "access-key",
+            }
         )
 
 
-def test_overridden_local_export_signing_secret_is_allowed_in_staging() -> None:
-    settings = Settings(**_staging_settings_kwargs(local_signing_secret="s" * 32))
+def test_s3_kms_key_requires_kms_encryption_mode() -> None:
+    with pytest.raises(ValueError, match="S3_SSE_KMS_KEY_ID"):
+        Settings(
+            privacy_exports={
+                "enabled": True,
+                "storage_backend": "s3_compatible",
+                "s3_region_name": "eu-west-2",
+                "s3_bucket_name": "privacy-exports",
+                "s3_sse_kms_key_id": "kms-key",
+            }
+        )
 
-    assert settings.privacy_exports.local_signing_secret == "s" * 32
+
+def test_enabled_local_export_storage_is_rejected_in_staging() -> None:
+    kwargs = _staging_settings_kwargs()
+    kwargs["privacy_exports"] = {
+        "enabled": True,
+        "storage_backend": "local",
+        "local_signing_secret": "s" * 32,
+    }
+
+    with pytest.raises(ValueError, match="STORAGE_BACKEND=s3_compatible"):
+        Settings(**kwargs)
+
+
+def test_enabled_s3_export_storage_is_allowed_in_staging() -> None:
+    settings = Settings(**_staging_settings_kwargs())
+
+    assert settings.privacy_exports.storage_backend == "s3_compatible"
 
 
 def test_default_local_export_signing_secret_is_allowed_when_exports_disabled() -> None:
-    kwargs = _staging_settings_kwargs(local_signing_secret="dev-only-signing-secret")
+    kwargs = _staging_settings_kwargs()
     kwargs["privacy_exports"] = {"enabled": False}
 
     settings = Settings(**kwargs)

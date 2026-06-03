@@ -20,6 +20,7 @@ dependencies = [
     "PyJWT[crypto]>=2.10,<3.0",
     "cryptography>=47.0,<48.0",
     "hvac>=2.4,<3.0",
+    "boto3>=1.43,<2.0",
     "sqlalchemy[asyncio]>=2.0,<2.2",
     "alembic>=1.18,<2.0",
     "psycopg[binary]>=3.1,<4.0",
