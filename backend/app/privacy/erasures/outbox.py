@@ -157,6 +157,7 @@ async def _lock_subject_outbox_events(
         .where(or_(*conditions))
         .order_by(OutboxEvent.created_at.asc(), OutboxEvent.id.asc())
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return tuple((await session.execute(stmt)).scalars().all())
 

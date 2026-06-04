@@ -227,6 +227,58 @@ def test_outbox_erasure_rejects_processing_rows_without_partial_scrub(
     run_async(_run())
 
 
+def test_outbox_erasure_refreshes_stale_locked_rows_before_processing_guard(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        subject_email = f"stale-{uuid4()}@example.com"
+        invite_id = uuid4()
+        worker_locked_at = datetime.now(UTC)
+
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email=subject_email)
+            dsr = _dsr_for_user(user)
+            event = OutboxEvent(
+                event_type=OutboxEventType.INVITE_CREATED.value,
+                aggregate_type="invite",
+                aggregate_id=invite_id,
+                payload_json=_invite_payload(
+                    invite_id=invite_id,
+                    email=subject_email,
+                ),
+                status=OutboxStatus.PENDING.value,
+            )
+            session.add_all([dsr, event])
+            await session.commit()
+
+            stale_event = await session.get(OutboxEvent, event.id)
+            assert stale_event is not None
+            assert stale_event.status == OutboxStatus.PENDING.value
+            await session.commit()
+
+            async with migrated_session_factory() as worker_session:
+                async with worker_session.begin():
+                    worker_event = await worker_session.get(OutboxEvent, event.id)
+                    assert worker_event is not None
+                    worker_event.status = OutboxStatus.PROCESSING.value
+                    worker_event.locked_at = worker_locked_at
+
+            assert stale_event.status == OutboxStatus.PENDING.value
+            with pytest.raises(OutboxErasureError) as exc_info:
+                await scrub_outbox_for_approved_erase_request(
+                    session,
+                    dsr,
+                    invite_ids=(invite_id,),
+                )
+
+            assert "processing_rows_in_flight" in exc_info.value.reason_code
+            await session.refresh(stale_event)
+            assert stale_event.status == OutboxStatus.PROCESSING.value
+            assert stale_event.payload_json["encrypted_raw_token"]
+
+    run_async(_run())
+
+
 def test_outbox_erasure_uses_snapshots_after_subject_profile_is_anonymised(
     migrated_session_factory,
 ) -> None:
