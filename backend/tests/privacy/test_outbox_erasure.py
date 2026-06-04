@@ -71,6 +71,12 @@ def _invite_payload(
     }
 
 
+def _normalise_test_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
 def test_outbox_erasure_scrubs_subject_payloads_and_terminalises_pending(
     migrated_session_factory,
 ) -> None:
@@ -213,7 +219,10 @@ def test_outbox_erasure_rejects_processing_rows_without_partial_scrub(
             assert processing_event.status == OutboxStatus.PROCESSING.value
             assert pending_event.payload_json["email"] == subject_email
             assert processing_event.payload_json["encrypted_raw_token"]
-            assert processing_event.locked_at == now
+            assert processing_event.locked_at is not None
+            assert _normalise_test_timestamp(processing_event.locked_at) == (
+                _normalise_test_timestamp(now)
+            )
 
     run_async(_run())
 
