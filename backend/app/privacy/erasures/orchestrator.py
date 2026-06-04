@@ -44,10 +44,11 @@ _ALREADY_PROCESSING_REASON_CODE = "erasure_orchestration_already_processing"
 class ErasureOrchestrationStatus(StrEnum):
     COMPLETED = "completed"
     ALREADY_COMPLETED = "already_completed"
+    FAILED = "failed"
 
 
 class ErasureOrchestrationError(ValueError):
-    """Raised when the core erasure provider orchestration cannot complete."""
+    """Raised when the core erasure orchestration is not eligible to run."""
 
     def __init__(self, reason_code: str) -> None:
         super().__init__(reason_code)
@@ -73,6 +74,7 @@ class ErasureOrchestrationResult:
     status: ErasureOrchestrationStatus
     provider_results: tuple[ErasureProviderRunResult, ...]
     completed_at: datetime
+    failure_reason_code: str | None = None
 
     @property
     def provider_keys(self) -> tuple[str, ...]:
@@ -103,8 +105,9 @@ async def execute_core_erasure_for_approved_request(
     """Run the currently implemented core erasure providers in safe order.
 
     This orchestration is intentionally internal. It does not commit, does not
-    expose an API endpoint, and does not fulfil the DSR. It records execution
-    status on the request so later worker/API slices can reuse the same contract.
+    expose an API endpoint, and does not fulfil the DSR. Validation errors are
+    raised before execution starts. Provider failures are returned as failed
+    results so normal outer transaction managers can commit the failed state.
     """
 
     reference_now = _normalise_reference_time(now or datetime.now(UTC))
@@ -112,7 +115,7 @@ async def execute_core_erasure_for_approved_request(
     if _execution_status(locked_request) is DataSubjectRequestExecutionStatus.READY:
         return ErasureOrchestrationResult(
             request_id=locked_request.id,
-            subject_user_id=locked_request.subject_user_id,
+            subject_user_id=_subject_user_id(locked_request),
             status=ErasureOrchestrationStatus.ALREADY_COMPLETED,
             provider_results=(),
             completed_at=reference_now,
@@ -131,21 +134,36 @@ async def execute_core_erasure_for_approved_request(
                 now=reference_now,
             )
     except _PROVIDER_ERRORS as exc:
-        await _mark_failed(session, locked_request, reason_code=exc.reason_code)
-        raise ErasureOrchestrationError(exc.reason_code) from exc
-    except Exception as exc:
+        reason_code = exc.reason_code
+        await _mark_failed(
+            session,
+            locked_request,
+            reason_code=reason_code,
+            now=reference_now,
+        )
+        return _failed_result(
+            request=locked_request,
+            reason_code=reason_code,
+            completed_at=reference_now,
+        )
+    except Exception:
         await _mark_failed(
             session,
             locked_request,
             reason_code=_GENERIC_FAILURE_REASON_CODE,
+            now=reference_now,
         )
-        raise ErasureOrchestrationError(_GENERIC_FAILURE_REASON_CODE) from exc
+        return _failed_result(
+            request=locked_request,
+            reason_code=_GENERIC_FAILURE_REASON_CODE,
+            completed_at=reference_now,
+        )
 
     _mark_ready(locked_request, now=reference_now)
     await session.flush()
     return ErasureOrchestrationResult(
         request_id=locked_request.id,
-        subject_user_id=locked_request.subject_user_id,
+        subject_user_id=_subject_user_id(locked_request),
         status=ErasureOrchestrationStatus.COMPLETED,
         provider_results=provider_results,
         completed_at=reference_now,
@@ -185,8 +203,7 @@ async def _build_snapshot(
     session: AsyncSession,
     request: DataSubjectRequest,
 ) -> _ErasureSnapshot:
-    assert request.subject_user_id is not None
-    subject = await session.get(User, request.subject_user_id)
+    subject = await session.get(User, _subject_user_id(request))
     if subject is None:
         raise ErasureOrchestrationError("erasure_orchestration_subject_not_found")
 
@@ -287,6 +304,22 @@ def _provider_result(
     )
 
 
+def _failed_result(
+    *,
+    request: DataSubjectRequest,
+    reason_code: str,
+    completed_at: datetime,
+) -> ErasureOrchestrationResult:
+    return ErasureOrchestrationResult(
+        request_id=request.id,
+        subject_user_id=_subject_user_id(request),
+        status=ErasureOrchestrationStatus.FAILED,
+        provider_results=(),
+        completed_at=completed_at,
+        failure_reason_code=reason_code[:64],
+    )
+
+
 def _mark_processing(request: DataSubjectRequest, *, now: datetime) -> None:
     request.execution_status = DataSubjectRequestExecutionStatus.PROCESSING.value
     request.execution_started_at = now
@@ -309,9 +342,10 @@ async def _mark_failed(
     request: DataSubjectRequest,
     *,
     reason_code: str,
+    now: datetime,
 ) -> None:
     request.execution_status = DataSubjectRequestExecutionStatus.FAILED.value
-    request.execution_failed_at = datetime.now(UTC)
+    request.execution_failed_at = now
     request.execution_failure_reason_code = reason_code[:64]
     request.execution_failure_detail = None
     await session.flush()
@@ -321,6 +355,12 @@ def _execution_status(
     request: DataSubjectRequest,
 ) -> DataSubjectRequestExecutionStatus:
     return DataSubjectRequestExecutionStatus(request.execution_status)
+
+
+def _subject_user_id(request: DataSubjectRequest) -> UUID:
+    if request.subject_user_id is None:
+        raise ErasureOrchestrationError("erasure_orchestration_requires_subject_user")
+    return request.subject_user_id
 
 
 def _normalise_optional_email(value: str | None) -> str | None:

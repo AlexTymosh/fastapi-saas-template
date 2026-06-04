@@ -48,8 +48,12 @@ the local account projection.
 The orchestrator uses a nested transaction around provider mutations.
 
 If a provider fails, provider mutations are rolled back and the DSR execution
-status is marked as `failed` with a safe reason code. The caller still controls
-the outer transaction boundary.
+status is marked as `failed` with a safe reason code. The orchestrator returns a
+failed result instead of re-raising provider failures, so a normal outer
+`async with session.begin()` transaction can commit that failure state.
+
+Validation errors that happen before execution starts are still raised and do not
+mark the request as failed.
 
 On success, the DSR execution status is marked as `ready`.
 
