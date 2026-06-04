@@ -5,6 +5,12 @@ from app.privacy.erasures.impact import (
     ErasureImpactScope,
     build_erasure_impact_preview,
 )
+from app.privacy.erasures.invite import (
+    InviteErasureError,
+    InviteErasureResult,
+    InviteErasureStatus,
+    anonymise_invites_for_approved_erase_request,
+)
 from app.privacy.erasures.plan import (
     ErasureExecutionMode,
     ErasureProviderPlanEntry,
@@ -34,9 +40,13 @@ __all__ = [
     "ErasurePreviewEntry",
     "ErasurePreviewReadiness",
     "ErasureProviderPlanEntry",
+    "InviteErasureError",
+    "InviteErasureResult",
+    "InviteErasureStatus",
     "UserProfileErasureError",
     "UserProfileErasureResult",
     "UserProfileErasureStatus",
+    "anonymise_invites_for_approved_erase_request",
     "anonymise_user_profile_for_approved_erase_request",
     "build_erasure_impact_preview",
     "build_erasure_preview",

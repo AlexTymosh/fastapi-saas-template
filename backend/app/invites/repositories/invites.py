@@ -6,25 +6,15 @@ from uuid import UUID
 from sqlalchemy import and_, func, not_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.invites.anonymisation import (
+    SCRUBBED_INVITE_EMAIL_DOMAIN,
+    SCRUBBED_INVITE_TOKEN_PREFIX,
+    is_scrubbed_invite,
+    scrubbed_invite_email,
+    scrubbed_invite_token_hash,
+)
 from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import MembershipRole
-
-_SCRUBBED_INVITE_EMAIL_DOMAIN = "anonymous.invalid"
-_SCRUBBED_INVITE_TOKEN_PREFIX = "scrubbed-invite"
-
-
-def _scrubbed_invite_email(invite_id: UUID) -> str:
-    return f"deleted-invite-{invite_id}@{_SCRUBBED_INVITE_EMAIL_DOMAIN}"
-
-
-def _scrubbed_invite_token_hash(invite_id: UUID) -> str:
-    return f"{_SCRUBBED_INVITE_TOKEN_PREFIX}:{invite_id}"
-
-
-def _is_scrubbed_invite(invite: Invite) -> bool:
-    return invite.email.endswith(
-        f"@{_SCRUBBED_INVITE_EMAIL_DOMAIN}"
-    ) and invite.token_hash.startswith(f"{_SCRUBBED_INVITE_TOKEN_PREFIX}:")
 
 
 class InviteRepository:
@@ -244,9 +234,9 @@ class InviteRepository:
                 ),
                 not_(
                     and_(
-                        Invite.email.endswith(f"@{_SCRUBBED_INVITE_EMAIL_DOMAIN}"),
+                        Invite.email.endswith(f"@{SCRUBBED_INVITE_EMAIL_DOMAIN}"),
                         Invite.token_hash.startswith(
-                            f"{_SCRUBBED_INVITE_TOKEN_PREFIX}:"
+                            f"{SCRUBBED_INVITE_TOKEN_PREFIX}:"
                         ),
                     )
                 ),
@@ -258,10 +248,10 @@ class InviteRepository:
 
         anonymised_count = 0
         for invite in rows:
-            if _is_scrubbed_invite(invite):
+            if is_scrubbed_invite(invite):
                 continue
-            invite.email = _scrubbed_invite_email(invite.id)
-            invite.token_hash = _scrubbed_invite_token_hash(invite.id)
+            invite.email = scrubbed_invite_email(invite.id)
+            invite.token_hash = scrubbed_invite_token_hash(invite.id)
             anonymised_count += 1
 
         if anonymised_count:
