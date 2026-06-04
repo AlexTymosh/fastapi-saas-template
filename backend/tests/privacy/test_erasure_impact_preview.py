@@ -151,6 +151,42 @@ def test_erasure_impact_preview_counts_user_invite_and_outbox_rows(
     run_async(_run())
 
 
+def test_erasure_impact_preview_normalises_subject_email_for_outbox_payload(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            raw_email = f" Subject-{uuid4()}@Example.COM "
+            user = await _create_user(session, email=raw_email)
+            dsr = _approved_erase_request(user)
+            session.add(dsr)
+            await session.flush()
+
+            session.add(
+                OutboxEvent(
+                    event_type=OutboxEventType.INVITE_RESEND.value,
+                    aggregate_type="invite",
+                    aggregate_id=uuid4(),
+                    payload_json={"email": raw_email.strip().lower()},
+                )
+            )
+            await session.flush()
+
+            preview = await build_erasure_impact_preview(session, dsr)
+            by_provider = _impact_by_provider(preview)
+
+            assert (
+                by_provider[
+                    "invites.anonymise_or_purge_subject_references"
+                ].estimated_rows
+                == 0
+            )
+            assert by_provider["outbox.purge_or_scrub_payload"].estimated_rows == 1
+            assert preview.total_scoped_rows == 2
+
+    run_async(_run())
+
+
 def test_erasure_impact_preview_handles_subject_without_email(
     migrated_session_factory,
 ) -> None:

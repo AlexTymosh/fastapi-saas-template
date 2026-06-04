@@ -133,7 +133,8 @@ async def _count_scoped_rows(
     session: AsyncSession,
     subject: User,
 ) -> dict[str, int]:
-    invite_ids = await _subject_invite_ids(session, subject)
+    subject_email = _normalised_subject_email(subject)
+    invite_ids = await _subject_invite_ids(session, subject, subject_email)
     return {
         _USERS_PROVIDER_KEY: 1,
         _INVITES_PROVIDER_KEY: len(invite_ids),
@@ -141,6 +142,7 @@ async def _count_scoped_rows(
             session,
             subject,
             invite_ids,
+            subject_email,
         ),
     }
 
@@ -148,17 +150,21 @@ async def _count_scoped_rows(
 async def _subject_invite_ids(
     session: AsyncSession,
     subject: User,
+    subject_email: str | None,
 ) -> tuple[UUID, ...]:
-    conditions = _subject_invite_conditions(subject)
+    conditions = _subject_invite_conditions(subject, subject_email)
     stmt = select(Invite.id).where(or_(*conditions)).order_by(Invite.id.asc())
     result = await session.execute(stmt)
     return tuple(result.scalars().all())
 
 
-def _subject_invite_conditions(subject: User) -> list[object]:
+def _subject_invite_conditions(
+    subject: User,
+    subject_email: str | None,
+) -> list[object]:
     conditions: list[object] = [Invite.revoked_by_user_id == subject.id]
-    if subject.email is not None:
-        conditions.append(func.lower(Invite.email) == subject.email.lower())
+    if subject_email is not None:
+        conditions.append(func.lower(func.trim(Invite.email)) == subject_email)
     return conditions
 
 
@@ -166,19 +172,26 @@ async def _count_subject_outbox_events(
     session: AsyncSession,
     subject: User,
     invite_ids: tuple[UUID, ...],
+    subject_email: str | None,
 ) -> int:
     conditions = []
     if invite_ids:
         conditions.append(OutboxEvent.aggregate_id.in_(invite_ids))
-    if subject.email is not None:
-        conditions.append(
-            OutboxEvent.payload_json["email"].as_string() == subject.email
-        )
+    if subject_email is not None:
+        payload_email = OutboxEvent.payload_json["email"].as_string()
+        conditions.append(func.lower(func.trim(payload_email)) == subject_email)
     if not conditions:
         return 0
 
     stmt = select(func.count(distinct(OutboxEvent.id))).where(or_(*conditions))
     return int(await session.scalar(stmt) or 0)
+
+
+def _normalised_subject_email(subject: User) -> str | None:
+    if subject.email is None:
+        return None
+    normalised = subject.email.strip().lower()
+    return normalised or None
 
 
 def _impact_entry(

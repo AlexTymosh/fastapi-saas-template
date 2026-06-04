@@ -37,10 +37,15 @@ from submitted, rejected, cancelled, fulfilled or subjectless requests.
 The first scoped preview counts:
 
 - the subject `users` row;
-- invite rows where the subject email matches the invite email or the subject is
-  the revoker;
-- outbox rows linked to those invite ids or carrying the subject email in the
-  outbox JSON payload.
+- invite rows where the normalised subject email matches the invite email or the
+  subject is the revoker;
+- outbox rows linked to those invite ids or carrying the normalised subject email
+  in the outbox JSON payload.
+
+Subject emails are trimmed and lowercased before comparisons. Outbox payload
+emails are also trimmed and lowercased during matching. This keeps the preview
+aligned with invite creation, where invite emails are stored in normalised form,
+while still supporting mixed-case IdP emails stored on user profiles.
 
 Outbox counts use distinct event ids so a row matched by both aggregate id and
 payload email is counted once.
