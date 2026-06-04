@@ -17,6 +17,12 @@ from app.privacy.erasures.preview import (
     ErasurePreviewReadiness,
     build_erasure_preview,
 )
+from app.privacy.erasures.user_profile import (
+    UserProfileErasureError,
+    UserProfileErasureResult,
+    UserProfileErasureStatus,
+    anonymise_user_profile_for_approved_erase_request,
+)
 
 __all__ = [
     "ErasureExecutionMode",
@@ -28,6 +34,10 @@ __all__ = [
     "ErasurePreviewEntry",
     "ErasurePreviewReadiness",
     "ErasureProviderPlanEntry",
+    "UserProfileErasureError",
+    "UserProfileErasureResult",
+    "UserProfileErasureStatus",
+    "anonymise_user_profile_for_approved_erase_request",
     "build_erasure_impact_preview",
     "build_erasure_preview",
     "build_erasure_provider_plan",
