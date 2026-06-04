@@ -40,12 +40,26 @@ For matched rows, the provider:
 - removes delivery-only or unsafe payload values, including email, encrypted raw
   token and unknown future keys;
 - adds scrub markers to `payload_json`;
-- terminalises pending or processing rows as failed with the safe reason code
+- terminalises pending rows as failed with the safe reason code
   `privacy_erasure_scrubbed`;
+- rejects processing rows with `outbox_erasure_processing_rows_in_flight`;
 - clears unsafe historical `last_error` values on already-terminal rows.
 
 The provider preserves row ids, aggregate references, event type and timestamps
 so audit and operational history remain structurally intact.
+
+## Processing rows
+
+Processing rows are not safely cancellable inside this provider.
+
+The outbox worker reads and decrypts delivery material while the row is in
+`processing`, then performs the external delivery outside that transaction. If
+the erasure provider simply changed that row to `failed`, an already-running
+worker could still send the invite token after the provider returns.
+
+For that reason, this slice treats subject-linked processing rows as a blocking
+failure. A later orchestration slice must coordinate this with the worker claim
+and dispatch path before treating outbox erasure as complete.
 
 ## Out of scope
 
@@ -54,9 +68,9 @@ This slice does not implement:
 - audit minimisation;
 - DSR orchestration;
 - platform API endpoints;
-- worker execution;
+- worker execution coordination;
 - retention/purge runners.
 
-The next slice should start controlled audit minimisation or add a small
+The next slice should either start controlled audit minimisation or add a small
 orchestration layer that runs the already implemented user, invite and outbox
-providers in a safe transaction.
+providers in a safe transaction with worker coordination.

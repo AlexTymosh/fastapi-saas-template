@@ -20,6 +20,7 @@ from app.users.models.user import User
 _PROVIDER_KEY = "outbox.purge_or_scrub_payload"
 _TABLE_NAME = "outbox_events"
 _PRIVACY_ERASURE_LAST_ERROR = "privacy_erasure_scrubbed"
+_PROCESSING_ROWS_IN_FLIGHT_ERROR = "outbox_erasure_processing_rows_in_flight"
 _SAFE_INVITE_PAYLOAD_KEYS = frozenset(
     {
         "invite_id",
@@ -73,6 +74,10 @@ async def scrub_outbox_for_approved_erase_request(
     This provider mutates only outbox rows. It does not commit and is not wired
     into public execution yet. Callers should pass pre-erasure subject email and
     invite id snapshots when this provider runs after user/invite anonymisation.
+
+    Processing rows are deliberately rejected. A worker may already have read
+    and decrypted delivery material before this provider can lock or update the
+    row, so marking such rows as failed here would not reliably cancel delivery.
     """
 
     subject = await _validate_request_and_get_subject(session, request)
@@ -86,6 +91,8 @@ async def scrub_outbox_for_approved_erase_request(
         subject_email=normalised_email,
         invite_ids=_normalise_invite_ids(invite_ids),
     )
+    _raise_if_processing_events(events)
+
     changed_fields: list[str] = []
     affected_rows = 0
 
@@ -150,8 +157,17 @@ async def _lock_subject_outbox_events(
         .where(or_(*conditions))
         .order_by(OutboxEvent.created_at.asc(), OutboxEvent.id.asc())
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _raise_if_processing_events(events: tuple[OutboxEvent, ...]) -> None:
+    has_processing_event = any(
+        _status_value(event.status) == OutboxStatus.PROCESSING.value for event in events
+    )
+    if has_processing_event:
+        raise OutboxErasureError(_PROCESSING_ROWS_IN_FLIGHT_ERROR)
 
 
 def _scrub_outbox_event(event: OutboxEvent) -> tuple[str, ...]:
@@ -160,7 +176,7 @@ def _scrub_outbox_event(event: OutboxEvent) -> tuple[str, ...]:
     _set_if_changed(event, "payload_json", scrubbed_payload, changed_fields)
 
     status = _status_value(event.status)
-    if status in {OutboxStatus.PENDING.value, OutboxStatus.PROCESSING.value}:
+    if status == OutboxStatus.PENDING.value:
         _set_if_changed(event, "status", OutboxStatus.FAILED.value, changed_fields)
         _set_if_changed(event, "locked_at", None, changed_fields)
         _set_if_changed(event, "next_attempt_at", None, changed_fields)
