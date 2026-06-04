@@ -11,6 +11,12 @@ from app.privacy.erasures.invite import (
     InviteErasureStatus,
     anonymise_invites_for_approved_erase_request,
 )
+from app.privacy.erasures.outbox import (
+    OutboxErasureError,
+    OutboxErasureResult,
+    OutboxErasureStatus,
+    scrub_outbox_for_approved_erase_request,
+)
 from app.privacy.erasures.plan import (
     ErasureExecutionMode,
     ErasureProviderPlanEntry,
@@ -43,6 +49,9 @@ __all__ = [
     "InviteErasureError",
     "InviteErasureResult",
     "InviteErasureStatus",
+    "OutboxErasureError",
+    "OutboxErasureResult",
+    "OutboxErasureStatus",
     "UserProfileErasureError",
     "UserProfileErasureResult",
     "UserProfileErasureStatus",
@@ -52,4 +61,5 @@ __all__ = [
     "build_erasure_preview",
     "build_erasure_provider_plan",
     "get_erasure_provider_plan_by_key",
+    "scrub_outbox_for_approved_erase_request",
 ]
