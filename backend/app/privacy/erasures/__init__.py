@@ -1,3 +1,9 @@
+from app.privacy.erasures.audit import (
+    AuditErasureError,
+    AuditErasureResult,
+    AuditErasureStatus,
+    minimise_audit_events_for_approved_erase_request,
+)
 from app.privacy.erasures.impact import (
     ErasureImpactEntry,
     ErasureImpactPreview,
@@ -44,6 +50,9 @@ from app.privacy.erasures.user_profile import (
 )
 
 __all__ = [
+    "AuditErasureError",
+    "AuditErasureResult",
+    "AuditErasureStatus",
     "ErasureExecutionMode",
     "ErasureImpactEntry",
     "ErasureImpactPreview",
@@ -73,5 +82,6 @@ __all__ = [
     "build_erasure_provider_plan",
     "execute_core_erasure_for_approved_request",
     "get_erasure_provider_plan_by_key",
+    "minimise_audit_events_for_approved_erase_request",
     "scrub_outbox_for_approved_erase_request",
 ]
