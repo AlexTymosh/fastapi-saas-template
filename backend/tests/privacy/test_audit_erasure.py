@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -11,6 +11,10 @@ from app.audit.models.audit_event import (
     AuditEvent,
     AuditTargetType,
 )
+from app.invites.models.invite import Invite, InviteStatus
+from app.memberships.models.membership import Membership, MembershipRole
+from app.organisations.models.organisation import Organisation
+from app.platform.models.platform_staff import PlatformStaff, PlatformStaffRole
 from app.privacy.erasures.audit import (
     AuditErasureError,
     AuditErasureStatus,
@@ -19,6 +23,12 @@ from app.privacy.erasures.audit import (
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
+)
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
 )
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -39,6 +49,17 @@ async def _create_user(session, *, email: str | None = None) -> User:
     await session.flush()
     await session.refresh(user)
     return user
+
+
+async def _create_organisation(session) -> Organisation:
+    organisation = Organisation(
+        name="Subject Org",
+        slug=f"subject-org-{uuid4()}",
+    )
+    session.add(organisation)
+    await session.flush()
+    await session.refresh(organisation)
+    return organisation
 
 
 def _dsr_for_user(
@@ -102,6 +123,20 @@ def _unrelated_event(other_user: User) -> AuditEvent:
     )
 
 
+def _target_event(*, target_type: str, target_id: UUID) -> AuditEvent:
+    return AuditEvent(
+        actor_user_id=None,
+        category=AuditCategory.COMPLIANCE.value,
+        action=AuditAction.DATA_SUBJECT_REQUEST_APPROVED.value,
+        target_type=target_type,
+        target_id=target_id,
+        reason="linked target contains subject context",
+        metadata_json={"note": "linked subject metadata"},
+        ip_address="198.51.100.50",
+        user_agent="Linked target user agent",
+    )
+
+
 def test_audit_erasure_minimises_direct_subject_audit_rows(
     migrated_session_factory,
 ) -> None:
@@ -155,6 +190,112 @@ def test_audit_erasure_minimises_direct_subject_audit_rows(
             assert unrelated_event.actor_user_id == other_user.id
             assert unrelated_event.reason == "should stay untouched"
             assert unrelated_event.metadata_json == {"email": other_user.email}
+
+    run_async(_run())
+
+
+def test_audit_erasure_minimises_linked_subject_targets(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            reviewer = await _create_user(session)
+            organisation = await _create_organisation(session)
+            dsr = _dsr_for_user(user)
+            linked_dsr = _dsr_for_user(user)
+            linked_dsr.reviewer_user_id = user.id
+            membership = Membership(
+                user_id=user.id,
+                organisation_id=organisation.id,
+                role=MembershipRole.MEMBER,
+            )
+            invite = Invite(
+                email=user.email,
+                organisation_id=organisation.id,
+                role=MembershipRole.MEMBER,
+                status=InviteStatus.PENDING,
+                token_hash=f"token-{uuid4()}",
+                expires_at=datetime.now(UTC) + timedelta(days=7),
+            )
+            platform_staff = PlatformStaff(
+                user_id=user.id,
+                role=PlatformStaffRole.COMPLIANCE_OFFICER.value,
+                created_by_user_id=reviewer.id,
+            )
+            session.add_all([dsr, linked_dsr, membership, invite, platform_staff])
+            await session.flush()
+
+            artifact = ExportArtifact(
+                data_subject_request_id=linked_dsr.id,
+                subject_user_id=user.id,
+                requester_user_id=user.id,
+                status=ExportArtifactStatus.READY.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                storage_key="privacy-export/test.zip",
+                filename="subject-export.zip",
+                content_type="application/zip",
+                size_bytes=128,
+                checksum_sha256="a" * 64,
+                schema_version="1.0",
+                requested_by_user_id=user.id,
+                generated_by_user_id=reviewer.id,
+                queued_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+                expires_at=datetime.now(UTC) + timedelta(days=7),
+            )
+            session.add(artifact)
+            await session.flush()
+
+            linked_events = [
+                _target_event(
+                    target_type=AuditTargetType.INVITE.value,
+                    target_id=invite.id,
+                ),
+                _target_event(
+                    target_type=AuditTargetType.MEMBERSHIP.value,
+                    target_id=membership.id,
+                ),
+                _target_event(
+                    target_type=AuditTargetType.DATA_SUBJECT_REQUEST.value,
+                    target_id=linked_dsr.id,
+                ),
+                _target_event(
+                    target_type=AuditTargetType.EXPORT_ARTIFACT.value,
+                    target_id=artifact.id,
+                ),
+                _target_event(
+                    target_type=AuditTargetType.PLATFORM_STAFF.value,
+                    target_id=platform_staff.id,
+                ),
+            ]
+            unrelated = _target_event(
+                target_type=AuditTargetType.INVITE.value,
+                target_id=uuid4(),
+            )
+            session.add_all([*linked_events, unrelated])
+            await session.flush()
+
+            result = await minimise_audit_events_for_approved_erase_request(
+                session,
+                dsr,
+            )
+            for event in linked_events:
+                await session.refresh(event)
+            await session.refresh(unrelated)
+
+            assert result.status is AuditErasureStatus.MINIMISED
+            assert result.affected_rows == len(linked_events)
+            for event in linked_events:
+                assert event.target_id is None
+                assert event.reason is None
+                assert event.metadata_json is None
+                assert event.ip_address is None
+                assert event.user_agent is None
+            assert unrelated.target_id is not None
+            assert unrelated.reason == "linked target contains subject context"
+            assert unrelated.metadata_json == {"note": "linked subject metadata"}
 
     run_async(_run())
 
