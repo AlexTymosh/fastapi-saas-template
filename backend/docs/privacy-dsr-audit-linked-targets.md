@@ -15,7 +15,7 @@ identified through another privacy-inventory table.
 
 The provider now snapshots linked target ids before mutating audit rows:
 
-- invites reached through the subject email;
+- invites reached through the subject email or `invites.revoked_by_user_id`;
 - memberships reached through `memberships.user_id`;
 - data subject requests reached through requester, subject, or reviewer links;
 - export artifacts reached through subject/requester/requested/generated links;

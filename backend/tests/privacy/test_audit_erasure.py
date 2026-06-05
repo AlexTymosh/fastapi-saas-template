@@ -300,6 +300,74 @@ def test_audit_erasure_minimises_linked_subject_targets(
     run_async(_run())
 
 
+def test_audit_erasure_minimises_revoked_invite_linked_subject_targets(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            invitee = await _create_user(session)
+            organisation = await _create_organisation(session)
+            dsr = _dsr_for_user(user)
+            revoked_invite = Invite(
+                email=invitee.email,
+                organisation_id=organisation.id,
+                role=MembershipRole.MEMBER,
+                status=InviteStatus.REVOKED,
+                token_hash=f"token-{uuid4()}",
+                expires_at=None,
+                revoked_at=datetime.now(UTC),
+                revoked_by_user_id=user.id,
+            )
+            unrelated_invite = Invite(
+                email=invitee.email,
+                organisation_id=organisation.id,
+                role=MembershipRole.MEMBER,
+                status=InviteStatus.REVOKED,
+                token_hash=f"token-{uuid4()}",
+                expires_at=None,
+                revoked_at=datetime.now(UTC),
+                revoked_by_user_id=None,
+            )
+            session.add_all([dsr, revoked_invite, unrelated_invite])
+            await session.flush()
+
+            revoked_invite_event = _target_event(
+                target_type=AuditTargetType.INVITE.value,
+                target_id=revoked_invite.id,
+            )
+            unrelated_invite_event = _target_event(
+                target_type=AuditTargetType.INVITE.value,
+                target_id=unrelated_invite.id,
+            )
+            session.add_all([revoked_invite_event, unrelated_invite_event])
+            await session.flush()
+
+            result = await minimise_audit_events_for_approved_erase_request(
+                session,
+                dsr,
+            )
+            await session.refresh(revoked_invite_event)
+            await session.refresh(unrelated_invite_event)
+
+            assert result.status is AuditErasureStatus.MINIMISED
+            assert result.affected_rows == 1
+            assert revoked_invite_event.target_id is None
+            assert revoked_invite_event.reason is None
+            assert revoked_invite_event.metadata_json is None
+            assert revoked_invite_event.ip_address is None
+            assert revoked_invite_event.user_agent is None
+            assert unrelated_invite_event.target_id == unrelated_invite.id
+            assert unrelated_invite_event.reason == (
+                "linked target contains subject context"
+            )
+            assert unrelated_invite_event.metadata_json == {
+                "note": "linked subject metadata"
+            }
+
+    run_async(_run())
+
+
 def test_audit_erasure_is_idempotent_after_minimisation(
     migrated_session_factory,
 ) -> None:

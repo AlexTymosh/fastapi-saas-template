@@ -152,7 +152,11 @@ async def _build_target_snapshot(
     return _AuditTargetSnapshot(
         subject_user_id=subject.id,
         subject_email=subject_email,
-        invite_ids=await _subject_invite_ids(session, subject_email=subject_email),
+        invite_ids=await _subject_invite_ids(
+            session,
+            subject_user_id=subject.id,
+            subject_email=subject_email,
+        ),
         membership_ids=await _subject_membership_ids(
             session,
             subject_user_id=subject.id,
@@ -175,11 +179,18 @@ async def _build_target_snapshot(
 async def _subject_invite_ids(
     session: AsyncSession,
     *,
+    subject_user_id: UUID,
     subject_email: str | None,
 ) -> tuple[UUID, ...]:
-    if subject_email is None:
-        return ()
-    stmt = select(Invite.id).where(func.lower(func.trim(Invite.email)) == subject_email)
+    conditions: list[object] = [Invite.revoked_by_user_id == subject_user_id]
+    if subject_email is not None:
+        conditions.append(func.lower(func.trim(Invite.email)) == subject_email)
+
+    stmt = (
+        select(Invite.id)
+        .where(or_(*conditions))
+        .order_by(Invite.created_at.asc(), Invite.id.asc())
+    )
     return tuple((await session.execute(stmt)).scalars().all())
 
 
