@@ -43,17 +43,26 @@ before the user profile loses its original email.
 The user profile is last because it removes the direct subject identifiers from
 the local account projection.
 
+## Snapshot locking
+
+The orchestrator locks and refreshes the subject user row before deriving the
+snapshot. This prevents stale identity-map data from being used when a concurrent
+profile refresh updates the local user email shortly before erasure execution.
+
+The lock query uses `with_for_update()` and `populate_existing=True`, matching
+the same stale-row guard used for DSR and outbox locking.
+
 ## Transaction behaviour
 
 The orchestrator uses a nested transaction around provider mutations.
 
 If a provider fails, provider mutations are rolled back and the DSR execution
-status is marked as `failed` with a safe reason code. The orchestrator returns a
-failed result instead of re-raising provider failures, so a normal outer
-`async with session.begin()` transaction can commit that failure state.
+status is marked as `failed` with a safe reason code. The caller still controls
+the outer transaction boundary.
 
-Validation errors that happen before execution starts are still raised and do not
-mark the request as failed.
+Provider/runtime failures during execution are returned as a failed
+orchestration result so the caller's normal outer transaction can commit the DSR
+failed state. Validation errors before execution starts still raise an error.
 
 On success, the DSR execution status is marked as `ready`.
 

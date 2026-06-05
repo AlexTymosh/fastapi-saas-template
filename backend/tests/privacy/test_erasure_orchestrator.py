@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.privacy.erasures.orchestrator import (
@@ -106,6 +107,14 @@ def _outbox_event(
     )
 
 
+async def _get_outbox_event_by_aggregate_id(
+    session,
+    aggregate_id: UUID,
+) -> OutboxEvent | None:
+    stmt = select(OutboxEvent).where(OutboxEvent.aggregate_id == aggregate_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 def test_core_erasure_orchestrator_runs_providers_in_safe_order(
     migrated_session_factory,
 ) -> None:
@@ -139,6 +148,46 @@ def test_core_erasure_orchestrator_runs_providers_in_safe_order(
             assert user.external_auth_id == f"erased-user:{user.id}"
             assert event.status == OutboxStatus.FAILED.value
             assert event.last_error == "privacy_erasure_scrubbed"
+            assert "email" not in event.payload_json
+            assert "encrypted_raw_token" not in event.payload_json
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_locks_subject_before_snapshot(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        old_email = f"old-{uuid4()}@example.com"
+        new_email = f"new-{uuid4()}@example.com"
+        invite_id = uuid4()
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email=old_email)
+            dsr = _dsr_for_user(user)
+            session.add(dsr)
+            await session.commit()
+
+            stale_subject = await session.get(User, user.id)
+            assert stale_subject is not None
+            assert stale_subject.email == old_email
+            await session.commit()
+
+            async with migrated_session_factory() as other_session:
+                async with other_session.begin():
+                    fresh_subject = await other_session.get(User, user.id)
+                    assert fresh_subject is not None
+                    fresh_subject.email = new_email
+                    other_session.add(
+                        _outbox_event(invite_id=invite_id, email=new_email)
+                    )
+
+            result = await execute_core_erasure_for_approved_request(session, dsr)
+            event = await _get_outbox_event_by_aggregate_id(session, invite_id)
+            assert event is not None
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert stale_subject.email is None
+            assert event.status == OutboxStatus.FAILED.value
             assert "email" not in event.payload_json
             assert "encrypted_raw_token" not in event.payload_json
 

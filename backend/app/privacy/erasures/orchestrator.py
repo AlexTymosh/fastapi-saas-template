@@ -203,10 +203,7 @@ async def _build_snapshot(
     session: AsyncSession,
     request: DataSubjectRequest,
 ) -> _ErasureSnapshot:
-    subject = await session.get(User, _subject_user_id(request))
-    if subject is None:
-        raise ErasureOrchestrationError("erasure_orchestration_subject_not_found")
-
+    subject = await _lock_subject(session, subject_user_id=_subject_user_id(request))
     subject_email = _normalise_optional_email(subject.email)
     invite_ids = await _subject_invite_ids(
         session,
@@ -218,6 +215,19 @@ async def _build_snapshot(
         subject_email=subject_email,
         invite_ids=invite_ids,
     )
+
+
+async def _lock_subject(session: AsyncSession, *, subject_user_id: UUID) -> User:
+    stmt = (
+        select(User)
+        .where(User.id == subject_user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    subject = (await session.execute(stmt)).scalar_one_or_none()
+    if subject is None:
+        raise ErasureOrchestrationError("erasure_orchestration_subject_not_found")
+    return subject
 
 
 async def _subject_invite_ids(
