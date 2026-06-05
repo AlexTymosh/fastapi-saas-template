@@ -6,6 +6,12 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
+from app.audit.models.audit_event import (
+    AuditAction,
+    AuditCategory,
+    AuditEvent,
+    AuditTargetType,
+)
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.privacy.erasures.orchestrator import (
     ErasureOrchestrationError,
@@ -107,6 +113,20 @@ def _outbox_event(
     )
 
 
+def _audit_event_for_user(user: User) -> AuditEvent:
+    return AuditEvent(
+        actor_user_id=user.id,
+        category=AuditCategory.COMPLIANCE.value,
+        action=AuditAction.DATA_SUBJECT_REQUEST_APPROVED.value,
+        target_type=AuditTargetType.USER.value,
+        target_id=user.id,
+        reason="free text about subject",
+        metadata_json={"email": user.email, "note": "subject context"},
+        ip_address="198.51.100.25",
+        user_agent="Subject user agent",
+    )
+
+
 async def _get_outbox_event_by_aggregate_id(
     session,
     aggregate_id: UUID,
@@ -125,17 +145,20 @@ def test_core_erasure_orchestrator_runs_providers_in_safe_order(
             dsr = _dsr_for_user(user)
             invite_id = uuid4()
             event = _outbox_event(invite_id=invite_id, email=subject_email)
-            session.add_all([dsr, event])
+            audit_event = _audit_event_for_user(user)
+            session.add_all([dsr, event, audit_event])
             await session.flush()
 
             result = await execute_core_erasure_for_approved_request(session, dsr)
             await session.refresh(dsr)
             await session.refresh(user)
             await session.refresh(event)
+            await session.refresh(audit_event)
 
             assert result.status is ErasureOrchestrationStatus.COMPLETED
             assert result.failure_reason_code is None
             assert result.provider_keys == (
+                "audit.minimise_subject_actor_or_target_identifiers",
                 "outbox.purge_or_scrub_payload",
                 "invites.anonymise_or_purge_subject_references",
                 "users.anonymise_profile",
@@ -150,6 +173,58 @@ def test_core_erasure_orchestrator_runs_providers_in_safe_order(
             assert event.last_error == "privacy_erasure_scrubbed"
             assert "email" not in event.payload_json
             assert "encrypted_raw_token" not in event.payload_json
+            assert audit_event.actor_user_id is None
+            assert audit_event.target_id is None
+            assert audit_event.reason is None
+            assert audit_event.metadata_json is None
+            assert audit_event.ip_address is None
+            assert audit_event.user_agent is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_rolls_back_on_audit_legal_hold(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                subject_email = f"held-{uuid4()}@example.com"
+                user = await _create_user(session, email=subject_email)
+                dsr = _dsr_for_user(user)
+                event = _outbox_event(invite_id=uuid4(), email=subject_email)
+                audit_event = _audit_event_for_user(user)
+                audit_event.legal_hold_until = datetime.now(UTC) + timedelta(days=7)
+                session.add_all([dsr, event, audit_event])
+                await session.flush()
+
+                result = await execute_core_erasure_for_approved_request(
+                    session,
+                    dsr,
+                )
+                assert result.status is ErasureOrchestrationStatus.FAILED
+                assert result.failure_reason_code == "audit_erasure_legal_hold_active"
+                assert result.provider_results == ()
+
+            await session.refresh(dsr)
+            await session.refresh(user)
+            await session.refresh(event)
+            await session.refresh(audit_event)
+            assert (
+                dsr.execution_status == DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert dsr.execution_failure_reason_code == (
+                "audit_erasure_legal_hold_active"
+            )
+            assert user.email == subject_email
+            assert event.status == OutboxStatus.PENDING.value
+            assert "email" in event.payload_json
+            assert audit_event.actor_user_id == user.id
+            assert audit_event.reason == "free text about subject"
+            assert audit_event.metadata_json == {
+                "email": subject_email,
+                "note": "subject context",
+            }
 
     run_async(_run())
 

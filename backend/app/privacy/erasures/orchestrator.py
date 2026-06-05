@@ -9,6 +9,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.invites.models.invite import Invite
+from app.privacy.erasures.audit import (
+    AuditErasureError,
+    minimise_audit_events_for_approved_erase_request,
+)
 from app.privacy.erasures.invite import (
     InviteErasureError,
     anonymise_invites_for_approved_erase_request,
@@ -29,10 +33,12 @@ from app.privacy.models.data_subject_request import (
 )
 from app.users.models.user import User
 
+_AUDIT_PROVIDER_KEY = "audit.minimise_subject_actor_or_target_identifiers"
 _OUTBOX_PROVIDER_KEY = "outbox.purge_or_scrub_payload"
 _INVITES_PROVIDER_KEY = "invites.anonymise_or_purge_subject_references"
 _USERS_PROVIDER_KEY = "users.anonymise_profile"
 _PROVIDER_ORDER = (
+    _AUDIT_PROVIDER_KEY,
     _OUTBOX_PROVIDER_KEY,
     _INVITES_PROVIDER_KEY,
     _USERS_PROVIDER_KEY,
@@ -251,6 +257,11 @@ async def _run_core_providers(
     snapshot: _ErasureSnapshot,
     now: datetime,
 ) -> tuple[ErasureProviderRunResult, ...]:
+    audit_result = await minimise_audit_events_for_approved_erase_request(
+        session,
+        request,
+        now=now,
+    )
     outbox_result = await scrub_outbox_for_approved_erase_request(
         session,
         request,
@@ -270,6 +281,12 @@ async def _run_core_providers(
         now=now,
     )
     return (
+        _provider_result(
+            provider_key=audit_result.provider_key,
+            table_name=audit_result.table_name,
+            affected_rows=audit_result.affected_rows,
+            changed_fields=audit_result.changed_fields,
+        ),
         _provider_result(
             provider_key=outbox_result.provider_key,
             table_name=outbox_result.table_name,
@@ -292,6 +309,7 @@ async def _run_core_providers(
 
 
 _PROVIDER_ERRORS = (
+    AuditErasureError,
     InviteErasureError,
     OutboxErasureError,
     UserProfileErasureError,
