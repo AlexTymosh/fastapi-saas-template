@@ -21,13 +21,18 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
 )
-from app.users.models.user import User
+from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
 
 
-async def _create_user(session, *, email: str | None = None) -> User:
+async def _create_user(
+    session,
+    *,
+    email: str | None = None,
+    status: str = UserStatus.ACTIVE.value,
+) -> User:
     user = User(
         external_auth_id=f"kc|{uuid4()}",
         email=email or f"subject-{uuid4()}@example.com",
@@ -35,6 +40,7 @@ async def _create_user(session, *, email: str | None = None) -> User:
         first_name="Subject",
         last_name="User",
         onboarding_completed=True,
+        status=status,
     )
     session.add(user)
     await session.flush()
@@ -144,32 +150,41 @@ def test_erasure_execution_authorises_privileged_staff_and_runs_orchestrator(
 
 
 @pytest.mark.parametrize(
-    ("role", "status", "expected_reason"),
+    ("role", "staff_status", "user_status", "expected_reason"),
     [
         (
             PlatformStaffRole.SUPPORT_AGENT.value,
             PlatformStaffStatus.ACTIVE.value,
+            UserStatus.ACTIVE.value,
             "requires_privileged_staff",
         ),
         (
             PlatformStaffRole.PLATFORM_ADMIN.value,
             PlatformStaffStatus.SUSPENDED.value,
+            UserStatus.ACTIVE.value,
             "requires_active_staff",
+        ),
+        (
+            PlatformStaffRole.PLATFORM_ADMIN.value,
+            PlatformStaffStatus.ACTIVE.value,
+            UserStatus.SUSPENDED.value,
+            "requires_active_user",
         ),
     ],
 )
 def test_erasure_execution_rejects_unauthorised_staff_without_mutation(
     migrated_session_factory,
     role: str,
-    status: str,
+    staff_status: str,
+    user_status: str,
     expected_reason: str,
 ) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:
             subject_email = f"subject-{uuid4()}@example.com"
             subject = await _create_user(session, email=subject_email)
-            executor = await _create_user(session)
-            staff = _staff_record(executor, role=role, status=status)
+            executor = await _create_user(session, status=user_status)
+            staff = _staff_record(executor, role=role, status=staff_status)
             dsr = _dsr_for_user(subject)
             outbox = _outbox_event(invite_id=uuid4(), email=subject_email)
             session.add_all([staff, dsr, outbox])

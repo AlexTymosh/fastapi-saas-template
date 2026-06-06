@@ -21,6 +21,7 @@ execute_approved_erasure_request_by_staff(...)
 The function:
 
 - locks and authorises the platform staff executor;
+- verifies that the linked local user is still active;
 - locks the DSR row;
 - delegates to the core erasure orchestrator;
 - returns a structured execution result;
@@ -28,12 +29,22 @@ The function:
 
 ## Authorisation
 
-Only active platform staff with one of these roles may execute an erasure:
+Only active platform staff with an active linked local `users` row and one of
+these roles may execute an erasure:
 
 - `platform_admin`;
 - `compliance_officer`.
 
 A support agent is intentionally not enough for destructive erasure execution.
+
+Both checks are required:
+
+- `platform_staff.status == active`;
+- `users.status == active`.
+
+This mirrors the platform actor access path and prevents a suspended local user
+from executing destructive erasure through a worker or other non-API caller that
+passes `executor_user_id` directly.
 
 ## Transaction boundary
 

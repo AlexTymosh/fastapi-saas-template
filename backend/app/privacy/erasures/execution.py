@@ -18,6 +18,7 @@ from app.privacy.erasures.orchestrator import (
     execute_core_erasure_for_approved_request,
 )
 from app.privacy.models.data_subject_request import DataSubjectRequest
+from app.users.models.user import User, UserStatus
 
 _ALLOWED_EXECUTOR_ROLES = frozenset(
     {
@@ -90,14 +91,19 @@ async def _lock_authorised_executor(
     executor_user_id: UUID,
 ) -> PlatformStaff:
     stmt = (
-        select(PlatformStaff)
+        select(PlatformStaff, User.status)
+        .join(User, User.id == PlatformStaff.user_id)
         .where(PlatformStaff.user_id == executor_user_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    executor = (await session.execute(stmt)).scalar_one_or_none()
-    if executor is None:
+    row = (await session.execute(stmt)).one_or_none()
+    if row is None:
         raise ErasureExecutionError("erasure_execution_requires_platform_staff")
+
+    executor, user_status = row
+    if not _is_active_user_status(user_status):
+        raise ErasureExecutionError("erasure_execution_requires_active_user")
     if executor.status != PlatformStaffStatus.ACTIVE.value:
         raise ErasureExecutionError("erasure_execution_requires_active_staff")
     if executor.role not in _ALLOWED_EXECUTOR_ROLES:
@@ -139,6 +145,10 @@ def _execution_result(
         completed_at=completed_at,
         failure_reason_code=orchestration.failure_reason_code,
     )
+
+
+def _is_active_user_status(value: object) -> bool:
+    return value == UserStatus.ACTIVE or value == UserStatus.ACTIVE.value
 
 
 def _normalise_reference_time(value: datetime) -> datetime:
