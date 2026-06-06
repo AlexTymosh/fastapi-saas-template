@@ -4,7 +4,9 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 
+from app.audit.models.audit_event import AuditAction, AuditEvent, AuditTargetType
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.platform.models.platform_staff import (
     PlatformStaff,
@@ -105,6 +107,24 @@ def _outbox_event(
     )
 
 
+async def _execution_audit_events(
+    session,
+    *,
+    request_id: UUID,
+) -> tuple[AuditEvent, ...]:
+    stmt = (
+        select(AuditEvent)
+        .where(
+            AuditEvent.action
+            == AuditAction.DATA_SUBJECT_REQUEST_ERASURE_EXECUTED.value,
+            AuditEvent.target_type == AuditTargetType.DATA_SUBJECT_REQUEST.value,
+            AuditEvent.target_id == request_id,
+        )
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
 def test_erasure_execution_authorises_privileged_staff_and_runs_orchestrator(
     migrated_session_factory,
 ) -> None:
@@ -127,6 +147,7 @@ def test_erasure_execution_authorises_privileged_staff_and_runs_orchestrator(
             await session.refresh(subject)
             await session.refresh(dsr)
             await session.refresh(outbox)
+            audit_events = await _execution_audit_events(session, request_id=dsr.id)
 
             assert result.orchestration_status is ErasureOrchestrationStatus.COMPLETED
             assert result.executor_user_id == executor.id
@@ -139,12 +160,22 @@ def test_erasure_execution_authorises_privileged_staff_and_runs_orchestrator(
             )
             assert result.did_mutate is True
             assert result.failure_reason_code is None
+            assert result.audit_event_id == audit_events[0].id
             assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
             assert subject.email is None
             assert subject.external_auth_id == f"erased-user:{subject.id}"
             assert outbox.status == OutboxStatus.FAILED.value
             assert "email" not in outbox.payload_json
             assert "encrypted_raw_token" not in outbox.payload_json
+            assert len(audit_events) == 1
+            assert audit_events[0].actor_user_id == executor.id
+            assert audit_events[0].target_id == dsr.id
+            assert audit_events[0].metadata_json == {
+                "orchestration_status": "completed",
+                "provider_keys": list(result.provider_keys),
+                "affected_rows": result.affected_rows,
+                "did_mutate": True,
+            }
 
     run_async(_run())
 
@@ -201,12 +232,14 @@ def test_erasure_execution_rejects_unauthorised_staff_without_mutation(
             await session.refresh(subject)
             await session.refresh(dsr)
             await session.refresh(outbox)
+            audit_events = await _execution_audit_events(session, request_id=dsr.id)
             assert subject.email == subject_email
             assert dsr.execution_status == (
                 DataSubjectRequestExecutionStatus.NOT_STARTED.value
             )
             assert outbox.status == OutboxStatus.PENDING.value
             assert outbox.payload_json["email"] == subject_email
+            assert audit_events == ()
 
     run_async(_run())
 
@@ -232,6 +265,7 @@ def test_erasure_execution_rejects_non_staff_executor(
             assert exc_info.value.reason_code == (
                 "erasure_execution_requires_platform_staff"
             )
+            assert await _execution_audit_events(session, request_id=dsr.id) == ()
 
     run_async(_run())
 
@@ -260,15 +294,30 @@ def test_erasure_execution_returns_failed_result_from_orchestrator(
                     request_id=dsr.id,
                     executor_user_id=executor.id,
                 )
+                audit_events = await _execution_audit_events(
+                    session,
+                    request_id=dsr.id,
+                )
                 assert result.orchestration_status is ErasureOrchestrationStatus.FAILED
                 assert result.failure_reason_code == (
                     "outbox_erasure_processing_rows_in_flight"
                 )
                 assert result.affected_rows == 0
+                assert result.audit_event_id == audit_events[0].id
+                assert len(audit_events) == 1
+                assert audit_events[0].actor_user_id == executor.id
+                assert audit_events[0].metadata_json == {
+                    "orchestration_status": "failed",
+                    "provider_keys": [],
+                    "affected_rows": 0,
+                    "did_mutate": False,
+                    "failure_reason_code": ("outbox_erasure_processing_rows_in_flight"),
+                }
 
             await session.refresh(subject)
             await session.refresh(dsr)
             await session.refresh(outbox)
+            persisted_events = await _execution_audit_events(session, request_id=dsr.id)
             assert subject.email == subject_email
             assert dsr.execution_status == (
                 DataSubjectRequestExecutionStatus.FAILED.value
@@ -278,6 +327,7 @@ def test_erasure_execution_returns_failed_result_from_orchestrator(
             )
             assert outbox.status == OutboxStatus.PROCESSING.value
             assert "email" in outbox.payload_json
+            assert len(persisted_events) == 1
 
     run_async(_run())
 

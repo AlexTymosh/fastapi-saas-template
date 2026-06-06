@@ -24,6 +24,7 @@ The function:
 - verifies that the linked local user is still active;
 - locks the DSR row;
 - delegates to the core erasure orchestrator;
+- persists an execution audit event in the same transaction;
 - returns a structured execution result;
 - does not commit.
 
@@ -46,6 +47,23 @@ This mirrors the platform actor access path and prevents a suspended local user
 from executing destructive erasure through a worker or other non-API caller that
 passes `executor_user_id` directly.
 
+## Execution audit trail
+
+Successful and failed orchestration results create an `audit_events` row before
+the function returns.
+
+The audit event stores:
+
+- `actor_user_id`: the staff user who executed the erasure;
+- `target_type`: `data_subject_request`;
+- `target_id`: the DSR id;
+- `action`: `data_subject_request_erasure_executed`;
+- structured metadata with orchestration status, provider keys, affected rows,
+  mutation flag, and optional failure reason code.
+
+Unauthorised attempts and missing-request failures do not create this execution
+audit event because no valid execution target was authorised.
+
 ## Transaction boundary
 
 The command layer does not commit. Callers should run it inside the existing
@@ -55,7 +73,8 @@ unit of work.
 Provider failures are still handled by the orchestrator:
 
 - provider mutations are rolled back through nested transactions;
-- the DSR failed execution state can be committed by the outer transaction.
+- the DSR failed execution state can be committed by the outer transaction;
+- the execution audit event is persisted by the same outer transaction.
 
 ## Out of scope
 
