@@ -28,6 +28,7 @@ class PlatformPermission(StrEnum):
     GDPR_ERASE = "gdpr:erase"
     PRIVACY_REQUESTS_READ = "privacy_requests:read"
     PRIVACY_REQUESTS_REVIEW = "privacy_requests:review"
+    PRIVACY_REQUESTS_EXECUTE_ERASURE = "privacy_requests:execute_erasure"
 
 
 ALL_PERMISSIONS = frozenset(PlatformPermission)
@@ -49,6 +50,7 @@ ROLE_PERMISSIONS = {
             PlatformPermission.GDPR_EXPORT,
             PlatformPermission.PRIVACY_REQUESTS_READ,
             PlatformPermission.PRIVACY_REQUESTS_REVIEW,
+            PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE,
         }
     ),
 }
