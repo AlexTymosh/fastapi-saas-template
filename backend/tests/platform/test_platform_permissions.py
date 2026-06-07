@@ -3,7 +3,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.platform.dependencies import require_platform_permission
-from app.core.platform.permissions import PlatformPermission, PlatformRole
+from app.core.platform.permissions import (
+    ROLE_PERMISSIONS,
+    PlatformPermission,
+    PlatformRole,
+)
 from app.organisations.models.organisation import Organisation
 from app.platform.models.platform_staff import PlatformStaffStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
@@ -233,16 +237,21 @@ def test_platform_staff_access_does_not_require_tenant_membership(
     assert response.status_code == 200
 
 
-def test_compliance_officer_permissions_exclude_gdpr_erase():
-    from app.core.platform.permissions import ROLE_PERMISSIONS
-
+def test_compliance_officer_permissions_exclude_generic_gdpr_erase():
     perms = ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
     assert PlatformPermission.GDPR_ERASE not in perms
-    assert PlatformPermission.GDPR_EXPORT in perms
 
 
-def test_platform_admin_permissions_include_gdpr_erase():
-    from app.core.platform.permissions import ROLE_PERMISSIONS
+def test_compliance_officer_can_execute_privacy_request_erasure():
+    perms = ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
+    assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE in perms
 
+
+def test_support_agent_cannot_execute_privacy_request_erasure():
+    perms = ROLE_PERMISSIONS[PlatformRole.SUPPORT_AGENT]
+    assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE not in perms
+
+
+def test_platform_admin_can_execute_privacy_request_erasure():
     perms = ROLE_PERMISSIONS[PlatformRole.PLATFORM_ADMIN]
-    assert PlatformPermission.GDPR_ERASE in perms
+    assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE in perms
