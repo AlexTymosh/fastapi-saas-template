@@ -10,6 +10,7 @@ from starlette.requests import Request
 
 from app.audit.context import build_audit_context_from_request
 from app.core.db import get_db_session
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.errors.openapi import (
     COMMON_ERROR_RESPONSES,
     RATE_LIMIT_ERROR_RESPONSES,
@@ -22,6 +23,11 @@ from app.core.platform import (
     require_rate_limited_platform_write_context,
 )
 from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
+from app.privacy.erasures.execution import (
+    ErasureExecutionError,
+    execute_approved_erasure_request_by_staff,
+)
+from app.privacy.erasures.orchestrator import ErasureOrchestrationError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequestStatus,
     DataSubjectRequestType,
@@ -29,6 +35,7 @@ from app.privacy.models.data_subject_request import (
 from app.privacy.schemas.data_subject_requests import (
     ApproveDataSubjectRequest,
     CancelDataSubjectRequest,
+    ExecuteErasureDataSubjectRequest,
     FulfilDataSubjectRequest,
     PlatformDataSubjectRequestResponse,
     PlatformDataSubjectRequestsCollectionResponse,
@@ -40,6 +47,21 @@ from app.privacy.services.data_subject_requests import DataSubjectRequestService
 
 router = APIRouter(
     prefix="/platform/privacy/data-subject-requests", tags=["platform-privacy"]
+)
+
+_NOT_FOUND_EXECUTION_REASONS = frozenset(
+    {
+        "erasure_execution_request_not_found",
+        "erasure_orchestration_request_not_found",
+    }
+)
+_FORBIDDEN_EXECUTION_REASONS = frozenset(
+    {
+        "erasure_execution_requires_platform_staff",
+        "erasure_execution_requires_active_user",
+        "erasure_execution_requires_active_staff",
+        "erasure_execution_requires_privileged_staff",
+    }
 )
 
 
@@ -226,6 +248,42 @@ async def cancel_platform_data_subject_request(
 
 
 @router.post(
+    "/{request_id}/execute-erasure",
+    response_model=PlatformDataSubjectRequestResponse,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+)
+async def execute_platform_data_subject_request_erasure(
+    request_id: UUID,
+    _: ExecuteErasureDataSubjectRequest,
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(
+            require_rate_limited_platform_write_context(
+                PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE
+            ),
+            scope="function",
+        ),
+    ],
+) -> PlatformDataSubjectRequestResponse:
+    actor = write_context.actor
+    try:
+        await execute_approved_erasure_request_by_staff(
+            write_context.session,
+            request_id=request_id,
+            executor_user_id=actor.user.id,
+        )
+    except ErasureExecutionError as exc:
+        _raise_execution_api_error(exc.reason_code)
+    except ErasureOrchestrationError as exc:
+        _raise_execution_api_error(exc.reason_code)
+
+    row = await DataSubjectRequestService(write_context.session).get_platform_request(
+        request_id=request_id
+    )
+    return PlatformDataSubjectRequestResponse.model_validate(row)
+
+
+@router.post(
     "/{request_id}/fulfil",
     response_model=PlatformDataSubjectRequestResponse,
     responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
@@ -253,3 +311,11 @@ async def fulfil_platform_data_subject_request(
         ),
     )
     return PlatformDataSubjectRequestResponse.model_validate(row)
+
+
+def _raise_execution_api_error(reason_code: str) -> None:
+    if reason_code in _NOT_FOUND_EXECUTION_REASONS:
+        raise NotFoundError(detail="Data subject request not found") from None
+    if reason_code in _FORBIDDEN_EXECUTION_REASONS:
+        raise ForbiddenError(detail="Platform access denied") from None
+    raise ConflictError(detail=f"Erasure execution is not eligible: {reason_code}")

@@ -127,3 +127,7 @@ class CancelDataSubjectRequest(BaseModel):
 
 class FulfilDataSubjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ExecuteErasureDataSubjectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
