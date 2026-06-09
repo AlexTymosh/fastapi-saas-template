@@ -34,7 +34,7 @@ should still be verified against code before extension:
   special-category condition primitives, per-subject processing authorisations,
   consent records, privacy notice acceptance records, service-layer processing
   checks, consent withdrawal and compliance audit events.
-- Data Subject Request workflow for the current backend scope:
+- Data Subject Request workflow foundation:
   - DSR persistence model, repository, service lifecycle and APIs;
   - idempotent submission controls;
   - execution state separated from administrative review status;
@@ -42,7 +42,7 @@ should still be verified against code before extension:
   - export artifact worker flow;
   - local and S3-compatible export artifact storage;
   - platform erasure execution API;
-  - audit, outbox, invite and user-profile erasure providers;
+  - executable erasure providers for audit, outbox, invites and user profile;
   - audit minimisation before destructive erasure;
   - self-erasure execution rejection;
   - automatic fulfilment after successful approved erase execution;
@@ -58,7 +58,7 @@ should still be verified against code before extension:
   - `.python-version` pins Python 3.12;
   - `backend/pyproject.toml` uses `[dependency-groups].dev`;
   - `backend/uv.lock` is the only dependency lock source;
-  - `Taskfile.yml` wraps common `uv run` checks`;
+  - `Taskfile.yml` wraps common `uv run` checks;
   - `.pre-commit-config.yaml` uses local `uv` hooks;
   - GitHub Actions CI runs the backend quality gate with `uv`;
   - Docker backend image installs runtime dependencies from `uv.lock`.
@@ -72,8 +72,13 @@ should still be verified against code before extension:
 - Observability integration beyond the current foundation.
 - Full BOLA/BFLA security test matrix outside the currently covered tenant BOLA,
   platform permission-matrix and feature-specific privacy permission tests.
-- DSR hardening items that are intentionally not part of the current #328
-  backend closure:
+- DSR erasure coverage for the full declared privacy inventory:
+  - current executable erasure covers audit, outbox, invites and users;
+  - memberships, organisations, platform staff, DSR/export-artifact and
+    privacy-governance records still require executable providers or explicit
+    manual-review/retention policy.
+- DSR hardening items that are intentionally separate from the current
+  executable workflow:
   - streaming export archive generation;
   - PostgreSQL-specific JSON predicate export-provider tests;
   - explicit delivery evidence semantics;
@@ -85,6 +90,7 @@ should still be verified against code before extension:
 The following areas should not be presented as complete without code
 verification:
 
+- Complete executable DSR erasure coverage for every inventoried data area.
 - Production-grade deployment hardening.
 - Complete platform operations workflows beyond current backend slices.
 - Full BOLA/BFLA security test matrix for every endpoint.
@@ -94,6 +100,10 @@ verification:
 ## Known Risks
 
 - Documentation may lag code.
+- Documentation must not claim planned features as implemented.
+- Current DSR erasure execution does not cover every declared inventory target.
+- Large DSR exports still need streaming archive generation before production
+  scale is claimed.
 - Soft-deleted organisations are operational/audit records: platform admin
   workflows may request explicit visibility for support, compliance, audit or
   recovery, but tenant APIs must not accidentally expose them.
@@ -104,9 +114,6 @@ verification:
 - CI should remain required and green before merging protected branches.
 - Access-control tests need continuous expansion.
 - Deleted or renamed docs must not leave broken links.
-- Documentation must not claim planned features as implemented.
-- Large DSR exports still need streaming archive generation before production
-  scale is claimed.
 
 ## Documentation Status
 
@@ -119,8 +126,8 @@ verification:
 - `backend/docs/access-control/en` is the canonical access-control
   documentation source.
 - `backend/docs/privacy-dsr.md` contains the current DSR workflow summary.
-- `backend/docs/privacy-dsr-328-closure-checklist.md` maps issue #328
-  requirements to implemented backend scope.
+- `backend/docs/privacy-dsr-328-closure-checklist.md` tracks closure readiness
+  and remaining blockers for issue #328.
 - `SESSION_NOTES.md` contains short live handoff notes for AI-agent sessions.
 - `README.md`, `AGENTS.md`, and `Taskfile.yml` are the primary developer
   workflow entry points.
@@ -167,10 +174,10 @@ External DB tests are opt-in and must not run by default.
 ## Recommended Next Steps
 
 1. Keep CI green and required before merging.
-2. Close issue #328 for the current backend DSR workflow after the final closure
-   checklist PR passes CI.
-3. Create separate follow-up issues for streaming DSR exports and PostgreSQL
-   export-provider integration coverage.
+2. Resolve remaining DSR erasure inventory coverage before closing issue #328.
+3. Add executable providers or explicit manual-review policy for memberships,
+   organisations, platform staff, DSR/export-artifact and privacy-governance
+   records.
 4. Continue expanding BOLA/BFLA and platform permission tests.
 5. Harden Docker/runtime for production beyond dependency installation.
 6. Continue trusted proxy policy hardening and verify deployment-specific CORS

@@ -3,7 +3,9 @@
 ## Current implemented scope
 
 The current implementation provides a backend Data Subject Rights workflow for
-the personal-data stores currently present in the SaaS template.
+large parts of the personal-data stores currently present in the SaaS template.
+It should not yet be described as complete for erasure across every inventoried
+store.
 
 Implemented areas:
 
@@ -19,8 +21,9 @@ Implemented areas:
   command.
 - S3-compatible export artifact storage for staging/production.
 - Cross-table subject export providers for the current privacy inventory scope.
-- Erasure provider planning, preview, provider execution and platform execution
-  API.
+- Erasure provider planning and preview.
+- Executable erasure providers for audit, outbox, invites and user profile.
+- Platform erasure execution API for the currently executable providers.
 - Audit minimisation before destructive erasure providers run.
 - Self-erasure execution rejection before provider orchestration.
 - Automatic fulfilment after successful approved erase execution.
@@ -28,6 +31,14 @@ Implemented areas:
   storage and clears storage metadata.
 - Contract tests for privacy inventory, export provider keys and platform
   permissions.
+
+Known erasure limitation:
+
+- Executable erasure coverage does not yet match every erasure target declared in
+  the privacy inventory.
+- Membership, organisation, platform staff, DSR/export-artifact and
+  privacy-governance subject references still need executable providers or
+  explicit manual-review/retention rules before issue #328 can be closed.
 
 ## User API
 
@@ -143,7 +154,7 @@ Fulfilment rules:
 - Export DSRs require at least one ready, non-expired export artifact before
   manual fulfilment.
 - Successful approved erase execution automatically moves the DSR lifecycle to
-  `fulfilled`.
+  `fulfilled` for the current executable provider set.
 - Failed erase execution keeps the DSR approved with failed execution state so a
   platform actor can investigate or retry.
 - Non-implemented request execution types stay blocked from fulfilment until a
@@ -171,13 +182,13 @@ Current behaviour:
 Approved erase DSRs execute through the platform erasure API and the internal
 command-layer boundary.
 
-Current behaviour:
+Current executable behaviour:
 
 - The platform API requires `privacy_requests:execute_erasure`.
 - The service maps execution and orchestration errors to application errors.
 - The command layer locks and authorises the executor before execution.
 - Self-erasure execution is rejected before provider orchestration.
-- Providers run in safe order:
+- Providers run in this safe order:
   - audit minimisation;
   - outbox payload scrubbing;
   - invite anonymisation/minimisation;
@@ -186,6 +197,15 @@ Current behaviour:
   the DSR.
 - Failed provider execution records failed execution state and does not fulfil
   the DSR.
+
+Current erasure gaps:
+
+- Membership subject links are not yet handled by executable erasure.
+- Organisation subject references are not yet handled by executable erasure.
+- Platform staff subject references are not yet handled by executable erasure.
+- DSR/export-artifact subject references are not yet handled by executable
+  erasure.
+- Privacy-governance subject records are not yet handled by executable erasure.
 
 ## Retention
 
@@ -207,15 +227,25 @@ The runner:
 - preserves delivered DSR execution state;
 - marks undelivered expired export execution as failed with `artifact_expired`.
 
-## Remaining non-blocking follow-up work
+## Follow-up work
 
-The #328 backend workflow is now materially implemented for the current product
-scope, but these hardening items should remain separate follow-up issues:
+The #328 backend workflow is materially advanced but not yet closable because
+executable erasure coverage does not match the declared inventory.
+
+Closure blockers:
+
+- executable erasure for memberships;
+- executable erasure or manual-review policy for organisations;
+- executable erasure or retention policy for platform staff links;
+- safe handling for DSR/export-artifact links during erasure;
+- safe handling for privacy-governance records during erasure.
+
+Non-blocking hardening items:
 
 - streaming archive generation for very large exports;
 - PostgreSQL-specific integration tests for JSON predicate export paths;
 - explicit delivery evidence beyond download URL/download count;
 - authorised representative workflows;
 - additional execution pipelines for rectification, restriction, objection,
-  access and portability beyond the current export/erase implementation;
+  access and portability;
 - frontend/UI.

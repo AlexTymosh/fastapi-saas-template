@@ -14,7 +14,8 @@ Export artifacts are generated asynchronously from approved export DSRs.
 - S3-compatible downloads use short-lived SigV4 presigned GET URLs.
 - Raw export payloads are not stored in the database.
 - Export payloads are assembled from the current cross-table subject export
-  providers.
+  providers. This is export coverage only and does not imply complete
+  executable erasure coverage for the same tables.
 - Audit metadata is intentionally minimised and does not include payload/storage
   paths/tokens.
 - `--dry-run` worker mode performs one non-mutating count pass and then exits
