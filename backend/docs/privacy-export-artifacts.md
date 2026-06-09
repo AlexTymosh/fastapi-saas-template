@@ -13,10 +13,13 @@ Export artifacts are generated asynchronously from approved export DSRs.
 - Download URLs are short-lived and signed for local development semantics.
 - S3-compatible downloads use short-lived SigV4 presigned GET URLs.
 - Raw export payloads are not stored in the database.
+- Export payloads are assembled from the current cross-table subject export
+  providers. This is export coverage only and does not imply complete
+  executable erasure coverage for the same tables.
 - Audit metadata is intentionally minimised and does not include payload/storage
   paths/tokens.
-- `--dry-run` worker mode performs one non-mutating count pass and then
-  exits predictably.
+- `--dry-run` worker mode performs one non-mutating count pass and then exits
+  predictably.
 - Expired ready artifacts are processed by the privacy retention runner, which
   deletes the stored archive object, clears storage metadata, marks the artifact
   as `expired`, and synchronises the linked DSR execution state.
@@ -43,7 +46,6 @@ without mutating the database or deleting storage objects.
 
 ## Out of scope
 
-- Full personal-data coverage across all product tables.
-- Erasure/anonymisation execution.
+- Streaming archive generation for very large exports.
 - Authorised representative workflows.
 - Frontend/UI.
