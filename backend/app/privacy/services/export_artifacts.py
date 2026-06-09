@@ -42,6 +42,13 @@ _DOWNLOAD_ELIGIBLE_DSR_STATUSES = frozenset(
         DataSubjectRequestStatus.FULFILLED.value,
     }
 )
+_EXPORT_GENERATION_FAILURE_CODES = frozenset(
+    {
+        "artifact_too_large",
+        "dsr_not_found",
+        "dsr_not_export_eligible",
+    }
+)
 
 
 def _ensure_aware_utc(value: datetime) -> datetime:
@@ -416,7 +423,9 @@ class ExportArtifactService:
             event_at=updated_artifact.downloaded_at,
         )
         await self._record_event(
-            audit_context, AuditAction.EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED, artifact
+            audit_context,
+            AuditAction.EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED,
+            artifact,
         )
         return GeneratedExportDownloadUrl(
             url=url, expires_in_seconds=effective_ttl_seconds
@@ -445,7 +454,8 @@ class ExportArtifactService:
             )
         return [
             ProcessingExportLease(
-                artifact_id=row.id, processing_token=row.processing_token
+                artifact_id=row.id,
+                processing_token=row.processing_token,
             )
             for row in rows
             if row.processing_token is not None
@@ -516,6 +526,7 @@ class ExportArtifactService:
             )
             if artifact.started_at is None:
                 artifact.started_at = now
+            artifact.status = ExportArtifactStatus.PROCESSING.value
             await self.repo.save(artifact)
             await self._sync_export_dsr_execution_state(
                 artifact,
@@ -629,7 +640,8 @@ class ExportArtifactService:
             artifact = await self.repo.get_by_id(artifact_id)
         else:
             artifact = await self.repo.get_processing_by_token(
-                artifact_id=artifact_id, processing_token=processing_token
+                artifact_id=artifact_id,
+                processing_token=processing_token,
             )
         if artifact is None:
             raise ConflictError(
@@ -666,14 +678,14 @@ class ExportArtifactService:
             artifact = await self.repo.get_by_id(artifact_id)
         else:
             artifact = await self.repo.get_processing_by_token(
-                artifact_id=artifact_id, processing_token=processing_token
+                artifact_id=artifact_id,
+                processing_token=processing_token,
             )
         if artifact is None:
             return None
         code = (
             str(exc)
-            if str(exc)
-            in {"artifact_too_large", "dsr_not_found", "dsr_not_export_eligible"}
+            if str(exc) in _EXPORT_GENERATION_FAILURE_CODES
             else "generation_failed"
         )
         failed = await self.repo.mark_failed(
@@ -693,11 +705,23 @@ class ExportArtifactService:
         )
         return failed
 
-    async def mark_expired_artifacts(self, *, now: datetime | None = None) -> int:
+    async def count_expired_ready_artifacts(
+        self, *, now: datetime | None = None, limit: int = 1000
+    ) -> int:
+        self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
-        candidates = await self.repo.list_expired_ready(now=now_value, limit=1000)
+        candidates = await self.repo.list_expired_ready(now=now_value, limit=limit)
+        return len(candidates)
+
+    async def mark_expired_artifacts(
+        self, *, now: datetime | None = None, limit: int = 1000
+    ) -> int:
+        self._validate_positive_limit(limit)
+        now_value = _ensure_aware_utc(now or datetime.now(UTC))
+        candidates = await self.repo.list_expired_ready(now=now_value, limit=limit)
         expired = 0
         for artifact in candidates:
+            self._purge_export_artifact_storage_object(artifact)
             expired_artifact = await self.repo.mark_expired(artifact)
             expired += 1
             (
@@ -719,6 +743,24 @@ class ExportArtifactService:
                 expired_artifact,
             )
         return expired
+
+    @staticmethod
+    def _validate_positive_limit(limit: int) -> None:
+        if limit < 1:
+            raise ValueError("Export artifact retention limit must be positive")
+
+    def _purge_export_artifact_storage_object(self, artifact: ExportArtifact) -> None:
+        storage_key = artifact.storage_key
+        if storage_key is None:
+            return
+
+        storage = self._storage_for_backend(artifact.storage_backend)
+        storage.delete(storage_key)
+        artifact.storage_key = None
+        artifact.filename = None
+        artifact.content_type = None
+        artifact.size_bytes = None
+        artifact.checksum_sha256 = None
 
     async def _record_event(
         self, audit_context: AuditContext, action: AuditAction, artifact: ExportArtifact
