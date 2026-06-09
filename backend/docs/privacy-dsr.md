@@ -1,158 +1,221 @@
-# Data Subject Request (DSR) Foundation
+# Data Subject Request (DSR) workflow
 
 ## Current implemented scope
 
-Implemented across PR-1 and PR-2:
-- DSR persistence model, migration, repository, and service lifecycle foundation;
-- idempotent submission controls (hashed key, fingerprint, TTL window);
-- due date defaults and lifecycle timestamps;
-- compliance audit lifecycle events;
-- user-facing and platform-facing DSR HTTP API;
-- platform permissions and DSR submit rate limiting.
+The current implementation provides a backend Data Subject Rights workflow for
+the personal-data stores currently present in the SaaS template.
 
-Implemented as export artifact foundation in PR-378:
-- `ExportArtifact` model, migration, repository, service, schemas, and API foundation;
-- asynchronous queued export artifact generation for approved export DSRs;
-- worker-friendly command: `python -m app.commands.privacy_export_worker`;
-- local development/test storage adapter;
-- short-lived HMAC-signed local download URL/token support;
-- user-facing export artifact list/read/download-url endpoints;
-- platform-facing export artifact create/list/read/download-url endpoints;
-- export artifact lifecycle audit events;
-- privacy export settings and local signing-secret guardrails;
-- service, repository, storage, API, worker, settings, and OpenAPI contract tests.
+Implemented areas:
+
+- DSR persistence model, repository and service lifecycle.
+- User-facing DSR submission, listing, read and cancellation API.
+- Platform-facing DSR review, approval, rejection, cancellation and fulfilment
+  API.
+- Separate administrative lifecycle status and operational execution status.
+- Idempotent DSR submission with hashed idempotency keys and safety validation.
+- Platform permission boundaries for DSR read, review, export and erase
+  execution.
+- Export artifact model, service, repository, user API, platform API and worker
+  command.
+- S3-compatible export artifact storage for staging/production.
+- Cross-table subject export providers for the current privacy inventory scope.
+- Erasure provider planning, preview, provider execution and platform execution
+  API.
+- Audit minimisation before destructive erasure providers run.
+- Self-erasure execution rejection before provider orchestration.
+- Automatic fulfilment after successful approved erase execution.
+- Export artifact retention runner that removes expired archive objects from
+  storage and clears storage metadata.
+- Contract tests for privacy inventory, export provider keys and platform
+  permissions.
 
 ## User API
 
-Base path: `/api/v1/privacy/data-subject-requests`
+Base path:
+
+```text
+/api/v1/privacy/data-subject-requests
+```
 
 Endpoints:
-- `POST /` submit DSR (self-service only);
-- `GET /` list own DSR requests;
-- `GET /{request_id}` read own DSR by id;
+
+- `POST /` submit a self-service DSR.
+- `GET /` list own DSR requests.
+- `GET /{request_id}` read own DSR by id.
 - `POST /{request_id}/cancel` cancel own request when lifecycle permits.
 
 Export artifact endpoints:
 
-Base path: `/api/v1/privacy/export-artifacts`
+```text
+/api/v1/privacy/export-artifacts
+```
 
 Endpoints:
-- `GET /` list own export artifacts;
-- `GET /{artifact_id}` read own export artifact status/metadata;
-- `POST /{artifact_id}/download-url` create a short-lived download URL for own ready artifact.
 
-Phase constraints:
-- self-service DSR submission only (`requester_user_id == subject_user_id`);
-- DSR submission payload accepts `request_type` only;
-- no unrestricted requester free-text notes in PR-2;
-- platform fulfilment is guarded: export requests require a ready, non-expired
-  export artifact before they can be marked fulfilled;
-- export artifact payload currently contains a minimal metadata-only JSON ZIP, not full cross-table subject data coverage.
+- `GET /` list own export artifacts.
+- `GET /{artifact_id}` read own export artifact status and metadata.
+- `POST /{artifact_id}/download-url` create a short-lived download URL for an
+  own ready artifact.
+
+Current user API constraints:
+
+- Submission is self-service only: requester and subject are the same local user.
+- Submitted request types may still require platform review and execution.
+- Download URLs do not expose storage keys, local paths, processing tokens or raw
+  payload internals.
 
 ## Platform API
 
-Base path: `/api/v1/platform/privacy/data-subject-requests`
+Base path:
+
+```text
+/api/v1/platform/privacy/data-subject-requests
+```
 
 Endpoints:
-- `GET /` list DSRs for review;
-- `GET /{request_id}` read DSR;
-- `POST /{request_id}/review` submitted -> under_review;
-- `POST /{request_id}/approve` approve with optional structured reason code;
-- `POST /{request_id}/reject` reject with required structured reason code;
-- `POST /{request_id}/cancel` cancel when lifecycle permits;
-- `POST /{request_id}/fulfil` fulfil approved request.
+
+- `GET /` list DSRs for review.
+- `GET /{request_id}` read DSR.
+- `POST /{request_id}/review` move submitted request to under review.
+- `POST /{request_id}/approve` approve with optional structured reason code.
+- `POST /{request_id}/reject` reject with required structured reason code.
+- `POST /{request_id}/cancel` cancel when lifecycle permits.
+- `POST /{request_id}/execute-erasure` execute an approved erase DSR.
+- `POST /{request_id}/fulfil` fulfil an approved request when execution evidence
+  exists.
 
 Export artifact endpoints:
 
-Base path: `/api/v1/platform/privacy`
+```text
+/api/v1/platform/privacy
+```
 
 Endpoints:
-- `POST /data-subject-requests/{request_id}/export-artifact` create a queued export artifact for an approved export DSR;
-- `GET /export-artifacts` list export artifact metadata;
-- `GET /export-artifacts/{artifact_id}` read export artifact metadata;
-- `POST /export-artifacts/{artifact_id}/download-url` create a short-lived download URL for a ready artifact.
+
+- `POST /data-subject-requests/{request_id}/export-artifact` create a queued
+  export artifact for an approved export DSR.
+- `GET /export-artifacts` list export artifact metadata.
+- `GET /export-artifacts/{artifact_id}` read export artifact metadata.
+- `POST /export-artifacts/{artifact_id}/download-url` create a short-lived
+  download URL for a ready artifact.
 
 ## Permissions
 
-Platform permissions:
+Platform permissions used by the DSR workflow:
+
 - `privacy_requests:read`
 - `privacy_requests:review`
+- `privacy_requests:execute_erasure`
 - `gdpr:export`
+- `gdpr:erase`
 
 Role posture:
-- `platform_admin`: allowed through full permission set;
-- `compliance_officer`: allowed DSR read/review and export artifact creation/download through `gdpr:export`;
-- `support_agent`: denied by default for DSR read/review and export artifact operations.
 
-## Rate limits
-
-- User submit path uses `privacy_dsr_submit` policy:
-  - limit: 5
-  - window: 86400 seconds
-  - fail-open: false
-  - sensitivity: critical
-- DSR read and export artifact read paths use existing authenticated read policy patterns.
-- Platform mutation paths use existing platform write policy pattern.
-
-## Idempotency
-
-Submission supports `Idempotency-Key` header.
-- Same requester + same key + same payload -> existing request is returned.
-- Same requester + same key + different payload -> conflict.
+- `platform_admin`: has the full permission set.
+- `compliance_officer`: can read/review DSRs, create/download export artifacts,
+  and execute approved erasure through the dedicated erase execution boundary.
+- `support_agent`: denied by default for DSR read/review, export artifact and
+  erasure execution operations.
 
 ## Lifecycle
 
-Supported DSR statuses:
-- submitted
-- under_review
-- approved
-- rejected
-- fulfilled
-- cancelled
+Administrative DSR statuses:
 
-Supported export artifact statuses:
-- queued
-- processing
-- ready
-- failed
-- expired
-- cancelled
+- `submitted`
+- `under_review`
+- `approved`
+- `rejected`
+- `fulfilled`
+- `cancelled`
 
-Current platform fulfil flow allows fulfilment only for approved DSRs and now
-requires execution evidence before final fulfilment:
-- export DSRs require at least one ready, non-expired export artifact;
-- erasure, rectification, restriction, objection, access, and portability DSRs
-  are blocked from fulfilment until their execution pipelines exist.
+Operational execution statuses:
 
-A later execution-architecture slice should still introduce first-class worker
-execution records, retry state, partial fulfilment, and delivery evidence.
-Ready, non-expired export artifacts remain downloadable after their parent
-export DSR moves from `approved` to `fulfilled`; fulfilment records that the
-artifact is ready, not that the requester has already downloaded it.
+- `not_started`
+- `queued`
+- `processing`
+- `ready`
+- `failed`
+- `partially_fulfilled`
+- `delivered`
 
-## Export artifacts
+Fulfilment rules:
+
+- Export DSRs require at least one ready, non-expired export artifact before
+  manual fulfilment.
+- Successful approved erase execution automatically moves the DSR lifecycle to
+  `fulfilled`.
+- Failed erase execution keeps the DSR approved with failed execution state so a
+  platform actor can investigate or retry.
+- Non-implemented request execution types stay blocked from fulfilment until a
+  concrete execution pipeline exists.
+
+## Export workflow
 
 Export artifacts are asynchronous and built from approved export DSRs only.
 
 Current behaviour:
-- platform users with `gdpr:export` can create a queued export artifact for an approved export DSR;
-- the worker command claims queued artifacts and generates a minimal JSON ZIP archive;
-- local storage is intended for development and tests only;
-- ready artifacts remain downloadable after export DSR fulfilment until expiry;
-- local download URLs are short-lived and HMAC-signed;
-- API responses do not expose storage keys, local filesystem paths, processing tokens, or raw export payloads;
-- audit metadata is minimised and does not include export payloads, signed URLs, or storage paths.
 
-## Explicitly out of scope
+- Platform users with `gdpr:export` can create a queued export artifact.
+- The worker command claims queued artifacts and generates a subject data ZIP.
+- Export payloads are assembled from the current privacy inventory scope.
+- Local storage is for development and tests only.
+- Staging/production require S3-compatible object storage when privacy exports
+  are enabled.
+- Ready artifacts remain downloadable after export DSR fulfilment until expiry.
+- S3-compatible downloads use short-lived presigned GET URLs.
+- Audit metadata is minimised and does not include export payloads, signed URLs,
+  storage keys, local paths or processing tokens.
 
-Not implemented in this phase:
-- full cross-table personal-data export coverage across users, memberships, organisations, invites, outbox, audit, and future product records;
-- streaming export provider contracts and memory-safe export writer;
-- production object storage / S3-compatible storage adapter;
-- production HTTP/S3 download flow;
-- erasure/anonymisation execution;
-- retention purge runner that deletes expired objects from storage;
-- full DSR worker execution state machine with retry/partial-failure handling;
-- authorised representative flows;
-- PDF/CSV export formats;
+## Erasure workflow
+
+Approved erase DSRs execute through the platform erasure API and the internal
+command-layer boundary.
+
+Current behaviour:
+
+- The platform API requires `privacy_requests:execute_erasure`.
+- The service maps execution and orchestration errors to application errors.
+- The command layer locks and authorises the executor before execution.
+- Self-erasure execution is rejected before provider orchestration.
+- Providers run in safe order:
+  - audit minimisation;
+  - outbox payload scrubbing;
+  - invite anonymisation/minimisation;
+  - user profile anonymisation.
+- Successful erasure writes execution audit evidence and automatically fulfils
+  the DSR.
+- Failed provider execution records failed execution state and does not fulfil
+  the DSR.
+
+## Retention
+
+The privacy export retention runner processes expired ready export artifacts.
+
+Command:
+
+```text
+python -m app.privacy.retention_cli
+```
+
+The runner:
+
+- supports `--dry-run`;
+- supports `--batch-size`;
+- deletes the stored local/S3-compatible archive object;
+- clears storage metadata on the artifact row;
+- marks the artifact as `expired`;
+- preserves delivered DSR execution state;
+- marks undelivered expired export execution as failed with `artifact_expired`.
+
+## Remaining non-blocking follow-up work
+
+The #328 backend workflow is now materially implemented for the current product
+scope, but these hardening items should remain separate follow-up issues:
+
+- streaming archive generation for very large exports;
+- PostgreSQL-specific integration tests for JSON predicate export paths;
+- explicit delivery evidence beyond download URL/download count;
+- authorised representative workflows;
+- additional execution pipelines for rectification, restriction, objection,
+  access and portability beyond the current export/erase implementation;
 - frontend/UI.
