@@ -43,6 +43,7 @@ _ERASURE_EXECUTION_FORBIDDEN_REASON_CODES = frozenset(
         "erasure_execution_requires_active_user",
         "erasure_execution_requires_active_staff",
         "erasure_execution_requires_privileged_staff",
+        "erasure_execution_requires_non_subject_executor",
     }
 )
 

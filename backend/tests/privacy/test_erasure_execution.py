@@ -182,6 +182,45 @@ def test_erasure_execution_authorises_privileged_staff_and_runs_orchestrator(
     run_async(_run())
 
 
+def test_erasure_execution_rejects_self_erasure_without_mutation(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            subject_email = f"self-erasure-{uuid4()}@example.com"
+            subject = await _create_user(session, email=subject_email)
+            staff = _staff_record(subject)
+            dsr = _dsr_for_user(subject)
+            outbox = _outbox_event(invite_id=uuid4(), email=subject_email)
+            session.add_all([staff, dsr, outbox])
+            await session.flush()
+
+            with pytest.raises(ErasureExecutionError) as exc_info:
+                await execute_approved_erasure_request_by_staff(
+                    session,
+                    request_id=dsr.id,
+                    executor_user_id=subject.id,
+                )
+
+            assert exc_info.value.reason_code == (
+                "erasure_execution_requires_non_subject_executor"
+            )
+            await session.refresh(subject)
+            await session.refresh(dsr)
+            await session.refresh(outbox)
+            audit_events = await _execution_audit_events(session, request_id=dsr.id)
+            assert subject.email == subject_email
+            assert subject.external_auth_id.startswith("kc|")
+            assert dsr.execution_status == (
+                DataSubjectRequestExecutionStatus.NOT_STARTED.value
+            )
+            assert outbox.status == OutboxStatus.PENDING.value
+            assert outbox.payload_json["email"] == subject_email
+            assert audit_events == ()
+
+    run_async(_run())
+
+
 @pytest.mark.parametrize(
     ("role", "staff_status", "user_status", "expected_reason"),
     [
@@ -373,6 +412,41 @@ def test_dsr_service_maps_missing_erasure_request_to_not_found(
                     request_id=uuid4(),
                     executor_user_id=executor.id,
                 )
+
+    run_async(_run())
+
+
+def test_dsr_service_maps_self_erasure_to_forbidden(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            subject_email = f"service-self-erasure-{uuid4()}@example.com"
+            subject = await _create_user(session, email=subject_email)
+            staff = _staff_record(subject)
+            dsr = _dsr_for_user(subject)
+            outbox = _outbox_event(invite_id=uuid4(), email=subject_email)
+            session.add_all([staff, dsr, outbox])
+            await session.flush()
+
+            with pytest.raises(ForbiddenError):
+                await DataSubjectRequestService(
+                    session
+                ).execute_approved_erasure_request_by_platform_staff(
+                    request_id=dsr.id,
+                    executor_user_id=subject.id,
+                )
+
+            await session.refresh(subject)
+            await session.refresh(dsr)
+            await session.refresh(outbox)
+            audit_events = await _execution_audit_events(session, request_id=dsr.id)
+            assert subject.email == subject_email
+            assert dsr.execution_status == (
+                DataSubjectRequestExecutionStatus.NOT_STARTED.value
+            )
+            assert outbox.status == OutboxStatus.PENDING.value
+            assert audit_events == ()
 
     run_async(_run())
 

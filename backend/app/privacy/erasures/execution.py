@@ -81,6 +81,7 @@ async def execute_approved_erasure_request_by_staff(
         executor_user_id=executor_user_id,
     )
     request = await _lock_request(session, request_id=request_id)
+    _reject_self_erasure(executor=executor, request=request)
     orchestration = await execute_core_erasure_for_approved_request(
         session,
         request,
@@ -142,6 +143,17 @@ async def _lock_request(
     if request is None:
         raise ErasureExecutionError("erasure_execution_request_not_found")
     return request
+
+
+def _reject_self_erasure(
+    *,
+    executor: PlatformStaff,
+    request: DataSubjectRequest,
+) -> None:
+    if request.subject_user_id is None:
+        return
+    if executor.user_id == request.subject_user_id:
+        raise ErasureExecutionError("erasure_execution_requires_non_subject_executor")
 
 
 def _audit_execution(

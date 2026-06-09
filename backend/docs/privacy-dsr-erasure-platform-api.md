@@ -30,6 +30,7 @@ The service and command layers remain responsible for:
 
 - executor active-user and active-staff checks;
 - DSR row locking;
+- self-erasure rejection before provider orchestration;
 - provider orchestration;
 - durable execution audit trail;
 - transaction-safe failure handling;
@@ -43,6 +44,7 @@ format them as Problem Details responses:
 
 - missing DSR: `404`;
 - stale or invalid executor state: `403`;
+- self-erasure execution attempt: `403`;
 - ineligible DSR or orchestration precondition failure: `409`.
 
 Provider execution failures that are represented as a failed orchestration result

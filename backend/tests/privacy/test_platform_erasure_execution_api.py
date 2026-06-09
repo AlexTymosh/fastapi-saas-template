@@ -194,6 +194,69 @@ def test_compliance_officer_can_execute_approved_erasure_via_platform_api(
     run_async(_assert_persisted_state())
 
 
+def test_platform_api_rejects_self_erasure_without_audit_id_leak(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+) -> None:
+    executor = _provision_platform_actor(
+        migrated_session_factory,
+        external_auth_id="kc-erasure-api-self-executor",
+        email="erasure-api-self-executor@example.com",
+        role=PlatformRole.COMPLIANCE_OFFICER,
+    )
+    dsr_id = _create_approved_erase_dsr(migrated_session_factory, executor)
+    outbox_id = _create_pending_invite_outbox(
+        migrated_session_factory,
+        subject_email=executor.email,
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(executor.external_auth_id, executor.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.post(
+        f"/api/v1/platform/privacy/data-subject-requests/{dsr_id}/execute-erasure",
+        json={},
+    )
+
+    assert response.status_code == 403
+
+    async def _assert_persisted_state() -> None:
+        async with migrated_session_factory() as session:
+            saved_executor = await UserService(session).user_repository.get_by_id(
+                executor.id
+            )
+            saved_dsr = await session.get(DataSubjectRequest, dsr_id)
+            saved_outbox = await session.get(OutboxEvent, outbox_id)
+            audit_events = (
+                (
+                    await session.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.action
+                            == AuditAction.DATA_SUBJECT_REQUEST_ERASURE_EXECUTED.value,
+                            AuditEvent.target_id == dsr_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            assert saved_executor is not None
+            assert saved_executor.email == executor.email
+            assert saved_dsr is not None
+            assert saved_dsr.execution_status == (
+                DataSubjectRequestExecutionStatus.NOT_STARTED.value
+            )
+            assert saved_outbox is not None
+            assert saved_outbox.status == OutboxStatus.PENDING.value
+            assert saved_outbox.payload_json["email"] == executor.email
+            assert audit_events == []
+
+    run_async(_assert_persisted_state())
+
+
 def test_support_agent_cannot_execute_erasure_via_platform_api(
     authenticated_client_factory,
     migrated_database_url,
