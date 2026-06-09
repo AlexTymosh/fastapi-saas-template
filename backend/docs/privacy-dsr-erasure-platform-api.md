@@ -34,7 +34,9 @@ The service and command layers remain responsible for:
 - provider orchestration;
 - durable execution audit trail;
 - transaction-safe failure handling;
-- execution error mapping to application errors.
+- execution error mapping to application errors;
+- automatic transition of successfully executed approved erase DSRs to
+  `fulfilled`.
 
 ## Error mapping
 
@@ -47,14 +49,17 @@ format them as Problem Details responses:
 - self-erasure execution attempt: `403`;
 - ineligible DSR or orchestration precondition failure: `409`.
 
-Provider execution failures that are represented as a failed orchestration result
-are returned as a `200` response with the DSR `execution_status` set to `failed`.
+Successful erasure execution returns `200` with `status=fulfilled` and
+`execution_status=ready`.
+
+Provider execution failures that are represented as failed orchestration results
+return `200` with `status=approved` and `execution_status=failed`, leaving the
+request open for staff investigation or retry.
 
 ## Out of scope
 
 This slice does not add:
 
 - background worker execution;
-- automatic fulfilment transition;
 - retention/purge runners;
 - final issue #328 closure checklist.

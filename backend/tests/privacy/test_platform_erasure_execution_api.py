@@ -165,6 +165,7 @@ def test_compliance_officer_can_execute_approved_erasure_via_platform_api(
     body = response.json()
     assert body["id"] == str(dsr_id)
     assert body["execution_status"] == DataSubjectRequestExecutionStatus.READY.value
+    assert body["status"] == DataSubjectRequestStatus.FULFILLED.value
 
     async def _assert_persisted_state() -> None:
         async with migrated_session_factory() as session:
@@ -181,8 +182,18 @@ def test_compliance_officer_can_execute_approved_erasure_via_platform_api(
                     )
                 )
             ).scalar_one()
+            fulfilment_event = (
+                await session.execute(
+                    select(AuditEvent).where(
+                        AuditEvent.action
+                        == AuditAction.DATA_SUBJECT_REQUEST_FULFILLED.value,
+                        AuditEvent.target_id == dsr_id,
+                    )
+                )
+            ).scalar_one()
 
             assert saved_subject is not None
+            assert fulfilment_event.actor_user_id == executor.id
             assert saved_subject.email is None
             assert saved_outbox is not None
             assert saved_outbox.status == OutboxStatus.FAILED.value
@@ -347,6 +358,7 @@ def test_erasure_execution_api_returns_failed_execution_state(
     assert response.status_code == 200
     body = response.json()
     assert body["execution_status"] == DataSubjectRequestExecutionStatus.FAILED.value
+    assert body["status"] == DataSubjectRequestStatus.APPROVED.value
     assert body["execution_failure_reason_code"] == (
         "outbox_erasure_processing_rows_in_flight"
     )

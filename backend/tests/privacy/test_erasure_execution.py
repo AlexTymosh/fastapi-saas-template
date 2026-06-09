@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
+from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent, AuditTargetType
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
@@ -395,6 +396,72 @@ def test_erasure_execution_rejects_missing_request(
     run_async(_run())
 
 
+def test_dsr_service_auto_fulfils_successful_erasure_execution(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            subject_email = f"service-erasure-{uuid4()}@example.com"
+            subject = await _create_user(session, email=subject_email)
+            executor = await _create_user(session)
+            staff = _staff_record(executor)
+            dsr = _dsr_for_user(subject)
+            outbox = _outbox_event(invite_id=uuid4(), email=subject_email)
+            session.add_all([staff, dsr, outbox])
+            await session.flush()
+
+            result = await DataSubjectRequestService(
+                session
+            ).execute_approved_erasure_request_by_platform_staff(
+                request_id=dsr.id,
+                executor_user_id=executor.id,
+                audit_context=AuditContext(actor_user_id=executor.id),
+            )
+
+            await session.refresh(subject)
+            await session.refresh(dsr)
+            await session.refresh(outbox)
+            execution_events = await _execution_audit_events(
+                session,
+                request_id=dsr.id,
+            )
+            fulfilment_events = (
+                (
+                    await session.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.action
+                            == AuditAction.DATA_SUBJECT_REQUEST_FULFILLED.value,
+                            AuditEvent.target_type
+                            == AuditTargetType.DATA_SUBJECT_REQUEST.value,
+                            AuditEvent.target_id == dsr.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            assert result.status == DataSubjectRequestStatus.FULFILLED.value
+            assert result.execution_status == (
+                DataSubjectRequestExecutionStatus.READY.value
+            )
+            assert result.fulfilled_at is not None
+            assert dsr.status == DataSubjectRequestStatus.FULFILLED.value
+            assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
+            assert dsr.fulfilled_at is not None
+            assert dsr.reviewer_user_id == executor.id
+            assert subject.email is None
+            assert subject.external_auth_id == f"erased-user:{subject.id}"
+            assert outbox.status == OutboxStatus.FAILED.value
+            assert len(execution_events) == 1
+            assert execution_events[0].actor_user_id == executor.id
+            assert len(fulfilment_events) == 1
+            assert fulfilment_events[0].actor_user_id == executor.id
+            assert fulfilment_events[0].target_id == dsr.id
+
+    run_async(_run())
+
+
 def test_dsr_service_maps_missing_erasure_request_to_not_found(
     migrated_session_factory,
 ) -> None:
@@ -411,6 +478,7 @@ def test_dsr_service_maps_missing_erasure_request_to_not_found(
                 ).execute_approved_erasure_request_by_platform_staff(
                     request_id=uuid4(),
                     executor_user_id=executor.id,
+                    audit_context=AuditContext(actor_user_id=executor.id),
                 )
 
     run_async(_run())
@@ -435,6 +503,7 @@ def test_dsr_service_maps_self_erasure_to_forbidden(
                 ).execute_approved_erasure_request_by_platform_staff(
                     request_id=dsr.id,
                     executor_user_id=subject.id,
+                    audit_context=AuditContext(actor_user_id=subject.id),
                 )
 
             await session.refresh(subject)
@@ -474,6 +543,7 @@ def test_dsr_service_maps_stale_executor_state_to_forbidden(
                 ).execute_approved_erasure_request_by_platform_staff(
                     request_id=dsr.id,
                     executor_user_id=executor.id,
+                    audit_context=AuditContext(actor_user_id=executor.id),
                 )
 
             await session.refresh(subject)
@@ -509,6 +579,7 @@ def test_dsr_service_maps_ineligible_erasure_request_to_conflict(
                 ).execute_approved_erasure_request_by_platform_staff(
                     request_id=dsr.id,
                     executor_user_id=executor.id,
+                    audit_context=AuditContext(actor_user_id=executor.id),
                 )
 
             assert exc_info.value.detail == (
