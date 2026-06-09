@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from app.audit.models.audit_event import AuditAction, AuditEvent, AuditTargetType
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.platform.models.platform_staff import (
     PlatformStaff,
@@ -23,6 +24,7 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
 )
+from app.privacy.services.data_subject_requests import DataSubjectRequestService
 from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
 
@@ -350,5 +352,97 @@ def test_erasure_execution_rejects_missing_request(
                 )
 
             assert exc_info.value.reason_code == "erasure_execution_request_not_found"
+
+    run_async(_run())
+
+
+def test_dsr_service_maps_missing_erasure_request_to_not_found(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            executor = await _create_user(session)
+            staff = _staff_record(executor)
+            session.add(staff)
+            await session.flush()
+
+            with pytest.raises(NotFoundError):
+                await DataSubjectRequestService(
+                    session
+                ).execute_approved_erasure_request_by_platform_staff(
+                    request_id=uuid4(),
+                    executor_user_id=executor.id,
+                )
+
+    run_async(_run())
+
+
+def test_dsr_service_maps_stale_executor_state_to_forbidden(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            subject_email = f"subject-{uuid4()}@example.com"
+            subject = await _create_user(session, email=subject_email)
+            executor = await _create_user(session)
+            staff = _staff_record(
+                executor,
+                role=PlatformStaffRole.SUPPORT_AGENT.value,
+            )
+            dsr = _dsr_for_user(subject)
+            outbox = _outbox_event(invite_id=uuid4(), email=subject_email)
+            session.add_all([staff, dsr, outbox])
+            await session.flush()
+
+            with pytest.raises(ForbiddenError):
+                await DataSubjectRequestService(
+                    session
+                ).execute_approved_erasure_request_by_platform_staff(
+                    request_id=dsr.id,
+                    executor_user_id=executor.id,
+                )
+
+            await session.refresh(subject)
+            await session.refresh(dsr)
+            await session.refresh(outbox)
+            audit_events = await _execution_audit_events(session, request_id=dsr.id)
+            assert subject.email == subject_email
+            assert dsr.execution_status == (
+                DataSubjectRequestExecutionStatus.NOT_STARTED.value
+            )
+            assert outbox.status == OutboxStatus.PENDING.value
+            assert audit_events == ()
+
+    run_async(_run())
+
+
+def test_dsr_service_maps_ineligible_erasure_request_to_conflict(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            subject = await _create_user(session)
+            executor = await _create_user(session)
+            staff = _staff_record(executor)
+            dsr = _dsr_for_user(subject)
+            dsr.request_type = "export"
+            session.add_all([staff, dsr])
+            await session.flush()
+
+            with pytest.raises(ConflictError) as exc_info:
+                await DataSubjectRequestService(
+                    session
+                ).execute_approved_erasure_request_by_platform_staff(
+                    request_id=dsr.id,
+                    executor_user_id=executor.id,
+                )
+
+            assert exc_info.value.detail == (
+                "Erasure execution is not eligible in the current state"
+            )
+            assert exc_info.value.extra == {
+                "reason_code": "erasure_orchestration_requires_erase_request"
+            }
+            assert await _execution_audit_events(session, request_id=dsr.id) == ()
 
     run_async(_run())

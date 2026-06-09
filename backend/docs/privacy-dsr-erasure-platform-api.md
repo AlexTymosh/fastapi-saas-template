@@ -23,20 +23,23 @@ The route:
 
 1. requires a rate-limited platform write context;
 2. requires `PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE`;
-3. delegates to `execute_approved_erasure_request_by_staff(...)`;
+3. delegates to `DataSubjectRequestService`;
 4. returns the updated platform DSR representation.
 
-The command layer remains responsible for:
+The service and command layers remain responsible for:
 
 - executor active-user and active-staff checks;
 - DSR row locking;
 - provider orchestration;
 - durable execution audit trail;
-- transaction-safe failure handling.
+- transaction-safe failure handling;
+- execution error mapping to application errors.
 
 ## Error mapping
 
-The API maps execution errors as follows:
+The API route does not catch or translate execution business-flow errors. The
+service/command boundary maps execution errors and the global exception handlers
+format them as Problem Details responses:
 
 - missing DSR: `404`;
 - stale or invalid executor state: `403`;

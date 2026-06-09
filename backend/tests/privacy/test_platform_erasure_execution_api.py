@@ -224,6 +224,32 @@ def test_support_agent_cannot_execute_erasure_via_platform_api(
     assert response.status_code == 403
 
 
+def test_erasure_execution_api_rejects_missing_request(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+) -> None:
+    admin = _provision_platform_actor(
+        migrated_session_factory,
+        external_auth_id="kc-erasure-api-missing-admin",
+        email="erasure-api-missing-admin@example.com",
+        role=PlatformRole.PLATFORM_ADMIN,
+    )
+    missing_dsr_id = uuid4()
+    bundle = authenticated_client_factory(
+        identity=identity_for(admin.external_auth_id, admin.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.post(
+        f"/api/v1/platform/privacy/data-subject-requests/"
+        f"{missing_dsr_id}/execute-erasure",
+        json={},
+    )
+
+    assert response.status_code == 404
+
+
 def test_erasure_execution_api_returns_failed_execution_state(
     authenticated_client_factory,
     migrated_database_url,
