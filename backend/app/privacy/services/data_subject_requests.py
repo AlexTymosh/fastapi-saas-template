@@ -23,6 +23,7 @@ from app.privacy.erasures.execution import (
 from app.privacy.erasures.orchestrator import ErasureOrchestrationError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
+    DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
@@ -30,7 +31,9 @@ from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactSta
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
 
-_FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset({DataSubjectRequestType.EXPORT.value})
+_FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset(
+    {DataSubjectRequestType.EXPORT.value, DataSubjectRequestType.ERASE.value}
+)
 _ERASURE_EXECUTION_NOT_FOUND_REASON_CODES = frozenset(
     {
         "erasure_execution_request_not_found",
@@ -339,6 +342,7 @@ class DataSubjectRequestService:
         *,
         request_id: UUID,
         executor_user_id: UUID,
+        audit_context: AuditContext,
         now: datetime | None = None,
     ) -> DataSubjectRequest:
         try:
@@ -351,7 +355,17 @@ class DataSubjectRequestService:
         except (ErasureExecutionError, ErasureOrchestrationError) as exc:
             self._raise_erasure_execution_app_error(exc.reason_code)
 
-        return await self.get_platform_request(request_id=request_id)
+        request = await self.get_platform_request(request_id=request_id)
+        if self._is_ready_approved_erasure_request(request):
+            return await self._transition_status(
+                request_id=request.id,
+                target_status=DataSubjectRequestStatus.FULFILLED,
+                reviewer_user_id=executor_user_id,
+                audit_context=audit_context,
+                execution_verified=True,
+            )
+
+        return request
 
     async def mark_under_review(
         self, *, request_id: UUID, reviewer_user_id: UUID, audit_context: AuditContext
@@ -435,6 +449,15 @@ class DataSubjectRequestService:
                 )
             )
 
+        if request.request_type == DataSubjectRequestType.ERASE.value:
+            self._ensure_erasure_ready_for_fulfilment(request)
+            return
+
+        await self._ensure_export_ready_for_fulfilment(request)
+
+    async def _ensure_export_ready_for_fulfilment(
+        self, request: DataSubjectRequest
+    ) -> None:
         artifacts = await self.export_artifacts.get_by_dsr_id(request.id)
         now = datetime.now(UTC)
         for artifact in artifacts:
@@ -446,6 +469,27 @@ class DataSubjectRequestService:
                 "Export data-subject requests require a ready, non-expired "
                 "export artifact before fulfilment"
             )
+        )
+
+    @staticmethod
+    def _ensure_erasure_ready_for_fulfilment(request: DataSubjectRequest) -> None:
+        if request.execution_status == DataSubjectRequestExecutionStatus.READY.value:
+            return
+
+        raise ConflictError(
+            detail=(
+                "Erase data-subject requests require successful erasure execution "
+                "before fulfilment"
+            )
+        )
+
+    @staticmethod
+    def _is_ready_approved_erasure_request(request: DataSubjectRequest) -> bool:
+        return (
+            request.request_type == DataSubjectRequestType.ERASE.value
+            and request.status == DataSubjectRequestStatus.APPROVED.value
+            and request.execution_status
+            == DataSubjectRequestExecutionStatus.READY.value
         )
 
     @staticmethod

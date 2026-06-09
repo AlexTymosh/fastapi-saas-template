@@ -76,6 +76,19 @@ The audit event stores:
 Unauthorised attempts, missing-request failures, and self-erasure attempts do not
 create this execution audit event because no valid execution was authorised.
 
+## Fulfilment transition
+
+The command layer only executes erasure and persists the execution audit event.
+It deliberately does not change the administrative DSR lifecycle status.
+
+Platform/API callers should use `DataSubjectRequestService`, which maps command
+errors and automatically moves an approved erase DSR to `fulfilled` after a
+successful `ready` execution state.
+
+Failed orchestration results keep the DSR in `approved` with
+`execution_status=failed` so staff can investigate or retry after the blocking
+condition is resolved.
+
 ## Transaction boundary
 
 The command layer does not commit. Callers should run it inside the existing
@@ -94,5 +107,4 @@ This slice does not add:
 
 - a public API endpoint;
 - a background worker;
-- DSR fulfilment transition;
 - final retention/purge runners.

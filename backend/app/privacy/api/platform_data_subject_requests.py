@@ -234,6 +234,7 @@ async def cancel_platform_data_subject_request(
 async def execute_platform_data_subject_request_erasure(
     request_id: UUID,
     _: ExecuteErasureDataSubjectRequest,
+    request: Request,
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
@@ -250,6 +251,9 @@ async def execute_platform_data_subject_request_erasure(
     ).execute_approved_erasure_request_by_platform_staff(
         request_id=request_id,
         executor_user_id=actor.user.id,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=actor.user.id, request=request
+        ),
     )
     return PlatformDataSubjectRequestResponse.model_validate(row)
 
