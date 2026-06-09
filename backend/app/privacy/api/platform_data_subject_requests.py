@@ -29,6 +29,7 @@ from app.privacy.models.data_subject_request import (
 from app.privacy.schemas.data_subject_requests import (
     ApproveDataSubjectRequest,
     CancelDataSubjectRequest,
+    ExecuteErasureDataSubjectRequest,
     FulfilDataSubjectRequest,
     PlatformDataSubjectRequestResponse,
     PlatformDataSubjectRequestsCollectionResponse,
@@ -221,6 +222,34 @@ async def cancel_platform_data_subject_request(
         audit_context=build_audit_context_from_request(
             actor_user_id=actor.user.id, request=request
         ),
+    )
+    return PlatformDataSubjectRequestResponse.model_validate(row)
+
+
+@router.post(
+    "/{request_id}/execute-erasure",
+    response_model=PlatformDataSubjectRequestResponse,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+)
+async def execute_platform_data_subject_request_erasure(
+    request_id: UUID,
+    _: ExecuteErasureDataSubjectRequest,
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(
+            require_rate_limited_platform_write_context(
+                PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE
+            ),
+            scope="function",
+        ),
+    ],
+) -> PlatformDataSubjectRequestResponse:
+    actor = write_context.actor
+    row = await DataSubjectRequestService(
+        write_context.session
+    ).execute_approved_erasure_request_by_platform_staff(
+        request_id=request_id,
+        executor_user_id=actor.user.id,
     )
     return PlatformDataSubjectRequestResponse.model_validate(row)
 

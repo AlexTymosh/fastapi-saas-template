@@ -10,7 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
 from app.audit.services.audit_events import AuditEventService
-from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
+from app.privacy.erasures.execution import (
+    ErasureExecutionError,
+    execute_approved_erasure_request_by_staff,
+)
+from app.privacy.erasures.orchestrator import ErasureOrchestrationError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
@@ -21,6 +31,21 @@ from app.privacy.repositories.data_subject_requests import DataSubjectRequestRep
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
 
 _FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset({DataSubjectRequestType.EXPORT.value})
+_ERASURE_EXECUTION_NOT_FOUND_REASON_CODES = frozenset(
+    {
+        "erasure_execution_request_not_found",
+        "erasure_orchestration_request_not_found",
+    }
+)
+_ERASURE_EXECUTION_FORBIDDEN_REASON_CODES = frozenset(
+    {
+        "erasure_execution_requires_platform_staff",
+        "erasure_execution_requires_active_user",
+        "erasure_execution_requires_active_staff",
+        "erasure_execution_requires_privileged_staff",
+        "erasure_execution_requires_non_subject_executor",
+    }
+)
 
 
 class DataSubjectRequestService:
@@ -38,7 +63,8 @@ class DataSubjectRequestService:
         re.compile(r"^\s*bearer\s+[A-Z0-9._\-+/=]+", re.IGNORECASE),
         re.compile(r"^\s*basic\s+[A-Z0-9._\-+/=]+", re.IGNORECASE),
         re.compile(
-            r"(api[_\-]?key|secret|password|passwd|token)\s*[:=]", re.IGNORECASE
+            r"(api[_\-]?key|secret|password|passwd|token)\s*[:=]",
+            re.IGNORECASE,
         ),
         re.compile(r"eyJ[A-Za-z0-9_\-]+?\.[A-Za-z0-9_\-]+?\.[A-Za-z0-9_\-]+"),
         re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}", re.IGNORECASE),
@@ -62,6 +88,7 @@ class DataSubjectRequestService:
     }
 
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self.repository = DataSubjectRequestRepository(session)
         self.audit_events = AuditEventService(session)
         self.export_artifacts = ExportArtifactRepository(session)
@@ -307,6 +334,25 @@ class DataSubjectRequestService:
     async def get_platform_request(self, *, request_id: UUID) -> DataSubjectRequest:
         return await self.get_request(request_id=request_id)
 
+    async def execute_approved_erasure_request_by_platform_staff(
+        self,
+        *,
+        request_id: UUID,
+        executor_user_id: UUID,
+        now: datetime | None = None,
+    ) -> DataSubjectRequest:
+        try:
+            await execute_approved_erasure_request_by_staff(
+                self.session,
+                request_id=request_id,
+                executor_user_id=executor_user_id,
+                now=now,
+            )
+        except (ErasureExecutionError, ErasureOrchestrationError) as exc:
+            self._raise_erasure_execution_app_error(exc.reason_code)
+
+        return await self.get_platform_request(request_id=request_id)
+
     async def mark_under_review(
         self, *, request_id: UUID, reviewer_user_id: UUID, audit_context: AuditContext
     ) -> DataSubjectRequest:
@@ -415,6 +461,17 @@ class DataSubjectRequestService:
         else:
             expires_at = expires_at.astimezone(UTC)
         return expires_at > now
+
+    @staticmethod
+    def _raise_erasure_execution_app_error(reason_code: str) -> None:
+        if reason_code in _ERASURE_EXECUTION_NOT_FOUND_REASON_CODES:
+            raise NotFoundError(detail="Data subject request not found") from None
+        if reason_code in _ERASURE_EXECUTION_FORBIDDEN_REASON_CODES:
+            raise ForbiddenError(detail="Platform access denied") from None
+        raise ConflictError(
+            detail="Erasure execution is not eligible in the current state",
+            extra={"reason_code": reason_code},
+        ) from None
 
     @staticmethod
     def _normalise_idempotency_key(key: str | None) -> str | None:

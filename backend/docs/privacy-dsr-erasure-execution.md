@@ -23,6 +23,7 @@ The function:
 - locks and authorises the platform staff executor;
 - verifies that the linked local user is still active;
 - locks the DSR row;
+- rejects self-erasure execution before providers run;
 - delegates to the core erasure orchestrator;
 - persists an execution audit event in the same transaction;
 - returns a structured execution result;
@@ -47,6 +48,17 @@ This mirrors the platform actor access path and prevents a suspended local user
 from executing destructive erasure through a worker or other non-API caller that
 passes `executor_user_id` directly.
 
+## Self-erasure guard
+
+The executor must not be the same local user as the DSR subject. Self-execution
+is rejected before provider orchestration starts and before the execution audit
+row is written.
+
+This prevents a successful self-erasure from creating a final
+`data_subject_request_erasure_executed` audit event whose `actor_user_id` still
+contains the erased subject's direct user identifier after audit minimisation has
+already completed.
+
 ## Execution audit trail
 
 Successful and failed orchestration results create an `audit_events` row before
@@ -61,8 +73,8 @@ The audit event stores:
 - structured metadata with orchestration status, provider keys, affected rows,
   mutation flag, and optional failure reason code.
 
-Unauthorised attempts and missing-request failures do not create this execution
-audit event because no valid execution target was authorised.
+Unauthorised attempts, missing-request failures, and self-erasure attempts do not
+create this execution audit event because no valid execution was authorised.
 
 ## Transaction boundary
 
