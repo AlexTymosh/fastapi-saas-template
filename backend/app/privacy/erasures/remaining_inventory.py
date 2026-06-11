@@ -1,0 +1,565 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from uuid import UUID
+
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.memberships.models.membership import Membership
+from app.organisations.models.organisation import Organisation
+from app.platform.models.platform_staff import PlatformStaff
+from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
+    DataSubjectRequestStatus,
+    DataSubjectRequestType,
+)
+from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
+from app.privacy.models.privacy_governance import (
+    ConsentRecord,
+    DataProcessingAuthorization,
+    PrivacyNoticeAcceptance,
+)
+
+_MEMBERSHIPS_PROVIDER_KEY = "memberships.minimise_subject_link"
+_MEMBERSHIPS_TABLE_NAME = "memberships"
+_ORGANISATIONS_PROVIDER_KEY = "organisations.review_subject_references"
+_ORGANISATIONS_TABLE_NAME = "organisations"
+_PLATFORM_STAFF_PROVIDER_KEY = "platform_staff.minimise_subject_or_creator_links"
+_PLATFORM_STAFF_TABLE_NAME = "platform_staff"
+_DSR_PROVIDER_KEY = "dsr.minimise_workflow_identifiers"
+_DSR_TABLE_NAME = "data_subject_requests"
+_EXPORT_ARTIFACTS_PROVIDER_KEY = (
+    "export_artifacts.delete_object_minimise_subject_or_actor_metadata"
+)
+_EXPORT_ARTIFACTS_TABLE_NAME = "export_artifacts"
+_PRIVACY_AUTHORIZATIONS_PROVIDER_KEY = "privacy_governance.minimise_authorizations"
+_PRIVACY_AUTHORIZATIONS_TABLE_NAME = "data_processing_authorizations"
+_PRIVACY_CONSENTS_PROVIDER_KEY = "privacy_governance.minimise_consent_records"
+_PRIVACY_CONSENTS_TABLE_NAME = "consent_records"
+_PRIVACY_NOTICES_PROVIDER_KEY = "privacy_governance.minimise_notice_acceptances"
+_PRIVACY_NOTICES_TABLE_NAME = "privacy_notice_acceptances"
+
+
+class RemainingInventoryErasureStatus(StrEnum):
+    MINIMISED = "minimised"
+    ALREADY_MINIMISED = "already_minimised"
+    RETAINED_BY_POLICY = "retained_by_policy"
+    MANUAL_REVIEW_POLICY = "manual_review_policy"
+
+
+class RemainingInventoryErasureError(ValueError):
+    """Raised when remaining-inventory erasure cannot be applied safely."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+@dataclass(frozen=True, slots=True)
+class RemainingInventoryErasureResult:
+    provider_key: str
+    table_name: str
+    subject_user_id: UUID
+    status: RemainingInventoryErasureStatus
+    affected_rows: int
+    changed_fields: tuple[str, ...]
+    processed_at: datetime
+
+    @property
+    def did_mutate(self) -> bool:
+        return self.affected_rows > 0
+
+
+async def apply_membership_erasure_policy(
+    session: AsyncSession,
+    request: DataSubjectRequest,
+    *,
+    subject_user_id: UUID | None = None,
+    now: datetime | None = None,
+) -> RemainingInventoryErasureResult:
+    """Retain subject memberships while relying on user-profile anonymisation.
+
+    Membership rows are tenant relationship history. Their ``user_id`` is not
+    nullable and participates in integrity constraints, so this provider records
+    an explicit retain-and-minimise policy instead of deleting or re-parenting
+    rows. The user profile provider removes the direct identifiers behind the
+    retained key.
+    """
+
+    subject_id = _validate_request(request, subject_user_id=subject_user_id)
+    reference_now = _normalise_reference_time(now or datetime.now(UTC))
+    await _subject_membership_ids(session, subject_user_id=subject_id)
+    return _result(
+        provider_key=_MEMBERSHIPS_PROVIDER_KEY,
+        table_name=_MEMBERSHIPS_TABLE_NAME,
+        subject_user_id=subject_id,
+        status=RemainingInventoryErasureStatus.RETAINED_BY_POLICY,
+        affected_rows=0,
+        changed_fields=(),
+        processed_at=reference_now,
+    )
+
+
+async def apply_organisation_erasure_policy(
+    session: AsyncSession,
+    request: DataSubjectRequest,
+    *,
+    subject_user_id: UUID | None = None,
+    now: datetime | None = None,
+) -> RemainingInventoryErasureResult:
+    """Retain tenant-owned organisation records with explicit review policy."""
+
+    subject_id = _validate_request(request, subject_user_id=subject_user_id)
+    reference_now = _normalise_reference_time(now or datetime.now(UTC))
+    await _subject_organisation_ids(session, subject_user_id=subject_id)
+    return _result(
+        provider_key=_ORGANISATIONS_PROVIDER_KEY,
+        table_name=_ORGANISATIONS_TABLE_NAME,
+        subject_user_id=subject_id,
+        status=RemainingInventoryErasureStatus.MANUAL_REVIEW_POLICY,
+        affected_rows=0,
+        changed_fields=(),
+        processed_at=reference_now,
+    )
+
+
+async def minimise_platform_staff_for_approved_erase_request(
+    session: AsyncSession,
+    request: DataSubjectRequest,
+    *,
+    subject_user_id: UUID | None = None,
+    now: datetime | None = None,
+) -> RemainingInventoryErasureResult:
+    """Minimise subject-linked platform-staff records without deleting roles."""
+
+    subject_id = _validate_request(request, subject_user_id=subject_user_id)
+    reference_now = _normalise_reference_time(now or datetime.now(UTC))
+    rows = await _lock_platform_staff_rows(session, subject_user_id=subject_id)
+    affected_rows, changed_fields = _minimise_platform_staff_rows(
+        rows,
+        subject_user_id=subject_id,
+    )
+    if affected_rows:
+        await session.flush()
+    return _result(
+        provider_key=_PLATFORM_STAFF_PROVIDER_KEY,
+        table_name=_PLATFORM_STAFF_TABLE_NAME,
+        subject_user_id=subject_id,
+        status=_mutation_status(affected_rows),
+        affected_rows=affected_rows,
+        changed_fields=changed_fields,
+        processed_at=reference_now,
+    )
+
+
+async def minimise_export_artifacts_for_approved_erase_request(
+    session: AsyncSession,
+    request: DataSubjectRequest,
+    *,
+    subject_user_id: UUID | None = None,
+    now: datetime | None = None,
+) -> RemainingInventoryErasureResult:
+    """Minimise subject/actor links in export artifact metadata.
+
+    Storage object deletion is handled by the artifact retention runner because
+    the erasure orchestrator intentionally has no storage backend dependency.
+    Processing artifacts are rejected to avoid racing an active worker lease.
+    """
+
+    subject_id = _validate_request(request, subject_user_id=subject_user_id)
+    reference_now = _normalise_reference_time(now or datetime.now(UTC))
+    rows = await _lock_export_artifact_rows(session, subject_user_id=subject_id)
+    _reject_processing_export_artifacts(rows)
+    affected_rows, changed_fields = _minimise_export_artifact_rows(
+        rows,
+        subject_user_id=subject_id,
+    )
+    if affected_rows:
+        await session.flush()
+    return _result(
+        provider_key=_EXPORT_ARTIFACTS_PROVIDER_KEY,
+        table_name=_EXPORT_ARTIFACTS_TABLE_NAME,
+        subject_user_id=subject_id,
+        status=_mutation_status(affected_rows),
+        affected_rows=affected_rows,
+        changed_fields=changed_fields,
+        processed_at=reference_now,
+    )
+
+
+async def minimise_privacy_governance_for_approved_erase_request(
+    session: AsyncSession,
+    request: DataSubjectRequest,
+    *,
+    subject_user_id: UUID | None = None,
+    now: datetime | None = None,
+) -> tuple[RemainingInventoryErasureResult, ...]:
+    """Minimise privacy-governance records while retaining compliance evidence."""
+
+    subject_id = _validate_request(request, subject_user_id=subject_user_id)
+    reference_now = _normalise_reference_time(now or datetime.now(UTC))
+    authorizations = await _lock_authorization_rows(session, subject_user_id=subject_id)
+    await _lock_consent_rows(session, subject_user_id=subject_id)
+    notices = await _lock_notice_rows(session, subject_user_id=subject_id)
+
+    auth_affected_rows, auth_changed_fields = _clear_field_on_rows(
+        authorizations,
+        "source",
+    )
+    notice_affected_rows, notice_changed_fields = _clear_field_on_rows(
+        notices,
+        "source",
+    )
+    if auth_affected_rows or notice_affected_rows:
+        await session.flush()
+
+    return (
+        _result(
+            provider_key=_PRIVACY_AUTHORIZATIONS_PROVIDER_KEY,
+            table_name=_PRIVACY_AUTHORIZATIONS_TABLE_NAME,
+            subject_user_id=subject_id,
+            status=_mutation_status(auth_affected_rows),
+            affected_rows=auth_affected_rows,
+            changed_fields=auth_changed_fields,
+            processed_at=reference_now,
+        ),
+        _result(
+            provider_key=_PRIVACY_CONSENTS_PROVIDER_KEY,
+            table_name=_PRIVACY_CONSENTS_TABLE_NAME,
+            subject_user_id=subject_id,
+            status=RemainingInventoryErasureStatus.RETAINED_BY_POLICY,
+            affected_rows=0,
+            changed_fields=(),
+            processed_at=reference_now,
+        ),
+        _result(
+            provider_key=_PRIVACY_NOTICES_PROVIDER_KEY,
+            table_name=_PRIVACY_NOTICES_TABLE_NAME,
+            subject_user_id=subject_id,
+            status=_mutation_status(notice_affected_rows),
+            affected_rows=notice_affected_rows,
+            changed_fields=notice_changed_fields,
+            processed_at=reference_now,
+        ),
+    )
+
+
+async def minimise_dsr_workflow_for_approved_erase_request(
+    session: AsyncSession,
+    request: DataSubjectRequest,
+    *,
+    subject_user_id: UUID | None = None,
+    now: datetime | None = None,
+) -> RemainingInventoryErasureResult:
+    """Minimise subject-linked DSR workflow records after core providers run."""
+
+    subject_id = _validate_request(request, subject_user_id=subject_user_id)
+    reference_now = _normalise_reference_time(now or datetime.now(UTC))
+    rows = await _lock_dsr_rows(session, subject_user_id=subject_id)
+    affected_rows, changed_fields = _minimise_dsr_rows(
+        rows,
+        subject_user_id=subject_id,
+    )
+    if affected_rows:
+        await session.flush()
+    return _result(
+        provider_key=_DSR_PROVIDER_KEY,
+        table_name=_DSR_TABLE_NAME,
+        subject_user_id=subject_id,
+        status=_mutation_status(affected_rows),
+        affected_rows=affected_rows,
+        changed_fields=changed_fields,
+        processed_at=reference_now,
+    )
+
+
+def _validate_request(
+    request: DataSubjectRequest,
+    *,
+    subject_user_id: UUID | None,
+) -> UUID:
+    if request.request_type != DataSubjectRequestType.ERASE.value:
+        raise RemainingInventoryErasureError("remaining_erasure_requires_erase_request")
+    if request.status != DataSubjectRequestStatus.APPROVED.value:
+        raise RemainingInventoryErasureError(
+            "remaining_erasure_requires_approved_request"
+        )
+    effective_subject_user_id = subject_user_id or request.subject_user_id
+    if effective_subject_user_id is None:
+        raise RemainingInventoryErasureError("remaining_erasure_requires_subject_user")
+    return effective_subject_user_id
+
+
+async def _subject_membership_ids(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[UUID, ...]:
+    stmt = select(Membership.id).where(Membership.user_id == subject_user_id)
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _subject_organisation_ids(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[UUID, ...]:
+    stmt = (
+        select(Organisation.id)
+        .join(Membership, Membership.organisation_id == Organisation.id)
+        .where(Membership.user_id == subject_user_id)
+        .order_by(Organisation.id.asc())
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _lock_platform_staff_rows(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[PlatformStaff, ...]:
+    stmt = (
+        select(PlatformStaff)
+        .where(
+            or_(
+                PlatformStaff.user_id == subject_user_id,
+                PlatformStaff.created_by_user_id == subject_user_id,
+            )
+        )
+        .order_by(PlatformStaff.created_at.asc(), PlatformStaff.id.asc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _lock_export_artifact_rows(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[ExportArtifact, ...]:
+    stmt = (
+        select(ExportArtifact)
+        .where(
+            or_(
+                ExportArtifact.subject_user_id == subject_user_id,
+                ExportArtifact.requester_user_id == subject_user_id,
+                ExportArtifact.requested_by_user_id == subject_user_id,
+                ExportArtifact.generated_by_user_id == subject_user_id,
+            )
+        )
+        .order_by(ExportArtifact.created_at.asc(), ExportArtifact.id.asc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _lock_authorization_rows(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[DataProcessingAuthorization, ...]:
+    stmt = (
+        select(DataProcessingAuthorization)
+        .where(DataProcessingAuthorization.subject_user_id == subject_user_id)
+        .order_by(DataProcessingAuthorization.created_at.asc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _lock_consent_rows(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[ConsentRecord, ...]:
+    stmt = (
+        select(ConsentRecord)
+        .where(ConsentRecord.subject_user_id == subject_user_id)
+        .order_by(ConsentRecord.created_at.asc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _lock_notice_rows(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[PrivacyNoticeAcceptance, ...]:
+    stmt = (
+        select(PrivacyNoticeAcceptance)
+        .where(PrivacyNoticeAcceptance.subject_user_id == subject_user_id)
+        .order_by(PrivacyNoticeAcceptance.created_at.asc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _lock_dsr_rows(
+    session: AsyncSession,
+    *,
+    subject_user_id: UUID,
+) -> tuple[DataSubjectRequest, ...]:
+    stmt = (
+        select(DataSubjectRequest)
+        .where(
+            or_(
+                DataSubjectRequest.subject_user_id == subject_user_id,
+                DataSubjectRequest.requester_user_id == subject_user_id,
+                DataSubjectRequest.reviewer_user_id == subject_user_id,
+            )
+        )
+        .order_by(DataSubjectRequest.created_at.asc(), DataSubjectRequest.id.asc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _reject_processing_export_artifacts(rows: tuple[ExportArtifact, ...]) -> None:
+    if any(row.status == ExportArtifactStatus.PROCESSING.value for row in rows):
+        raise RemainingInventoryErasureError(
+            "export_artifact_erasure_processing_active"
+        )
+
+
+def _minimise_platform_staff_rows(
+    rows: tuple[PlatformStaff, ...],
+    *,
+    subject_user_id: UUID,
+) -> tuple[int, tuple[str, ...]]:
+    affected_rows = 0
+    changed_fields: set[str] = set()
+    for row in rows:
+        row_changed_fields: list[str] = []
+        is_subject_staff_record = row.user_id == subject_user_id
+        is_subject_created_record = row.created_by_user_id == subject_user_id
+        if is_subject_created_record:
+            _set_if_changed(row, "created_by_user_id", None, row_changed_fields)
+        if is_subject_staff_record or is_subject_created_record:
+            _set_if_changed(row, "suspended_reason", None, row_changed_fields)
+        if row_changed_fields:
+            affected_rows += 1
+            changed_fields.update(row_changed_fields)
+    return affected_rows, tuple(sorted(changed_fields))
+
+
+def _minimise_export_artifact_rows(
+    rows: tuple[ExportArtifact, ...],
+    *,
+    subject_user_id: UUID,
+) -> tuple[int, tuple[str, ...]]:
+    affected_rows = 0
+    changed_fields: set[str] = set()
+    for row in rows:
+        row_changed_fields: list[str] = []
+        for field_name in (
+            "subject_user_id",
+            "requester_user_id",
+            "requested_by_user_id",
+            "generated_by_user_id",
+        ):
+            if getattr(row, field_name) == subject_user_id:
+                _set_if_changed(row, field_name, None, row_changed_fields)
+        _set_if_changed(row, "failure_detail", None, row_changed_fields)
+        _set_if_changed(row, "processing_token", None, row_changed_fields)
+        _set_if_changed(row, "processing_lease_expires_at", None, row_changed_fields)
+        if row_changed_fields:
+            affected_rows += 1
+            changed_fields.update(row_changed_fields)
+    return affected_rows, tuple(sorted(changed_fields))
+
+
+def _minimise_dsr_rows(
+    rows: tuple[DataSubjectRequest, ...],
+    *,
+    subject_user_id: UUID,
+) -> tuple[int, tuple[str, ...]]:
+    affected_rows = 0
+    changed_fields: set[str] = set()
+    for row in rows:
+        row_changed_fields: list[str] = []
+        for field_name in ("requester_user_id", "subject_user_id", "reviewer_user_id"):
+            if getattr(row, field_name) == subject_user_id:
+                _set_if_changed(row, field_name, None, row_changed_fields)
+        for field_name in (
+            "requester_note",
+            "internal_note",
+            "execution_failure_detail",
+            "idempotency_key_hash",
+            "idempotency_fingerprint",
+            "idempotency_key_expires_at",
+        ):
+            _set_if_changed(row, field_name, None, row_changed_fields)
+        if row_changed_fields:
+            affected_rows += 1
+            changed_fields.update(row_changed_fields)
+    return affected_rows, tuple(sorted(changed_fields))
+
+
+def _clear_field_on_rows(
+    rows: tuple[object, ...],
+    field_name: str,
+) -> tuple[int, tuple[str, ...]]:
+    affected_rows = 0
+    changed_fields: set[str] = set()
+    for row in rows:
+        row_changed_fields: list[str] = []
+        _set_if_changed(row, field_name, None, row_changed_fields)
+        if row_changed_fields:
+            affected_rows += 1
+            changed_fields.update(row_changed_fields)
+    return affected_rows, tuple(sorted(changed_fields))
+
+
+def _set_if_changed(
+    row: object,
+    field_name: str,
+    target_value: object,
+    changed_fields: list[str],
+) -> None:
+    if getattr(row, field_name) == target_value:
+        return
+    setattr(row, field_name, target_value)
+    changed_fields.append(field_name)
+
+
+def _mutation_status(affected_rows: int) -> RemainingInventoryErasureStatus:
+    if affected_rows:
+        return RemainingInventoryErasureStatus.MINIMISED
+    return RemainingInventoryErasureStatus.ALREADY_MINIMISED
+
+
+def _result(
+    *,
+    provider_key: str,
+    table_name: str,
+    subject_user_id: UUID,
+    status: RemainingInventoryErasureStatus,
+    affected_rows: int,
+    changed_fields: tuple[str, ...],
+    processed_at: datetime,
+) -> RemainingInventoryErasureResult:
+    return RemainingInventoryErasureResult(
+        provider_key=provider_key,
+        table_name=table_name,
+        subject_user_id=subject_user_id,
+        status=status,
+        affected_rows=affected_rows,
+        changed_fields=changed_fields,
+        processed_at=processed_at,
+    )
+
+
+def _normalise_reference_time(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

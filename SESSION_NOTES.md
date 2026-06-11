@@ -126,3 +126,13 @@ and the GitHub Actions `Backend quality gate` are green.
 ## Latest update
 
 - Export artifact foundation extended with worker command, API endpoints, storage hardening, and additional privacy tests.
+
+## 2026-06-11 DSR erasure coverage update
+
+- #407/#408 implementation added inventory-aligned erasure runtime/policy
+  coverage and contract tests.
+- Remaining #328 work should be final closure review only, assuming broad CI
+  passes on the target branch.
+- Memberships are retained by policy; organisations are tenant-owned/manual
+  review policy; platform staff/export artifact/privacy governance/DSR metadata
+  now have minimisation or explicit retention policy coverage.

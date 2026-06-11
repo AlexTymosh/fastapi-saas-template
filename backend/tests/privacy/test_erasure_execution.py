@@ -159,7 +159,15 @@ def test_erasure_execution_authorises_privileged_staff_and_runs_orchestrator(
                 "audit.minimise_subject_actor_or_target_identifiers",
                 "outbox.purge_or_scrub_payload",
                 "invites.anonymise_or_purge_subject_references",
+                "memberships.minimise_subject_link",
+                "organisations.review_subject_references",
+                "platform_staff.minimise_subject_or_creator_links",
+                "export_artifacts.delete_object_minimise_subject_or_actor_metadata",
+                "privacy_governance.minimise_authorizations",
+                "privacy_governance.minimise_consent_records",
+                "privacy_governance.minimise_notice_acceptances",
                 "users.anonymise_profile",
+                "dsr.minimise_workflow_identifiers",
             )
             assert result.did_mutate is True
             assert result.failure_reason_code is None

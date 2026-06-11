@@ -12,7 +12,14 @@ from app.audit.models.audit_event import (
     AuditEvent,
     AuditTargetType,
 )
+from app.memberships.models.membership import Membership, MembershipRole
+from app.organisations.models.organisation import Organisation
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
+from app.platform.models.platform_staff import (
+    PlatformStaff,
+    PlatformStaffRole,
+    PlatformStaffStatus,
+)
 from app.privacy.erasures.orchestrator import (
     ErasureOrchestrationError,
     ErasureOrchestrationStatus,
@@ -22,6 +29,20 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
+)
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
+)
+from app.privacy.models.privacy_governance import (
+    ConsentRecord,
+    DataProcessingAuthorization,
+    LawfulBasis,
+    PrivacyNoticeAcceptance,
+    ProcessingPurpose,
+    ProcessingPurposeFamily,
 )
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -80,6 +101,98 @@ def _dsr_for_missing_subject() -> DataSubjectRequest:
         reviewed_at=now,
         decided_at=now,
         due_at=now + timedelta(days=30),
+    )
+
+
+def _organisation() -> Organisation:
+    return Organisation(name=f"Organisation {uuid4()}", slug=f"org-{uuid4()}")
+
+
+def _membership(user: User, organisation: Organisation) -> Membership:
+    return Membership(
+        user_id=user.id,
+        organisation_id=organisation.id,
+        role=MembershipRole.MEMBER,
+        is_active=True,
+    )
+
+
+def _platform_staff_for_user(
+    user: User,
+    *,
+    created_by_user_id: UUID | None = None,
+) -> PlatformStaff:
+    return PlatformStaff(
+        user_id=user.id,
+        role=PlatformStaffRole.SUPPORT_AGENT.value,
+        status=PlatformStaffStatus.SUSPENDED.value,
+        created_by_user_id=created_by_user_id,
+        suspended_reason="subject-linked free text",
+    )
+
+
+def _export_artifact(dsr: DataSubjectRequest, user: User) -> ExportArtifact:
+    now = datetime.now(UTC)
+    return ExportArtifact(
+        data_subject_request_id=dsr.id,
+        subject_user_id=user.id,
+        requester_user_id=user.id,
+        requested_by_user_id=user.id,
+        generated_by_user_id=user.id,
+        status=ExportArtifactStatus.FAILED.value,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        storage_key="privacy-exports/object.zip",
+        filename="subject.zip",
+        content_type="application/zip",
+        schema_version="1.0",
+        failure_reason_code="worker_failed",
+        failure_detail="subject-linked failure detail",
+        processing_token="worker-token",
+        processing_lease_expires_at=now + timedelta(minutes=5),
+        queued_at=now,
+        expires_at=now + timedelta(days=30),
+    )
+
+
+def _processing_purpose() -> ProcessingPurpose:
+    return ProcessingPurpose(
+        code=f"privacy-purpose-{uuid4()}",
+        title="Privacy purpose",
+        family=ProcessingPurposeFamily.LEGAL_COMPLIANCE.value,
+        default_lawful_basis=LawfulBasis.LEGAL_OBLIGATION.value,
+        active=True,
+    )
+
+
+def _authorization(
+    user: User,
+    purpose: ProcessingPurpose,
+) -> DataProcessingAuthorization:
+    return DataProcessingAuthorization(
+        subject_user_id=user.id,
+        purpose_id=purpose.id,
+        lawful_basis=LawfulBasis.LEGAL_OBLIGATION.value,
+        active=True,
+        valid_from=datetime.now(UTC),
+        source="signup form",
+    )
+
+
+def _consent(user: User, purpose: ProcessingPurpose) -> ConsentRecord:
+    return ConsentRecord(
+        subject_user_id=user.id,
+        purpose_id=purpose.id,
+        privacy_notice_version="2026-06",
+        withdrawal_reason_code="user_request",
+    )
+
+
+def _notice(user: User) -> PrivacyNoticeAcceptance:
+    return PrivacyNoticeAcceptance(
+        subject_user_id=user.id,
+        notice_version="2026-06",
+        source="web signup",
     )
 
 
@@ -161,7 +274,15 @@ def test_core_erasure_orchestrator_runs_providers_in_safe_order(
                 "audit.minimise_subject_actor_or_target_identifiers",
                 "outbox.purge_or_scrub_payload",
                 "invites.anonymise_or_purge_subject_references",
+                "memberships.minimise_subject_link",
+                "organisations.review_subject_references",
+                "platform_staff.minimise_subject_or_creator_links",
+                "export_artifacts.delete_object_minimise_subject_or_actor_metadata",
+                "privacy_governance.minimise_authorizations",
+                "privacy_governance.minimise_consent_records",
+                "privacy_governance.minimise_notice_acceptances",
                 "users.anonymise_profile",
+                "dsr.minimise_workflow_identifiers",
             )
             assert result.did_mutate is True
             assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
@@ -179,6 +300,89 @@ def test_core_erasure_orchestrator_runs_providers_in_safe_order(
             assert audit_event.metadata_json is None
             assert audit_event.ip_address is None
             assert audit_event.user_agent is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_covers_remaining_inventory_targets(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            subject_email = f"coverage-{uuid4()}@example.com"
+            user = await _create_user(session, email=subject_email)
+            creator = await _create_user(
+                session,
+                email=f"creator-{uuid4()}@example.com",
+            )
+            dsr = _dsr_for_user(user)
+            organisation = _organisation()
+            purpose = _processing_purpose()
+            session.add_all([dsr, organisation, purpose])
+            await session.flush()
+
+            membership = _membership(user, organisation)
+            platform_staff = _platform_staff_for_user(
+                creator,
+                created_by_user_id=user.id,
+            )
+            artifact = _export_artifact(dsr, user)
+            authorization = _authorization(user, purpose)
+            consent = _consent(user, purpose)
+            notice = _notice(user)
+            dsr.requester_note = "subject note"
+            dsr.internal_note = "internal subject note"
+            dsr.idempotency_key_hash = "idempotency-hash"
+            dsr.idempotency_fingerprint = "idempotency-fingerprint"
+            dsr.idempotency_key_expires_at = datetime.now(UTC) + timedelta(hours=1)
+            session.add_all(
+                [
+                    membership,
+                    platform_staff,
+                    artifact,
+                    authorization,
+                    consent,
+                    notice,
+                ]
+            )
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(session, dsr)
+            await session.refresh(dsr)
+            await session.refresh(user)
+            await session.refresh(membership)
+            await session.refresh(platform_staff)
+            await session.refresh(artifact)
+            await session.refresh(authorization)
+            await session.refresh(consent)
+            await session.refresh(notice)
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert membership.user_id == user.id
+            assert membership.organisation_id == organisation.id
+            assert platform_staff.created_by_user_id is None
+            assert platform_staff.suspended_reason is None
+            assert artifact.subject_user_id is None
+            assert artifact.requester_user_id is None
+            assert artifact.requested_by_user_id is None
+            assert artifact.generated_by_user_id is None
+            assert artifact.failure_detail is None
+            assert artifact.processing_token is None
+            assert artifact.processing_lease_expires_at is None
+            assert authorization.subject_user_id == user.id
+            assert authorization.source is None
+            assert consent.subject_user_id == user.id
+            assert consent.withdrawal_reason_code == "user_request"
+            assert notice.subject_user_id == user.id
+            assert notice.source is None
+            assert dsr.requester_user_id is None
+            assert dsr.subject_user_id is None
+            assert dsr.requester_note is None
+            assert dsr.internal_note is None
+            assert dsr.idempotency_key_hash is None
+            assert dsr.idempotency_fingerprint is None
+            assert dsr.idempotency_key_expires_at is None
+            assert user.email is None
 
     run_async(_run())
 

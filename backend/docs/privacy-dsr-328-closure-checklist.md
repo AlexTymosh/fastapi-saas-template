@@ -11,23 +11,30 @@ personal-data stores.
 
 ## Current decision
 
-Issue #328 must remain open.
+Issue #328 should remain open until the final closure-review issue completes.
 
 The backend now has a real DSR foundation, export workflow, erase execution
-boundary, and export artifact retention runner. However, the executable erasure
-coverage is still narrower than the declared privacy inventory.
+boundary, export artifact retention runner, inventory-aligned runtime/policy
+erasure coverage, and contract tests that keep the erasure inventory, coverage
+map, orchestrator and impact preview aligned.
 
-The current erasure orchestrator executes only these providers:
+The current erasure orchestrator now executes or records policy coverage for:
 
 - `audit.minimise_subject_actor_or_target_identifiers`
 - `outbox.purge_or_scrub_payload`
 - `invites.anonymise_or_purge_subject_references`
+- `memberships.minimise_subject_link`
+- `organisations.review_subject_references`
+- `platform_staff.minimise_subject_or_creator_links`
+- `export_artifacts.delete_object_minimise_subject_or_actor_metadata`
+- `privacy_governance.minimise_authorizations`
+- `privacy_governance.minimise_consent_records`
+- `privacy_governance.minimise_notice_acceptances`
 - `users.anonymise_profile`
+- `dsr.minimise_workflow_identifiers`
 
-The privacy inventory and erasure preview still declare wider erasure coverage,
-including membership, organisation, platform staff, DSR, export-artifact, and
-privacy-governance records. Closing #328 before executable providers or explicit
-manual-review rules exist for those areas would overstate the erasure workflow.
+Membership and organisation handling is intentionally policy-based rather than
+destructive because those rows preserve tenant and compliance integrity.
 
 ## Requirement mapping
 
@@ -42,33 +49,29 @@ manual-review rules exist for those areas would overstate the erasure workflow.
 | Export artifact delivery flow | Implemented through queued artifacts, worker command and short-lived URLs. |
 | Production-grade export object storage option | Implemented through S3-compatible storage. |
 | Export artifact retention | Implemented through retention runner. |
-| Erasure/anonymisation service | Partially implemented. Executable orchestration covers audit, outbox, invites and user profile only. |
+| Erasure/anonymisation service | Implemented for the declared inventory through executable minimisation providers plus explicit retain/manual-review policies. |
 | User profile erasure | Implemented. |
 | Invite erasure/minimisation | Implemented. |
 | Outbox payload scrubbing | Implemented. |
 | Audit record minimisation while retaining integrity | Implemented. |
-| Membership erasure/minimisation | Not implemented as an executable provider. |
-| Organisation subject-reference handling | Not implemented as an executable provider. |
-| Platform staff subject-reference handling | Not implemented as an executable provider. |
-| DSR/export-artifact subject-reference handling during erasure | Not implemented as an executable provider. |
-| Privacy-governance record handling during erasure | Not implemented as an executable provider. |
+| Membership erasure/minimisation | Covered by explicit retain-and-minimise policy; linked user profile is anonymised. |
+| Organisation subject-reference handling | Covered by tenant-owned manual-review policy. |
+| Platform staff subject-reference handling | Implemented for nullable creator links and free-text suspension context. |
+| DSR/export-artifact subject-reference handling during erasure | Implemented for workflow and artifact metadata minimisation. |
+| Privacy-governance record handling during erasure | Implemented through source-field minimisation plus retention of compliance evidence. |
 | Platform erasure execution API | Implemented for the current executable providers. |
 | Self-erasure audit actor leakage guard | Implemented. |
-| Successful erase fulfilment | Implemented for the current executable provider set only. |
+| Successful erase fulfilment | Implemented after inventory-aligned erasure execution succeeds. |
 | Contract tests proving inventory/export alignment | Implemented. |
-| Tests proving erasure removes/minimises all inventoried personal-data stores | Not complete. Current tests cover only implemented erasure providers. |
+| Tests proving erasure removes/minimises or policy-covers all inventoried personal-data stores | Implemented through runtime and contract coverage tests. |
 
 ## Closure blockers
 
-These items must be resolved before closing #328:
+Remaining item before closing #328:
 
 | Blocker | Priority | Required action |
 |---|---:|---|
-| Executable erasure coverage does not match the erasure inventory. | P1 | Add providers or explicit manual-review rules for all inventoried erasure targets. |
-| Membership and organisation subject links are not minimised by execution. | P1 | Implement provider(s) or document legally required retention/manual review. |
-| Platform staff and privacy-governance subject records are not handled by execution. | P1 | Implement provider(s) or explicit non-erasure policy. |
-| DSR/export-artifact subject references are not handled by execution. | P1 | Implement safe minimisation rules that preserve operational evidence. |
-| Closure docs currently risk overstating backend DSR completion. | P2 | Keep this checklist as a readiness document, not a closure declaration. |
+| Final closure review has not been completed after the #407/#408 runtime and contract-test changes. | P1 | Run the agreed broad CI gate, reconcile issue metadata/docs, and close #328 only if no regressions remain. |
 
 ## Non-blocking follow-up issues
 

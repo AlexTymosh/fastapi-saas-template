@@ -7,8 +7,13 @@ from uuid import UUID
 from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.models.audit_event import AuditEvent, AuditTargetType
 from app.invites.models.invite import Invite
+from app.memberships.models.membership import Membership
+from app.organisations.models.organisation import Organisation
 from app.outbox.models.outbox_event import OutboxEvent
+from app.platform.models.platform_staff import PlatformStaff
+from app.privacy.erasures.coverage import inventory_erasure_provider_keys
 from app.privacy.erasures.plan import ErasureExecutionMode
 from app.privacy.erasures.preview import (
     ErasurePreviewEntry,
@@ -20,18 +25,29 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
+from app.privacy.models.export_artifact import ExportArtifact
+from app.privacy.models.privacy_governance import (
+    ConsentRecord,
+    DataProcessingAuthorization,
+    PrivacyNoticeAcceptance,
+)
 from app.users.models.user import User
 
 _USERS_PROVIDER_KEY = "users.anonymise_profile"
 _INVITES_PROVIDER_KEY = "invites.anonymise_or_purge_subject_references"
 _OUTBOX_PROVIDER_KEY = "outbox.purge_or_scrub_payload"
-_SCOPED_PROVIDER_KEYS = frozenset(
-    {
-        _USERS_PROVIDER_KEY,
-        _INVITES_PROVIDER_KEY,
-        _OUTBOX_PROVIDER_KEY,
-    }
+_AUDIT_PROVIDER_KEY = "audit.minimise_subject_actor_or_target_identifiers"
+_MEMBERSHIPS_PROVIDER_KEY = "memberships.minimise_subject_link"
+_ORGANISATIONS_PROVIDER_KEY = "organisations.review_subject_references"
+_PLATFORM_STAFF_PROVIDER_KEY = "platform_staff.minimise_subject_or_creator_links"
+_DSR_PROVIDER_KEY = "dsr.minimise_workflow_identifiers"
+_EXPORT_ARTIFACTS_PROVIDER_KEY = (
+    "export_artifacts.delete_object_minimise_subject_or_actor_metadata"
 )
+_PRIVACY_AUTHORIZATIONS_PROVIDER_KEY = "privacy_governance.minimise_authorizations"
+_PRIVACY_CONSENTS_PROVIDER_KEY = "privacy_governance.minimise_consent_records"
+_PRIVACY_NOTICES_PROVIDER_KEY = "privacy_governance.minimise_notice_acceptances"
+_SCOPED_PROVIDER_KEYS = inventory_erasure_provider_keys()
 
 
 class ErasureImpactScope(StrEnum):
@@ -90,9 +106,9 @@ async def build_erasure_impact_preview(
 ) -> ErasureImpactPreview:
     """Build a non-destructive, DB-backed erasure impact preview.
 
-    This function intentionally counts rows only. It does not update, delete or
-    anonymise data. The first scoped slice covers user profile, invite and outbox
-    providers; later branches should add audit and retention-aware providers.
+    The preview counts every inventory-backed erasure target so platform review
+    can see which tables are executable, retained by policy, or require manual
+    review before executing the DSR.
     """
 
     subject = await _validate_request_and_get_subject(session, request)
@@ -140,9 +156,39 @@ async def _count_scoped_rows(
         _INVITES_PROVIDER_KEY: len(invite_ids),
         _OUTBOX_PROVIDER_KEY: await _count_subject_outbox_events(
             session,
-            subject,
             invite_ids,
             subject_email,
+        ),
+        _AUDIT_PROVIDER_KEY: await _count_subject_audit_events(
+            session,
+            subject,
+            invite_ids,
+        ),
+        _MEMBERSHIPS_PROVIDER_KEY: await _count_subject_memberships(session, subject),
+        _ORGANISATIONS_PROVIDER_KEY: await _count_subject_organisations(
+            session,
+            subject,
+        ),
+        _PLATFORM_STAFF_PROVIDER_KEY: await _count_subject_platform_staff(
+            session,
+            subject,
+        ),
+        _DSR_PROVIDER_KEY: await _count_subject_dsr_records(session, subject),
+        _EXPORT_ARTIFACTS_PROVIDER_KEY: await _count_subject_export_artifacts(
+            session,
+            subject,
+        ),
+        _PRIVACY_AUTHORIZATIONS_PROVIDER_KEY: await _count_subject_authorizations(
+            session,
+            subject,
+        ),
+        _PRIVACY_CONSENTS_PROVIDER_KEY: await _count_subject_consents(
+            session,
+            subject,
+        ),
+        _PRIVACY_NOTICES_PROVIDER_KEY: await _count_subject_notice_acceptances(
+            session,
+            subject,
         ),
     }
 
@@ -170,7 +216,6 @@ def _subject_invite_conditions(
 
 async def _count_subject_outbox_events(
     session: AsyncSession,
-    subject: User,
     invite_ids: tuple[UUID, ...],
     subject_email: str | None,
 ) -> int:
@@ -184,6 +229,214 @@ async def _count_subject_outbox_events(
         return 0
 
     stmt = select(func.count(distinct(OutboxEvent.id))).where(or_(*conditions))
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_audit_events(
+    session: AsyncSession,
+    subject: User,
+    invite_ids: tuple[UUID, ...],
+) -> int:
+    membership_ids = await _subject_membership_ids(session, subject)
+    dsr_ids = await _subject_dsr_ids(session, subject)
+    export_artifact_ids = await _subject_export_artifact_ids(session, subject)
+    platform_staff_ids = await _subject_platform_staff_ids(session, subject)
+    conditions: list[object] = [
+        AuditEvent.actor_user_id == subject.id,
+        (
+            AuditEvent.target_type.in_(
+                {
+                    AuditTargetType.USER.value,
+                    AuditTargetType.PRIVACY_CONSENT.value,
+                    AuditTargetType.PRIVACY_NOTICE.value,
+                }
+            )
+            & (AuditEvent.target_id == subject.id)
+        ),
+    ]
+    _append_audit_target_condition(
+        conditions,
+        target_type=AuditTargetType.INVITE.value,
+        target_ids=invite_ids,
+    )
+    _append_audit_target_condition(
+        conditions,
+        target_type=AuditTargetType.MEMBERSHIP.value,
+        target_ids=membership_ids,
+    )
+    _append_audit_target_condition(
+        conditions,
+        target_type=AuditTargetType.DATA_SUBJECT_REQUEST.value,
+        target_ids=dsr_ids,
+    )
+    _append_audit_target_condition(
+        conditions,
+        target_type=AuditTargetType.EXPORT_ARTIFACT.value,
+        target_ids=export_artifact_ids,
+    )
+    _append_audit_target_condition(
+        conditions,
+        target_type=AuditTargetType.PLATFORM_STAFF.value,
+        target_ids=platform_staff_ids,
+    )
+    stmt = select(func.count(distinct(AuditEvent.id))).where(or_(*conditions))
+    return int(await session.scalar(stmt) or 0)
+
+
+def _append_audit_target_condition(
+    conditions: list[object],
+    *,
+    target_type: str,
+    target_ids: tuple[UUID, ...],
+) -> None:
+    if not target_ids:
+        return
+    conditions.append(
+        (AuditEvent.target_type == target_type) & (AuditEvent.target_id.in_(target_ids))
+    )
+
+
+async def _subject_membership_ids(
+    session: AsyncSession,
+    subject: User,
+) -> tuple[UUID, ...]:
+    stmt = select(Membership.id).where(Membership.user_id == subject.id)
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _subject_dsr_ids(
+    session: AsyncSession,
+    subject: User,
+) -> tuple[UUID, ...]:
+    stmt = select(DataSubjectRequest.id).where(
+        or_(
+            DataSubjectRequest.subject_user_id == subject.id,
+            DataSubjectRequest.requester_user_id == subject.id,
+            DataSubjectRequest.reviewer_user_id == subject.id,
+        )
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _subject_export_artifact_ids(
+    session: AsyncSession,
+    subject: User,
+) -> tuple[UUID, ...]:
+    stmt = select(ExportArtifact.id).where(
+        or_(
+            ExportArtifact.subject_user_id == subject.id,
+            ExportArtifact.requester_user_id == subject.id,
+            ExportArtifact.requested_by_user_id == subject.id,
+            ExportArtifact.generated_by_user_id == subject.id,
+        )
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _subject_platform_staff_ids(
+    session: AsyncSession,
+    subject: User,
+) -> tuple[UUID, ...]:
+    stmt = select(PlatformStaff.id).where(
+        or_(
+            PlatformStaff.user_id == subject.id,
+            PlatformStaff.created_by_user_id == subject.id,
+        )
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+async def _count_subject_memberships(session: AsyncSession, subject: User) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(Membership)
+        .where(Membership.user_id == subject.id)
+    )
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_organisations(session: AsyncSession, subject: User) -> int:
+    stmt = (
+        select(func.count(distinct(Organisation.id)))
+        .select_from(Organisation)
+        .join(Membership, Membership.organisation_id == Organisation.id)
+        .where(Membership.user_id == subject.id)
+    )
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_platform_staff(session: AsyncSession, subject: User) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(PlatformStaff)
+        .where(
+            or_(
+                PlatformStaff.user_id == subject.id,
+                PlatformStaff.created_by_user_id == subject.id,
+            )
+        )
+    )
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_dsr_records(session: AsyncSession, subject: User) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(DataSubjectRequest)
+        .where(
+            or_(
+                DataSubjectRequest.subject_user_id == subject.id,
+                DataSubjectRequest.requester_user_id == subject.id,
+                DataSubjectRequest.reviewer_user_id == subject.id,
+            )
+        )
+    )
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_export_artifacts(session: AsyncSession, subject: User) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(ExportArtifact)
+        .where(
+            or_(
+                ExportArtifact.subject_user_id == subject.id,
+                ExportArtifact.requester_user_id == subject.id,
+                ExportArtifact.requested_by_user_id == subject.id,
+                ExportArtifact.generated_by_user_id == subject.id,
+            )
+        )
+    )
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_authorizations(session: AsyncSession, subject: User) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(DataProcessingAuthorization)
+        .where(DataProcessingAuthorization.subject_user_id == subject.id)
+    )
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_consents(session: AsyncSession, subject: User) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(ConsentRecord)
+        .where(ConsentRecord.subject_user_id == subject.id)
+    )
+    return int(await session.scalar(stmt) or 0)
+
+
+async def _count_subject_notice_acceptances(
+    session: AsyncSession,
+    subject: User,
+) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(PrivacyNoticeAcceptance)
+        .where(PrivacyNoticeAcceptance.subject_user_id == subject.id)
+    )
     return int(await session.scalar(stmt) or 0)
 
 
