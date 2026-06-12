@@ -495,6 +495,40 @@ def test_core_erasure_orchestrator_is_idempotent_after_ready(
     run_async(_run())
 
 
+def test_core_erasure_orchestrator_is_idempotent_after_dsr_minimisation(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            dsr = _dsr_for_user(user)
+            session.add(dsr)
+            await session.flush()
+
+            first_result = await execute_core_erasure_for_approved_request(session, dsr)
+            await session.refresh(dsr)
+
+            assert first_result.status is ErasureOrchestrationStatus.COMPLETED
+            assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
+            assert dsr.subject_user_id is None
+
+            second_result = await execute_core_erasure_for_approved_request(
+                session,
+                dsr,
+            )
+            await session.refresh(dsr)
+
+            assert second_result.status is ErasureOrchestrationStatus.ALREADY_COMPLETED
+            assert second_result.subject_user_id is None
+            assert second_result.provider_results == ()
+            assert second_result.did_mutate is False
+            assert second_result.failure_reason_code is None
+            assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
+            assert dsr.execution_failure_reason_code is None
+
+    run_async(_run())
+
+
 def test_core_erasure_orchestrator_returns_failed_result_for_provider_failure(
     migrated_session_factory,
 ) -> None:

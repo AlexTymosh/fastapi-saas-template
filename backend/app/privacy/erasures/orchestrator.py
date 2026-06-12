@@ -109,7 +109,7 @@ class ErasureProviderRunResult:
 @dataclass(frozen=True, slots=True)
 class ErasureOrchestrationResult:
     request_id: UUID
-    subject_user_id: UUID
+    subject_user_id: UUID | None
     status: ErasureOrchestrationStatus
     provider_results: tuple[ErasureProviderRunResult, ...]
     completed_at: datetime
@@ -151,16 +151,16 @@ async def execute_core_erasure_for_approved_request(
 
     reference_now = _normalise_reference_time(now or datetime.now(UTC))
     locked_request = await _lock_and_validate_request(session, request)
-    subject_user_id = _subject_user_id(locked_request)
     if _execution_status(locked_request) is DataSubjectRequestExecutionStatus.READY:
         return ErasureOrchestrationResult(
             request_id=locked_request.id,
-            subject_user_id=subject_user_id,
+            subject_user_id=locked_request.subject_user_id,
             status=ErasureOrchestrationStatus.ALREADY_COMPLETED,
             provider_results=(),
             completed_at=reference_now,
         )
 
+    subject_user_id = _subject_user_id(locked_request)
     _mark_processing(locked_request, now=reference_now)
     await session.flush()
 
@@ -232,13 +232,14 @@ async def _lock_and_validate_request(
         raise ErasureOrchestrationError(
             "erasure_orchestration_requires_approved_request"
         )
+
+    execution_status = _execution_status(locked_request)
+    if execution_status is DataSubjectRequestExecutionStatus.READY:
+        return locked_request
+    if execution_status is DataSubjectRequestExecutionStatus.PROCESSING:
+        raise ErasureOrchestrationError(_ALREADY_PROCESSING_REASON_CODE)
     if locked_request.subject_user_id is None:
         raise ErasureOrchestrationError("erasure_orchestration_requires_subject_user")
-    if (
-        _execution_status(locked_request)
-        is DataSubjectRequestExecutionStatus.PROCESSING
-    ):
-        raise ErasureOrchestrationError(_ALREADY_PROCESSING_REASON_CODE)
     return locked_request
 
 

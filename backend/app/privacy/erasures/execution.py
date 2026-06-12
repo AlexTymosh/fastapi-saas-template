@@ -46,7 +46,7 @@ class ErasureExecutionError(ValueError):
 @dataclass(frozen=True, slots=True)
 class ErasureExecutionResult:
     request_id: UUID
-    subject_user_id: UUID
+    subject_user_id: UUID | None
     executor_user_id: UUID
     executor_role: str
     orchestration_status: ErasureOrchestrationStatus
