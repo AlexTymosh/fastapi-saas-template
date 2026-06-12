@@ -175,17 +175,19 @@ async def minimise_export_artifacts_for_approved_erase_request(
 ) -> RemainingInventoryErasureResult:
     """Delete export objects and minimise subject/actor artifact metadata.
 
-    Processing artifacts are rejected to avoid racing an active worker lease.
-    Queued and ready artifacts are moved out of claimable/downloadable states
-    before DSR links are cleared. Stored binary objects are deleted before DB
-    references are cleared so a storage failure cannot be hidden as success.
+    Subject-owned processing artifacts are rejected to avoid racing an active
+    worker lease. Queued and ready subject-owned artifacts are moved out of
+    claimable/downloadable states before DSR links are cleared. Stored subject
+    export objects are deleted before DB references are cleared so a storage
+    failure cannot be hidden as success. Actor-only references are minimised
+    without deleting another subject's export object.
     """
 
     subject_id = _validate_request(request, subject_user_id=subject_user_id)
     reference_now = _normalise_reference_time(now or datetime.now(UTC))
     rows = await _lock_export_artifact_rows(session, subject_user_id=subject_id)
-    _reject_processing_export_artifacts(rows)
-    _delete_export_artifact_objects(rows)
+    _reject_processing_export_artifacts(rows, subject_user_id=subject_id)
+    _delete_export_artifact_objects(rows, subject_user_id=subject_id)
     affected_rows, changed_fields = _minimise_export_artifact_rows(
         rows,
         subject_user_id=subject_id,
@@ -437,16 +439,34 @@ async def _lock_dsr_rows(
     return tuple((await session.execute(stmt)).scalars().all())
 
 
-def _reject_processing_export_artifacts(rows: tuple[ExportArtifact, ...]) -> None:
-    if any(row.status == ExportArtifactStatus.PROCESSING.value for row in rows):
+def _reject_processing_export_artifacts(
+    rows: tuple[ExportArtifact, ...],
+    *,
+    subject_user_id: UUID,
+) -> None:
+    has_subject_processing_artifact = any(
+        _is_subject_owned_export_artifact(row, subject_user_id=subject_user_id)
+        and row.status == ExportArtifactStatus.PROCESSING.value
+        for row in rows
+    )
+    if has_subject_processing_artifact:
         raise RemainingInventoryErasureError(
             "export_artifact_erasure_processing_active"
         )
 
 
-def _delete_export_artifact_objects(rows: tuple[ExportArtifact, ...]) -> None:
+def _delete_export_artifact_objects(
+    rows: tuple[ExportArtifact, ...],
+    *,
+    subject_user_id: UUID,
+) -> None:
     storage_by_backend: dict[str, StorageAdapter] = {}
     for row in rows:
+        if not _is_subject_owned_export_artifact(
+            row,
+            subject_user_id=subject_user_id,
+        ):
+            continue
         if row.storage_key is None:
             continue
         storage = storage_by_backend.get(row.storage_backend)
@@ -457,6 +477,17 @@ def _delete_export_artifact_objects(rows: tuple[ExportArtifact, ...]) -> None:
             storage.delete(row.storage_key)
         except Exception as exc:
             raise RemainingInventoryErasureError(_OBJECT_DELETE_FAILED_REASON) from exc
+
+
+def _is_subject_owned_export_artifact(
+    row: ExportArtifact,
+    *,
+    subject_user_id: UUID,
+) -> bool:
+    return (
+        row.subject_user_id == subject_user_id
+        or row.requester_user_id == subject_user_id
+    )
 
 
 def _build_export_storage_adapter(backend: str) -> StorageAdapter:
@@ -521,7 +552,14 @@ def _minimise_export_artifact_rows(
     changed_fields: set[str] = set()
     for row in rows:
         row_changed_fields: list[str] = []
-        if row.status in _CANCELLED_EXPORT_ERASURE_STATUSES:
+        is_subject_owned_artifact = _is_subject_owned_export_artifact(
+            row,
+            subject_user_id=subject_user_id,
+        )
+        if (
+            is_subject_owned_artifact
+            and row.status in _CANCELLED_EXPORT_ERASURE_STATUSES
+        ):
             _set_if_changed(
                 row,
                 "status",
@@ -542,17 +580,18 @@ def _minimise_export_artifact_rows(
         ):
             if getattr(row, field_name) == subject_user_id:
                 _set_if_changed(row, field_name, None, row_changed_fields)
-        for field_name in (
-            "storage_key",
-            "filename",
-            "content_type",
-            "size_bytes",
-            "checksum_sha256",
-            "failure_detail",
-            "processing_token",
-            "processing_lease_expires_at",
-        ):
-            _set_if_changed(row, field_name, None, row_changed_fields)
+        if is_subject_owned_artifact:
+            for field_name in (
+                "storage_key",
+                "filename",
+                "content_type",
+                "size_bytes",
+                "checksum_sha256",
+                "failure_detail",
+                "processing_token",
+                "processing_lease_expires_at",
+            ):
+                _set_if_changed(row, field_name, None, row_changed_fields)
         if row_changed_fields:
             affected_rows += 1
             changed_fields.update(row_changed_fields)
