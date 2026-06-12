@@ -430,7 +430,7 @@ def test_core_erasure_orchestrator_covers_remaining_inventory_targets(
             assert artifact.requester_user_id is None
             assert artifact.requested_by_user_id is None
             assert artifact.generated_by_user_id is None
-            assert artifact.storage_key is None
+            assert artifact.storage_key == "privacy-exports/object.zip"
             assert artifact.filename is None
             assert artifact.content_type is None
             assert artifact.size_bytes is None
@@ -546,7 +546,7 @@ def test_core_erasure_orchestrator_deletes_ready_export_artifacts(
             assert storage.deleted_keys == ["privacy-exports/ready.zip"]
             assert ready_artifact.status == ExportArtifactStatus.CANCELLED.value
             assert ready_artifact.failure_reason_code == "subject_erasure_requested"
-            assert ready_artifact.storage_key is None
+            assert ready_artifact.storage_key == "privacy-exports/ready.zip"
             assert ready_artifact.filename is None
             assert ready_artifact.content_type is None
             assert ready_artifact.size_bytes is None
@@ -726,7 +726,7 @@ def test_core_erasure_orchestrator_does_not_delete_export_object_on_rollback(
     run_async(_run())
 
 
-def test_core_erasure_orchestrator_commits_when_deferred_delete_fails(
+def test_core_erasure_orchestrator_preserves_retry_when_deferred_delete_fails(
     migrated_session_factory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -770,7 +770,7 @@ def test_core_erasure_orchestrator_commits_when_deferred_delete_fails(
             ready_artifact = await session.get(ExportArtifact, ready_artifact_id)
             assert ready_artifact is not None
             assert ready_artifact.status == ExportArtifactStatus.CANCELLED.value
-            assert ready_artifact.storage_key is None
+            assert ready_artifact.storage_key == "privacy-exports/ready.zip"
 
     run_async(_run())
 

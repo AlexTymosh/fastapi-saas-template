@@ -193,8 +193,10 @@ async def minimise_export_artifacts_for_approved_erase_request(
     worker lease. Queued and ready subject-owned artifacts are moved out of
     claimable/downloadable states before DSR links are cleared. Stored subject
     export objects are deleted only after the DB transaction commits, so
-    rollback cannot leave READY rows pointing at deleted objects. Actor-only
-    references are minimised without deleting another subject's export object.
+    rollback cannot leave READY rows pointing at deleted objects. The storage
+    key is retained as a non-downloadable retry marker until a later cleanup
+    can confirm the object was purged. Actor-only references are minimised
+    without deleting another subject's export object.
     """
 
     subject_id = _validate_request(request, subject_user_id=subject_user_id)
@@ -693,7 +695,6 @@ def _minimise_export_artifact_rows(
                 _set_if_changed(row, field_name, None, row_changed_fields)
         if is_subject_owned_artifact:
             for field_name in (
-                "storage_key",
                 "filename",
                 "content_type",
                 "size_bytes",

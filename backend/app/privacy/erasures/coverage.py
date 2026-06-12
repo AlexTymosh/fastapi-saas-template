@@ -98,9 +98,11 @@ ERASURE_COVERAGE_MAP: dict[str, ErasureCoverageEntry] = {
             decision=ErasureCoverageDecision.EXECUTABLE,
             rationale=(
                 "Subject-owned export objects are deleted after erasure DB "
-                "changes commit, downloadable subject-owned artifacts are "
-                "cancelled, and actor identifier links are minimised without "
-                "deleting other subjects' artifacts."
+                "changes commit. Downloadable subject-owned artifacts are "
+                "cancelled first and retain storage keys as non-downloadable "
+                "retry markers until cleanup confirms object deletion. Actor "
+                "identifier links are minimised without deleting other subjects' "
+                "artifacts."
             ),
         )
     ),
