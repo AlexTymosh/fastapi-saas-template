@@ -14,7 +14,7 @@ async def expire_ready_export_artifacts(
     limit: int = 1000,
     dry_run: bool = False,
 ) -> int:
-    """Expire ready export artifacts and purge stored archive objects.
+    """Expire ready exports and retry cancelled erasure export purges.
 
     Transaction ownership remains with the caller so this helper can be reused
     by a CLI command, scheduled worker, or explicit maintenance job.

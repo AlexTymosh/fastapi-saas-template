@@ -168,6 +168,25 @@ class ExportArtifactRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_cancelled_erasure_purge_retry(
+        self, *, limit: int
+    ) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.status == ExportArtifactStatus.CANCELLED.value,
+                ExportArtifact.failure_reason_code == "subject_erasure_requested",
+                ExportArtifact.storage_key.is_not(None),
+            )
+            .order_by(
+                ExportArtifact.completed_at.asc().nulls_last(),
+                ExportArtifact.created_at.asc(),
+                ExportArtifact.id.asc(),
+            )
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def mark_ready(self, artifact: ExportArtifact) -> ExportArtifact:
         artifact.status = ExportArtifactStatus.READY.value
         artifact.completed_at = datetime.now(UTC)

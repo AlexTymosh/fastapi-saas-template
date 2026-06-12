@@ -457,7 +457,8 @@ def test_dsr_service_auto_fulfils_successful_erasure_execution(
             assert dsr.status == DataSubjectRequestStatus.FULFILLED.value
             assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
             assert dsr.fulfilled_at is not None
-            assert dsr.reviewer_user_id == executor.id
+            assert dsr.reviewer_user_id is None
+            assert result.reviewer_user_id is None
             assert subject.email is None
             assert subject.external_auth_id == f"erased-user:{subject.id}"
             assert outbox.status == OutboxStatus.FAILED.value
