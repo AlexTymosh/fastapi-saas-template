@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
+import app.privacy.erasures.remaining_inventory as remaining_inventory
 from app.audit.models.audit_event import (
     AuditAction,
     AuditCategory,
@@ -48,6 +49,19 @@ from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
+
+
+class _RecordingStorageAdapter:
+    def __init__(self) -> None:
+        self.deleted_keys: list[str] = []
+
+    def delete(self, key: str) -> None:
+        self.deleted_keys.append(key)
+
+
+class _FailingStorageAdapter:
+    def delete(self, key: str) -> None:
+        raise RuntimeError(f"delete failed for {key}")
 
 
 def _normalise_test_timestamp(value: datetime) -> datetime:
@@ -171,6 +185,32 @@ def _queued_export_artifact(
         storage_backend=ExportArtifactStorageBackend.LOCAL.value,
         schema_version="1.0",
         queued_at=now,
+        expires_at=now + timedelta(days=30),
+    )
+
+
+def _ready_export_artifact(
+    dsr: DataSubjectRequest,
+    user: User,
+) -> ExportArtifact:
+    now = datetime.now(UTC)
+    return ExportArtifact(
+        data_subject_request_id=dsr.id,
+        subject_user_id=user.id,
+        requester_user_id=user.id,
+        requested_by_user_id=user.id,
+        generated_by_user_id=user.id,
+        status=ExportArtifactStatus.READY.value,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        storage_key="privacy-exports/ready.zip",
+        filename="ready.zip",
+        content_type="application/zip",
+        size_bytes=128,
+        checksum_sha256="a" * 64,
+        schema_version="1.0",
+        queued_at=now,
+        completed_at=now,
         expires_at=now + timedelta(days=30),
     )
 
@@ -386,6 +426,11 @@ def test_core_erasure_orchestrator_covers_remaining_inventory_targets(
             assert artifact.requester_user_id is None
             assert artifact.requested_by_user_id is None
             assert artifact.generated_by_user_id is None
+            assert artifact.storage_key is None
+            assert artifact.filename is None
+            assert artifact.content_type is None
+            assert artifact.size_bytes is None
+            assert artifact.checksum_sha256 is None
             assert artifact.failure_detail is None
             assert artifact.processing_token is None
             assert artifact.processing_lease_expires_at is None
@@ -432,7 +477,7 @@ def test_core_erasure_orchestrator_cancels_queued_export_artifacts(
 
             assert result.status is ErasureOrchestrationStatus.COMPLETED
             assert queued_artifact.status == ExportArtifactStatus.CANCELLED.value
-            assert queued_artifact.failure_reason_code == ("subject_erasure_requested")
+            assert queued_artifact.failure_reason_code == "subject_erasure_requested"
             assert queued_artifact.failure_detail is None
             assert queued_artifact.subject_user_id is None
             assert queued_artifact.requester_user_id is None
@@ -441,6 +486,104 @@ def test_core_erasure_orchestrator_cancels_queued_export_artifacts(
             assert queued_artifact.processing_token is None
             assert queued_artifact.processing_lease_expires_at is None
             assert export_dsr.subject_user_id is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_deletes_ready_export_artifacts(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _RecordingStorageAdapter()
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: storage,
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            erase_dsr = _dsr_for_user(user)
+            export_dsr = _dsr_for_user(user, request_type="export")
+            export_dsr.execution_status = DataSubjectRequestExecutionStatus.READY.value
+            session.add_all([erase_dsr, export_dsr])
+            await session.flush()
+
+            ready_artifact = _ready_export_artifact(export_dsr, user)
+            session.add(ready_artifact)
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(
+                session,
+                erase_dsr,
+            )
+            await session.refresh(export_dsr)
+            await session.refresh(ready_artifact)
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert storage.deleted_keys == ["privacy-exports/ready.zip"]
+            assert ready_artifact.status == ExportArtifactStatus.CANCELLED.value
+            assert ready_artifact.failure_reason_code == "subject_erasure_requested"
+            assert ready_artifact.storage_key is None
+            assert ready_artifact.filename is None
+            assert ready_artifact.content_type is None
+            assert ready_artifact.size_bytes is None
+            assert ready_artifact.checksum_sha256 is None
+            assert ready_artifact.subject_user_id is None
+            assert ready_artifact.requester_user_id is None
+            assert ready_artifact.requested_by_user_id is None
+            assert ready_artifact.generated_by_user_id is None
+            assert export_dsr.subject_user_id is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_keeps_ready_export_on_delete_failure(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: _FailingStorageAdapter(),
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                user = await _create_user(session)
+                erase_dsr = _dsr_for_user(user)
+                export_dsr = _dsr_for_user(user, request_type="export")
+                session.add_all([erase_dsr, export_dsr])
+                await session.flush()
+
+                ready_artifact = _ready_export_artifact(export_dsr, user)
+                session.add(ready_artifact)
+                await session.flush()
+
+                result = await execute_core_erasure_for_approved_request(
+                    session,
+                    erase_dsr,
+                )
+                assert result.status is ErasureOrchestrationStatus.FAILED
+                assert result.failure_reason_code == (
+                    "export_artifact_object_delete_failed"
+                )
+
+            await session.refresh(erase_dsr)
+            await session.refresh(export_dsr)
+            await session.refresh(ready_artifact)
+            assert erase_dsr.execution_status == (
+                DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert erase_dsr.execution_failure_reason_code == (
+                "export_artifact_object_delete_failed"
+            )
+            assert ready_artifact.status == ExportArtifactStatus.READY.value
+            assert ready_artifact.storage_key == "privacy-exports/ready.zip"
+            assert ready_artifact.subject_user_id == user.id
+            assert export_dsr.subject_user_id == user.id
 
     run_async(_run())
 

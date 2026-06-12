@@ -91,13 +91,15 @@ ERASURE_COVERAGE_MAP: dict[str, ErasureCoverageEntry] = {
     ),
     "export_artifacts.delete_object_minimise_subject_or_actor_metadata": (
         ErasureCoverageEntry(
-            provider_key="export_artifacts.delete_object_minimise_subject_or_actor_metadata",
+            provider_key=(
+                "export_artifacts.delete_object_minimise_subject_or_actor_metadata"
+            ),
             table_name="export_artifacts",
             decision=ErasureCoverageDecision.EXECUTABLE,
             rationale=(
-                "Export artifact metadata keeps retention evidence while "
-                "subject/actor links and failure details are minimised; "
-                "binary object deletion remains governed by artifact retention."
+                "Subject-linked export objects are deleted during erasure, "
+                "downloadable artifacts are cancelled, and subject/actor links "
+                "plus unsafe artifact metadata are minimised."
             ),
         )
     ),

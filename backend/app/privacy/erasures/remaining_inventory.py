@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
+from pydantic import SecretStr
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config.settings import get_settings
 from app.memberships.models.membership import Membership
 from app.organisations.models.organisation import Organisation
 from app.platform.models.platform_staff import PlatformStaff
@@ -16,12 +18,19 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
-from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
+)
 from app.privacy.models.privacy_governance import (
     ConsentRecord,
     DataProcessingAuthorization,
     PrivacyNoticeAcceptance,
 )
+from app.privacy.storage.base import StorageAdapter
+from app.privacy.storage.local import LocalStorageAdapter
+from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 
 _MEMBERSHIPS_PROVIDER_KEY = "memberships.minimise_subject_link"
 _MEMBERSHIPS_TABLE_NAME = "memberships"
@@ -42,6 +51,7 @@ _PRIVACY_CONSENTS_TABLE_NAME = "consent_records"
 _PRIVACY_NOTICES_PROVIDER_KEY = "privacy_governance.minimise_notice_acceptances"
 _PRIVACY_NOTICES_TABLE_NAME = "privacy_notice_acceptances"
 _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
+_OBJECT_DELETE_FAILED_REASON = "export_artifact_object_delete_failed"
 
 
 class RemainingInventoryErasureStatus(StrEnum):
@@ -163,19 +173,19 @@ async def minimise_export_artifacts_for_approved_erase_request(
     subject_user_id: UUID | None = None,
     now: datetime | None = None,
 ) -> RemainingInventoryErasureResult:
-    """Minimise subject/actor links in export artifact metadata.
+    """Delete export objects and minimise subject/actor artifact metadata.
 
-    Storage object deletion is handled by the artifact retention runner because
-    the erasure orchestrator intentionally has no storage backend dependency.
     Processing artifacts are rejected to avoid racing an active worker lease.
-    Queued artifacts are cancelled before DSR links are cleared so export
-    workers cannot later claim an artifact whose DSR subject was minimised.
+    Queued and ready artifacts are moved out of claimable/downloadable states
+    before DSR links are cleared. Stored binary objects are deleted before DB
+    references are cleared so a storage failure cannot be hidden as success.
     """
 
     subject_id = _validate_request(request, subject_user_id=subject_user_id)
     reference_now = _normalise_reference_time(now or datetime.now(UTC))
     rows = await _lock_export_artifact_rows(session, subject_user_id=subject_id)
     _reject_processing_export_artifacts(rows)
+    _delete_export_artifact_objects(rows)
     affected_rows, changed_fields = _minimise_export_artifact_rows(
         rows,
         subject_user_id=subject_id,
@@ -434,6 +444,53 @@ def _reject_processing_export_artifacts(rows: tuple[ExportArtifact, ...]) -> Non
         )
 
 
+def _delete_export_artifact_objects(rows: tuple[ExportArtifact, ...]) -> None:
+    storage_by_backend: dict[str, StorageAdapter] = {}
+    for row in rows:
+        if row.storage_key is None:
+            continue
+        storage = storage_by_backend.get(row.storage_backend)
+        if storage is None:
+            storage = _build_export_storage_adapter(row.storage_backend)
+            storage_by_backend[row.storage_backend] = storage
+        try:
+            storage.delete(row.storage_key)
+        except Exception as exc:
+            raise RemainingInventoryErasureError(_OBJECT_DELETE_FAILED_REASON) from exc
+
+
+def _build_export_storage_adapter(backend: str) -> StorageAdapter:
+    exports = get_settings().privacy_exports
+    if backend == ExportArtifactStorageBackend.LOCAL.value:
+        return LocalStorageAdapter(
+            exports.local_storage_path,
+            exports.local_signing_secret,
+        )
+    if backend == ExportArtifactStorageBackend.S3_COMPATIBLE.value:
+        return S3CompatibleStorageAdapter(
+            bucket_name=exports.s3_bucket_name or "",
+            region_name=exports.s3_region_name or "",
+            endpoint_url=exports.s3_endpoint_url,
+            access_key_id=_optional_secret_value(exports.s3_access_key_id),
+            secret_access_key=_optional_secret_value(exports.s3_secret_access_key),
+            key_prefix=exports.s3_key_prefix,
+            server_side_encryption=exports.s3_server_side_encryption,
+            sse_kms_key_id=exports.s3_sse_kms_key_id,
+            addressing_style=exports.s3_addressing_style,
+            connect_timeout_seconds=exports.s3_connect_timeout_seconds,
+            read_timeout_seconds=exports.s3_read_timeout_seconds,
+            max_attempts=exports.s3_max_attempts,
+        )
+    raise RemainingInventoryErasureError("export_artifact_unknown_storage_backend")
+
+
+def _optional_secret_value(secret: SecretStr | None) -> str | None:
+    if secret is None:
+        return None
+    value = secret.get_secret_value().strip()
+    return value or None
+
+
 def _minimise_platform_staff_rows(
     rows: tuple[PlatformStaff, ...],
     *,
@@ -464,7 +521,7 @@ def _minimise_export_artifact_rows(
     changed_fields: set[str] = set()
     for row in rows:
         row_changed_fields: list[str] = []
-        if row.status == ExportArtifactStatus.QUEUED.value:
+        if row.status in _CANCELLED_EXPORT_ERASURE_STATUSES:
             _set_if_changed(
                 row,
                 "status",
@@ -485,13 +542,29 @@ def _minimise_export_artifact_rows(
         ):
             if getattr(row, field_name) == subject_user_id:
                 _set_if_changed(row, field_name, None, row_changed_fields)
-        _set_if_changed(row, "failure_detail", None, row_changed_fields)
-        _set_if_changed(row, "processing_token", None, row_changed_fields)
-        _set_if_changed(row, "processing_lease_expires_at", None, row_changed_fields)
+        for field_name in (
+            "storage_key",
+            "filename",
+            "content_type",
+            "size_bytes",
+            "checksum_sha256",
+            "failure_detail",
+            "processing_token",
+            "processing_lease_expires_at",
+        ):
+            _set_if_changed(row, field_name, None, row_changed_fields)
         if row_changed_fields:
             affected_rows += 1
             changed_fields.update(row_changed_fields)
     return affected_rows, tuple(sorted(changed_fields))
+
+
+_CANCELLED_EXPORT_ERASURE_STATUSES = frozenset(
+    {
+        ExportArtifactStatus.QUEUED.value,
+        ExportArtifactStatus.READY.value,
+    }
+)
 
 
 def _minimise_dsr_rows(
