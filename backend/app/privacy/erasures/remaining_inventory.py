@@ -41,6 +41,7 @@ _PRIVACY_CONSENTS_PROVIDER_KEY = "privacy_governance.minimise_consent_records"
 _PRIVACY_CONSENTS_TABLE_NAME = "consent_records"
 _PRIVACY_NOTICES_PROVIDER_KEY = "privacy_governance.minimise_notice_acceptances"
 _PRIVACY_NOTICES_TABLE_NAME = "privacy_notice_acceptances"
+_SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
 
 
 class RemainingInventoryErasureStatus(StrEnum):
@@ -167,6 +168,8 @@ async def minimise_export_artifacts_for_approved_erase_request(
     Storage object deletion is handled by the artifact retention runner because
     the erasure orchestrator intentionally has no storage backend dependency.
     Processing artifacts are rejected to avoid racing an active worker lease.
+    Queued artifacts are cancelled before DSR links are cleared so export
+    workers cannot later claim an artifact whose DSR subject was minimised.
     """
 
     subject_id = _validate_request(request, subject_user_id=subject_user_id)
@@ -461,6 +464,19 @@ def _minimise_export_artifact_rows(
     changed_fields: set[str] = set()
     for row in rows:
         row_changed_fields: list[str] = []
+        if row.status == ExportArtifactStatus.QUEUED.value:
+            _set_if_changed(
+                row,
+                "status",
+                ExportArtifactStatus.CANCELLED.value,
+                row_changed_fields,
+            )
+            _set_if_changed(
+                row,
+                "failure_reason_code",
+                _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON,
+                row_changed_fields,
+            )
         for field_name in (
             "subject_user_id",
             "requester_user_id",

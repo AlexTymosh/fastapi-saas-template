@@ -155,6 +155,26 @@ def _export_artifact(dsr: DataSubjectRequest, user: User) -> ExportArtifact:
     )
 
 
+def _queued_export_artifact(
+    dsr: DataSubjectRequest,
+    user: User,
+) -> ExportArtifact:
+    now = datetime.now(UTC)
+    return ExportArtifact(
+        data_subject_request_id=dsr.id,
+        subject_user_id=user.id,
+        requester_user_id=user.id,
+        requested_by_user_id=user.id,
+        generated_by_user_id=None,
+        status=ExportArtifactStatus.QUEUED.value,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        schema_version="1.0",
+        queued_at=now,
+        expires_at=now + timedelta(days=30),
+    )
+
+
 def _processing_purpose() -> ProcessingPurpose:
     return ProcessingPurpose(
         code=f"privacy-purpose-{uuid4()}",
@@ -383,6 +403,44 @@ def test_core_erasure_orchestrator_covers_remaining_inventory_targets(
             assert dsr.idempotency_fingerprint is None
             assert dsr.idempotency_key_expires_at is None
             assert user.email is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_cancels_queued_export_artifacts(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            erase_dsr = _dsr_for_user(user)
+            export_dsr = _dsr_for_user(user, request_type="export")
+            export_dsr.execution_status = DataSubjectRequestExecutionStatus.QUEUED.value
+            session.add_all([erase_dsr, export_dsr])
+            await session.flush()
+
+            queued_artifact = _queued_export_artifact(export_dsr, user)
+            session.add(queued_artifact)
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(
+                session,
+                erase_dsr,
+            )
+            await session.refresh(export_dsr)
+            await session.refresh(queued_artifact)
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert queued_artifact.status == ExportArtifactStatus.CANCELLED.value
+            assert queued_artifact.failure_reason_code == ("subject_erasure_requested")
+            assert queued_artifact.failure_detail is None
+            assert queued_artifact.subject_user_id is None
+            assert queued_artifact.requester_user_id is None
+            assert queued_artifact.requested_by_user_id is None
+            assert queued_artifact.generated_by_user_id is None
+            assert queued_artifact.processing_token is None
+            assert queued_artifact.processing_lease_expires_at is None
+            assert export_dsr.subject_user_id is None
 
     run_async(_run())
 
