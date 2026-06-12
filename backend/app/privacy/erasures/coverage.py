@@ -100,9 +100,10 @@ ERASURE_COVERAGE_MAP: dict[str, ErasureCoverageEntry] = {
                 "Subject-owned export objects are deleted after erasure DB "
                 "changes commit. Downloadable subject-owned artifacts are "
                 "cancelled first and retain storage keys as non-downloadable "
-                "retry markers until cleanup confirms object deletion. Actor "
-                "identifier links are minimised without deleting other subjects' "
-                "artifacts."
+                "retry markers until cleanup confirms object deletion. "
+                "Non-processing actor identifier links are minimised without "
+                "deleting other subjects' artifacts; processing actor-linked "
+                "artifacts block erasure until the worker lease completes."
             ),
         )
     ),

@@ -189,14 +189,15 @@ async def minimise_export_artifacts_for_approved_erase_request(
 ) -> RemainingInventoryErasureResult:
     """Defer object deletion and minimise export artifact metadata.
 
-    Subject-owned processing artifacts are rejected to avoid racing an active
-    worker lease. Queued and ready subject-owned artifacts are moved out of
-    claimable/downloadable states before DSR links are cleared. Stored subject
-    export objects are deleted only after the DB transaction commits, so
-    rollback cannot leave READY rows pointing at deleted objects. The storage
-    key is retained as a non-downloadable retry marker until a later cleanup
-    can confirm the object was purged. Actor-only references are minimised
-    without deleting another subject's export object.
+    Any processing artifact that references the erasure subject is rejected to
+    avoid racing an active worker lease. Queued and ready subject-owned
+    artifacts are moved out of claimable/downloadable states before DSR links
+    are cleared. Stored subject export objects are deleted only after the DB
+    transaction commits, so rollback cannot leave READY rows pointing at
+    deleted objects. The storage key is retained as a non-downloadable retry
+    marker until a later cleanup can confirm the object was purged. Actor-only
+    non-processing references are minimised without deleting another subject's
+    export object.
     """
 
     subject_id = _validate_request(request, subject_user_id=subject_user_id)
@@ -464,12 +465,11 @@ def _reject_processing_export_artifacts(
     *,
     subject_user_id: UUID,
 ) -> None:
-    has_subject_processing_artifact = any(
-        _is_subject_owned_export_artifact(row, subject_user_id=subject_user_id)
-        and row.status == ExportArtifactStatus.PROCESSING.value
-        for row in rows
+    del subject_user_id
+    has_processing_artifact = any(
+        row.status == ExportArtifactStatus.PROCESSING.value for row in rows
     )
-    if has_subject_processing_artifact:
+    if has_processing_artifact:
         raise RemainingInventoryErasureError(
             "export_artifact_erasure_processing_active"
         )
