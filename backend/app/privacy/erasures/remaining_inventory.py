@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
 from pydantic import SecretStr
-from sqlalchemy import or_, select
+from sqlalchemy import event, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.core.config.settings import get_settings
 from app.memberships.models.membership import Membership
@@ -51,7 +53,13 @@ _PRIVACY_CONSENTS_TABLE_NAME = "consent_records"
 _PRIVACY_NOTICES_PROVIDER_KEY = "privacy_governance.minimise_notice_acceptances"
 _PRIVACY_NOTICES_TABLE_NAME = "privacy_notice_acceptances"
 _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
-_OBJECT_DELETE_FAILED_REASON = "export_artifact_object_delete_failed"
+_DEFERRED_EXPORT_OBJECT_DELETIONS_KEY = (
+    "privacy_erasure_deferred_export_object_deletions"
+)
+_DEFERRED_EXPORT_OBJECT_DELETION_HOOKS_KEY = (
+    "privacy_erasure_deferred_export_object_deletion_hooks_registered"
+)
+_logger = logging.getLogger(__name__)
 
 
 class RemainingInventoryErasureStatus(StrEnum):
@@ -82,6 +90,12 @@ class RemainingInventoryErasureResult:
     @property
     def did_mutate(self) -> bool:
         return self.affected_rows > 0
+
+
+@dataclass(frozen=True, slots=True)
+class _DeferredExportObjectDeletion:
+    storage_backend: str
+    storage_key: str
 
 
 async def apply_membership_erasure_policy(
@@ -173,21 +187,25 @@ async def minimise_export_artifacts_for_approved_erase_request(
     subject_user_id: UUID | None = None,
     now: datetime | None = None,
 ) -> RemainingInventoryErasureResult:
-    """Delete export objects and minimise subject/actor artifact metadata.
+    """Defer object deletion and minimise export artifact metadata.
 
     Subject-owned processing artifacts are rejected to avoid racing an active
     worker lease. Queued and ready subject-owned artifacts are moved out of
     claimable/downloadable states before DSR links are cleared. Stored subject
-    export objects are deleted before DB references are cleared so a storage
-    failure cannot be hidden as success. Actor-only references are minimised
-    without deleting another subject's export object.
+    export objects are deleted only after the DB transaction commits, so
+    rollback cannot leave READY rows pointing at deleted objects. Actor-only
+    references are minimised without deleting another subject's export object.
     """
 
     subject_id = _validate_request(request, subject_user_id=subject_user_id)
     reference_now = _normalise_reference_time(now or datetime.now(UTC))
     rows = await _lock_export_artifact_rows(session, subject_user_id=subject_id)
     _reject_processing_export_artifacts(rows, subject_user_id=subject_id)
-    _delete_export_artifact_objects(rows, subject_user_id=subject_id)
+    _defer_export_artifact_object_deletions(
+        session,
+        rows,
+        subject_user_id=subject_id,
+    )
     affected_rows, changed_fields = _minimise_export_artifact_rows(
         rows,
         subject_user_id=subject_id,
@@ -455,12 +473,29 @@ def _reject_processing_export_artifacts(
         )
 
 
-def _delete_export_artifact_objects(
+def _defer_export_artifact_object_deletions(
+    session: AsyncSession,
     rows: tuple[ExportArtifact, ...],
     *,
     subject_user_id: UUID,
 ) -> None:
-    storage_by_backend: dict[str, StorageAdapter] = {}
+    deletions = tuple(
+        _subject_owned_export_object_deletions(
+            rows,
+            subject_user_id=subject_user_id,
+        )
+    )
+    if not deletions:
+        return
+    _register_deferred_export_object_deletions(session, deletions)
+
+
+def _subject_owned_export_object_deletions(
+    rows: tuple[ExportArtifact, ...],
+    *,
+    subject_user_id: UUID,
+) -> tuple[_DeferredExportObjectDeletion, ...]:
+    deletions: list[_DeferredExportObjectDeletion] = []
     for row in rows:
         if not _is_subject_owned_export_artifact(
             row,
@@ -469,14 +504,90 @@ def _delete_export_artifact_objects(
             continue
         if row.storage_key is None:
             continue
-        storage = storage_by_backend.get(row.storage_backend)
-        if storage is None:
-            storage = _build_export_storage_adapter(row.storage_backend)
-            storage_by_backend[row.storage_backend] = storage
+        _validate_export_storage_backend(row.storage_backend)
+        deletions.append(
+            _DeferredExportObjectDeletion(
+                storage_backend=row.storage_backend,
+                storage_key=row.storage_key,
+            )
+        )
+    return tuple(deletions)
+
+
+def _register_deferred_export_object_deletions(
+    session: AsyncSession,
+    deletions: tuple[_DeferredExportObjectDeletion, ...],
+) -> None:
+    sync_session = session.sync_session
+    pending_deletions = sync_session.info.setdefault(
+        _DEFERRED_EXPORT_OBJECT_DELETIONS_KEY,
+        [],
+    )
+    pending_deletions.extend(deletions)
+    if sync_session.info.get(_DEFERRED_EXPORT_OBJECT_DELETION_HOOKS_KEY):
+        return
+    event.listen(
+        sync_session,
+        "after_transaction_end",
+        _delete_deferred_export_artifact_objects_after_root_end,
+    )
+    event.listen(
+        sync_session,
+        "after_rollback",
+        _discard_deferred_export_artifact_objects,
+    )
+    event.listen(
+        sync_session,
+        "after_soft_rollback",
+        _discard_deferred_export_artifact_objects_after_soft_rollback,
+    )
+    sync_session.info[_DEFERRED_EXPORT_OBJECT_DELETION_HOOKS_KEY] = True
+
+
+def _delete_deferred_export_artifact_objects_after_root_end(
+    sync_session: Session,
+    transaction: object,
+) -> None:
+    if getattr(transaction, "parent", None) is not None:
+        return
+
+    deletions = tuple(sync_session.info.pop(_DEFERRED_EXPORT_OBJECT_DELETIONS_KEY, ()))
+    if not deletions:
+        return
+
+    storage_by_backend: dict[str, StorageAdapter] = {}
+    for deletion in deletions:
         try:
-            storage.delete(row.storage_key)
-        except Exception as exc:
-            raise RemainingInventoryErasureError(_OBJECT_DELETE_FAILED_REASON) from exc
+            storage = storage_by_backend.get(deletion.storage_backend)
+            if storage is None:
+                storage = _build_export_storage_adapter(deletion.storage_backend)
+                storage_by_backend[deletion.storage_backend] = storage
+            storage.delete(deletion.storage_key)
+        except Exception:
+            _logger.exception(
+                "Failed to delete export artifact object after erasure commit"
+            )
+
+
+def _discard_deferred_export_artifact_objects(sync_session: Session) -> None:
+    sync_session.info.pop(_DEFERRED_EXPORT_OBJECT_DELETIONS_KEY, None)
+
+
+def _discard_deferred_export_artifact_objects_after_soft_rollback(
+    sync_session: Session,
+    previous_transaction: object,
+) -> None:
+    del previous_transaction
+    _discard_deferred_export_artifact_objects(sync_session)
+
+
+def _validate_export_storage_backend(backend: str) -> None:
+    if backend in {
+        ExportArtifactStorageBackend.LOCAL.value,
+        ExportArtifactStorageBackend.S3_COMPATIBLE.value,
+    }:
+        return
+    raise RemainingInventoryErasureError("export_artifact_unknown_storage_backend")
 
 
 def _is_subject_owned_export_artifact(
