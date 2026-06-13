@@ -42,11 +42,17 @@ should still be verified against code before extension:
   - export artifact worker flow;
   - local and S3-compatible export artifact storage;
   - platform erasure execution API;
-  - executable erasure providers for audit, outbox, invites and user profile;
+  - executable erasure providers for audit, outbox, invites, platform staff,
+    export-artifact metadata, privacy-governance minimisation, DSR workflow
+    metadata and user profile;
+  - explicit retain/manual-review policy entries for membership and organisation
+    records where automatic mutation would break tenant or compliance integrity;
   - audit minimisation before destructive erasure;
   - self-erasure execution rejection;
   - automatic fulfilment after successful approved erase execution;
-  - export artifact retention runner.
+  - export artifact retention runner;
+  - erasure coverage contract tests that keep inventory, runtime coverage and
+    impact preview aligned.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies,
   settings-aware policy resolution, authenticated reads, tenant flows, invite
@@ -72,11 +78,6 @@ should still be verified against code before extension:
 - Observability integration beyond the current foundation.
 - Full BOLA/BFLA security test matrix outside the currently covered tenant BOLA,
   platform permission-matrix and feature-specific privacy permission tests.
-- DSR erasure coverage for the full declared privacy inventory:
-  - current executable erasure covers audit, outbox, invites and users;
-  - memberships, organisations, platform staff, DSR/export-artifact and
-    privacy-governance records still require executable providers or explicit
-    manual-review/retention policy.
 - DSR hardening items that are intentionally separate from the current
   executable workflow:
   - streaming export archive generation;
@@ -90,7 +91,6 @@ should still be verified against code before extension:
 The following areas should not be presented as complete without code
 verification:
 
-- Complete executable DSR erasure coverage for every inventoried data area.
 - Production-grade deployment hardening.
 - Complete platform operations workflows beyond current backend slices.
 - Full BOLA/BFLA security test matrix for every endpoint.
@@ -101,7 +101,6 @@ verification:
 
 - Documentation may lag code.
 - Documentation must not claim planned features as implemented.
-- Current DSR erasure execution does not cover every declared inventory target.
 - Large DSR exports still need streaming archive generation before production
   scale is claimed.
 - Soft-deleted organisations are operational/audit records: platform admin
@@ -174,13 +173,10 @@ External DB tests are opt-in and must not run by default.
 ## Recommended Next Steps
 
 1. Keep CI green and required before merging.
-2. Resolve remaining DSR erasure inventory coverage before closing issue #328.
-3. Add executable providers or explicit manual-review policy for memberships,
-   organisations, platform staff, DSR/export-artifact and privacy-governance
-   records.
-4. Continue expanding BOLA/BFLA and platform permission tests.
-5. Harden Docker/runtime for production beyond dependency installation.
-6. Continue trusted proxy policy hardening and verify deployment-specific CORS
+2. Complete the final #328 closure review after #407/#408 changes pass broad CI.
+3. Continue expanding BOLA/BFLA and platform permission tests.
+4. Harden Docker/runtime for production beyond dependency installation.
+5. Continue trusted proxy policy hardening and verify deployment-specific CORS
    origins.
 
 ## Source of Truth

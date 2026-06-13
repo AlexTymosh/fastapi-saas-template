@@ -1,11 +1,22 @@
 # DSR core erasure orchestrator
 
-This slice adds the internal orchestration contract for the currently implemented
-core erasure providers:
+This document describes the internal orchestration contract for the inventory-
+aligned erasure providers and explicit policy steps.
 
-1. `outbox.purge_or_scrub_payload`
-2. `invites.anonymise_or_purge_subject_references`
-3. `users.anonymise_profile`
+The orchestrator now covers:
+
+1. `audit.minimise_subject_actor_or_target_identifiers`
+2. `outbox.purge_or_scrub_payload`
+3. `invites.anonymise_or_purge_subject_references`
+4. `memberships.minimise_subject_link`
+5. `organisations.review_subject_references`
+6. `platform_staff.minimise_subject_or_creator_links`
+7. `export_artifacts.delete_object_minimise_subject_or_actor_metadata`
+8. `privacy_governance.minimise_authorizations`
+9. `privacy_governance.minimise_consent_records`
+10. `privacy_governance.minimise_notice_acceptances`
+11. `users.anonymise_profile`
+12. `dsr.minimise_workflow_identifiers`
 
 The orchestrator is intentionally not exposed through public API or a worker yet.
 It does not commit the transaction and does not fulfil the Data Subject Request.
@@ -29,19 +40,39 @@ ability to find subject-linked rows.
 The order is:
 
 ```text
-snapshot subject_email/invite_ids → outbox → invites → users
+snapshot subject_email/invite_ids/subject_user_id
+→ audit
+→ outbox
+→ invites
+→ membership policy
+→ organisation policy
+→ platform staff minimisation
+→ export artifact metadata minimisation
+→ privacy governance minimisation/policy
+→ users
+→ DSR workflow metadata minimisation
 ```
 
-Outbox is first because it may contain delivery-only personal data and encrypted
-invite token material. It also blocks execution when subject-linked rows are
-currently `processing`, because the worker may already have decrypted delivery
-material.
+Audit and outbox run early because they may contain direct subject identifiers,
+delivery-only personal data and encrypted invite token material. Outbox still
+blocks execution when subject-linked rows are currently `processing`, because the
+worker may already have decrypted delivery material.
 
-Invites are second because invite email and token material should be minimised
-before the user profile loses its original email.
+Invites run before the user profile because invite email and token material
+should be minimised before the local user projection loses its original email.
 
-The user profile is last because it removes the direct subject identifiers from
-the local account projection.
+Membership and organisation steps are policy coverage entries, not destructive
+mutations. They preserve tenant relationship integrity while making the policy
+explicit in provider results and contract tests.
+
+Platform staff, export artifact metadata and privacy-governance source fields are
+minimised before user-profile anonymisation where nullable. Compliance evidence
+fields remain retained.
+
+The user profile runs near the end because it removes direct subject identifiers
+from the local account projection. DSR workflow metadata is minimised last so the
+execution result and audit event can snapshot the subject id before request links
+are cleared.
 
 ## Snapshot locking
 
@@ -72,10 +103,9 @@ This slice does not implement:
 
 - platform API endpoints;
 - background worker execution;
-- audit minimisation;
 - fulfilment of `erase` requests;
 - retention/purge runners;
 - worker lock/dispatch coordination beyond blocking in-flight processing rows.
 
-The next slice should either add controlled audit minimisation or wire this
-orchestrator into a worker/API path with explicit retry semantics.
+The next slice should perform the final #328 closure review after the runtime
+coverage and contract tests pass broad CI.

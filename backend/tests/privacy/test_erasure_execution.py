@@ -159,7 +159,15 @@ def test_erasure_execution_authorises_privileged_staff_and_runs_orchestrator(
                 "audit.minimise_subject_actor_or_target_identifiers",
                 "outbox.purge_or_scrub_payload",
                 "invites.anonymise_or_purge_subject_references",
+                "memberships.minimise_subject_link",
+                "organisations.review_subject_references",
+                "platform_staff.minimise_subject_or_creator_links",
+                "export_artifacts.delete_object_minimise_subject_or_actor_metadata",
+                "privacy_governance.minimise_authorizations",
+                "privacy_governance.minimise_consent_records",
+                "privacy_governance.minimise_notice_acceptances",
                 "users.anonymise_profile",
+                "dsr.minimise_workflow_identifiers",
             )
             assert result.did_mutate is True
             assert result.failure_reason_code is None
@@ -449,7 +457,8 @@ def test_dsr_service_auto_fulfils_successful_erasure_execution(
             assert dsr.status == DataSubjectRequestStatus.FULFILLED.value
             assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
             assert dsr.fulfilled_at is not None
-            assert dsr.reviewer_user_id == executor.id
+            assert dsr.reviewer_user_id is None
+            assert result.reviewer_user_id is None
             assert subject.email is None
             assert subject.external_auth_id == f"erased-user:{subject.id}"
             assert outbox.status == OutboxStatus.FAILED.value

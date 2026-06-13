@@ -9,6 +9,7 @@ from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import MembershipRole
 from app.organisations.models.organisation import Organisation
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType
+from app.privacy.erasures.coverage import inventory_erasure_provider_keys
 from app.privacy.erasures.impact import (
     ErasureImpactPreviewError,
     ErasureImpactScope,
@@ -141,12 +142,11 @@ def test_erasure_impact_preview_counts_user_invite_and_outbox_rows(
             )
             assert by_provider["outbox.purge_or_scrub_payload"].estimated_rows == 2
             assert by_provider["users.anonymise_profile"].is_scoped is True
-            assert preview.total_scoped_rows == 5
-            assert set(preview.scoped_provider_keys) == {
-                "users.anonymise_profile",
-                "invites.anonymise_or_purge_subject_references",
-                "outbox.purge_or_scrub_payload",
-            }
+            assert by_provider["dsr.minimise_workflow_identifiers"].estimated_rows == 1
+            assert preview.total_scoped_rows == 6
+            assert set(preview.scoped_provider_keys) == set(
+                inventory_erasure_provider_keys()
+            )
 
     run_async(_run())
 
@@ -182,7 +182,8 @@ def test_erasure_impact_preview_normalises_subject_email_for_outbox_payload(
                 == 0
             )
             assert by_provider["outbox.purge_or_scrub_payload"].estimated_rows == 1
-            assert preview.total_scoped_rows == 2
+            assert by_provider["dsr.minimise_workflow_identifiers"].estimated_rows == 1
+            assert preview.total_scoped_rows == 3
 
     run_async(_run())
 
@@ -267,7 +268,7 @@ def test_erasure_impact_preview_rejects_ineligible_requests(
     run_async(_run())
 
 
-def test_erasure_impact_preview_marks_unscoped_providers(
+def test_erasure_impact_preview_scopes_every_inventory_provider(
     migrated_session_factory,
 ) -> None:
     async def _run() -> None:
@@ -284,10 +285,11 @@ def test_erasure_impact_preview_marks_unscoped_providers(
                 if entry.impact_scope is ErasureImpactScope.NOT_SCOPED_YET
             ]
 
-            assert unscoped_entries
-            assert all(entry.estimated_rows is None for entry in unscoped_entries)
-            assert set(preview.unscoped_provider_keys) == {
-                entry.provider_key for entry in unscoped_entries
-            }
+            assert unscoped_entries == []
+            assert preview.unscoped_provider_keys == ()
+            assert set(preview.scoped_provider_keys) == set(
+                inventory_erasure_provider_keys()
+            )
+            assert all(entry.estimated_rows is not None for entry in preview.entries)
 
     run_async(_run())

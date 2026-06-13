@@ -4,6 +4,13 @@ from app.privacy.erasures.audit import (
     AuditErasureStatus,
     minimise_audit_events_for_approved_erase_request,
 )
+from app.privacy.erasures.coverage import (
+    ERASURE_COVERAGE_MAP,
+    ErasureCoverageDecision,
+    ErasureCoverageEntry,
+    executable_erasure_provider_keys,
+    inventory_erasure_provider_keys,
+)
 from app.privacy.erasures.execution import (
     ErasureExecutionError,
     ErasureExecutionResult,
@@ -27,6 +34,7 @@ from app.privacy.erasures.orchestrator import (
     ErasureOrchestrationResult,
     ErasureOrchestrationStatus,
     ErasureProviderRunResult,
+    erasure_orchestration_provider_order,
     execute_core_erasure_for_approved_request,
 )
 from app.privacy.erasures.outbox import (
@@ -55,9 +63,12 @@ from app.privacy.erasures.user_profile import (
 )
 
 __all__ = [
+    "ERASURE_COVERAGE_MAP",
     "AuditErasureError",
     "AuditErasureResult",
     "AuditErasureStatus",
+    "ErasureCoverageDecision",
+    "ErasureCoverageEntry",
     "ErasureExecutionError",
     "ErasureExecutionMode",
     "ErasureExecutionResult",
@@ -87,9 +98,12 @@ __all__ = [
     "build_erasure_impact_preview",
     "build_erasure_preview",
     "build_erasure_provider_plan",
+    "executable_erasure_provider_keys",
     "execute_approved_erasure_request_by_staff",
+    "erasure_orchestration_provider_order",
     "execute_core_erasure_for_approved_request",
     "get_erasure_provider_plan_by_key",
+    "inventory_erasure_provider_keys",
     "minimise_audit_events_for_approved_erase_request",
     "scrub_outbox_for_approved_erase_request",
 ]

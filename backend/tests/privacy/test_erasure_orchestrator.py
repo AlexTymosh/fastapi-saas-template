@@ -6,13 +6,21 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
+import app.privacy.erasures.remaining_inventory as remaining_inventory
 from app.audit.models.audit_event import (
     AuditAction,
     AuditCategory,
     AuditEvent,
     AuditTargetType,
 )
+from app.memberships.models.membership import Membership, MembershipRole
+from app.organisations.models.organisation import Organisation
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
+from app.platform.models.platform_staff import (
+    PlatformStaff,
+    PlatformStaffRole,
+    PlatformStaffStatus,
+)
 from app.privacy.erasures.orchestrator import (
     ErasureOrchestrationError,
     ErasureOrchestrationStatus,
@@ -23,10 +31,41 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
 )
+from app.privacy.models.export_artifact import (
+    ExportArtifact,
+    ExportArtifactFormat,
+    ExportArtifactStatus,
+    ExportArtifactStorageBackend,
+)
+from app.privacy.models.privacy_governance import (
+    ConsentRecord,
+    DataProcessingAuthorization,
+    LawfulBasis,
+    PrivacyNoticeAcceptance,
+    ProcessingPurpose,
+    ProcessingPurposeFamily,
+)
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
+
+
+class _RecordingStorageAdapter:
+    def __init__(self) -> None:
+        self.deleted_keys: list[str] = []
+
+    def delete(self, key: str) -> None:
+        self.deleted_keys.append(key)
+
+
+class _FailingStorageAdapter:
+    def delete(self, key: str) -> None:
+        raise RuntimeError(f"delete failed for {key}")
+
+
+class _RollbackSentinel(RuntimeError):
+    pass
 
 
 def _normalise_test_timestamp(value: datetime) -> datetime:
@@ -80,6 +119,144 @@ def _dsr_for_missing_subject() -> DataSubjectRequest:
         reviewed_at=now,
         decided_at=now,
         due_at=now + timedelta(days=30),
+    )
+
+
+def _organisation() -> Organisation:
+    return Organisation(name=f"Organisation {uuid4()}", slug=f"org-{uuid4()}")
+
+
+def _membership(user: User, organisation: Organisation) -> Membership:
+    return Membership(
+        user_id=user.id,
+        organisation_id=organisation.id,
+        role=MembershipRole.MEMBER,
+        is_active=True,
+    )
+
+
+def _platform_staff_for_user(
+    user: User,
+    *,
+    created_by_user_id: UUID | None = None,
+) -> PlatformStaff:
+    return PlatformStaff(
+        user_id=user.id,
+        role=PlatformStaffRole.SUPPORT_AGENT.value,
+        status=PlatformStaffStatus.SUSPENDED.value,
+        created_by_user_id=created_by_user_id,
+        suspended_reason="subject-linked free text",
+    )
+
+
+def _export_artifact(dsr: DataSubjectRequest, user: User) -> ExportArtifact:
+    now = datetime.now(UTC)
+    return ExportArtifact(
+        data_subject_request_id=dsr.id,
+        subject_user_id=user.id,
+        requester_user_id=user.id,
+        requested_by_user_id=user.id,
+        generated_by_user_id=user.id,
+        status=ExportArtifactStatus.FAILED.value,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        storage_key="privacy-exports/object.zip",
+        filename="subject.zip",
+        content_type="application/zip",
+        schema_version="1.0",
+        failure_reason_code="worker_failed",
+        failure_detail="subject-linked failure detail",
+        processing_token="worker-token",
+        processing_lease_expires_at=now + timedelta(minutes=5),
+        queued_at=now,
+        expires_at=now + timedelta(days=30),
+    )
+
+
+def _queued_export_artifact(
+    dsr: DataSubjectRequest,
+    user: User,
+) -> ExportArtifact:
+    now = datetime.now(UTC)
+    return ExportArtifact(
+        data_subject_request_id=dsr.id,
+        subject_user_id=user.id,
+        requester_user_id=user.id,
+        requested_by_user_id=user.id,
+        generated_by_user_id=None,
+        status=ExportArtifactStatus.QUEUED.value,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        schema_version="1.0",
+        queued_at=now,
+        expires_at=now + timedelta(days=30),
+    )
+
+
+def _ready_export_artifact(
+    dsr: DataSubjectRequest,
+    user: User,
+) -> ExportArtifact:
+    now = datetime.now(UTC)
+    return ExportArtifact(
+        data_subject_request_id=dsr.id,
+        subject_user_id=user.id,
+        requester_user_id=user.id,
+        requested_by_user_id=user.id,
+        generated_by_user_id=user.id,
+        status=ExportArtifactStatus.READY.value,
+        format=ExportArtifactFormat.JSON_ZIP.value,
+        storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+        storage_key="privacy-exports/ready.zip",
+        filename="ready.zip",
+        content_type="application/zip",
+        size_bytes=128,
+        checksum_sha256="a" * 64,
+        schema_version="1.0",
+        queued_at=now,
+        completed_at=now,
+        expires_at=now + timedelta(days=30),
+    )
+
+
+def _processing_purpose() -> ProcessingPurpose:
+    return ProcessingPurpose(
+        code=f"privacy-purpose-{uuid4()}",
+        title="Privacy purpose",
+        family=ProcessingPurposeFamily.LEGAL_COMPLIANCE.value,
+        default_lawful_basis=LawfulBasis.LEGAL_OBLIGATION.value,
+        active=True,
+    )
+
+
+def _authorization(
+    user: User,
+    purpose: ProcessingPurpose,
+) -> DataProcessingAuthorization:
+    return DataProcessingAuthorization(
+        subject_user_id=user.id,
+        purpose_id=purpose.id,
+        lawful_basis=LawfulBasis.LEGAL_OBLIGATION.value,
+        active=True,
+        valid_from=datetime.now(UTC),
+        source="signup form",
+    )
+
+
+def _consent(user: User, purpose: ProcessingPurpose) -> ConsentRecord:
+    return ConsentRecord(
+        subject_user_id=user.id,
+        purpose_id=purpose.id,
+        privacy_notice_version="2026-06",
+        withdrawal_reason_code="user_request",
+    )
+
+
+def _notice(user: User) -> PrivacyNoticeAcceptance:
+    return PrivacyNoticeAcceptance(
+        subject_user_id=user.id,
+        notice_version="2026-06",
+        source="web signup",
     )
 
 
@@ -161,7 +338,15 @@ def test_core_erasure_orchestrator_runs_providers_in_safe_order(
                 "audit.minimise_subject_actor_or_target_identifiers",
                 "outbox.purge_or_scrub_payload",
                 "invites.anonymise_or_purge_subject_references",
+                "memberships.minimise_subject_link",
+                "organisations.review_subject_references",
+                "platform_staff.minimise_subject_or_creator_links",
+                "export_artifacts.delete_object_minimise_subject_or_actor_metadata",
+                "privacy_governance.minimise_authorizations",
+                "privacy_governance.minimise_consent_records",
+                "privacy_governance.minimise_notice_acceptances",
                 "users.anonymise_profile",
+                "dsr.minimise_workflow_identifiers",
             )
             assert result.did_mutate is True
             assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
@@ -179,6 +364,535 @@ def test_core_erasure_orchestrator_runs_providers_in_safe_order(
             assert audit_event.metadata_json is None
             assert audit_event.ip_address is None
             assert audit_event.user_agent is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_covers_remaining_inventory_targets(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            subject_email = f"coverage-{uuid4()}@example.com"
+            user = await _create_user(session, email=subject_email)
+            creator = await _create_user(
+                session,
+                email=f"creator-{uuid4()}@example.com",
+            )
+            dsr = _dsr_for_user(user)
+            organisation = _organisation()
+            purpose = _processing_purpose()
+            session.add_all([dsr, organisation, purpose])
+            await session.flush()
+
+            membership = _membership(user, organisation)
+            platform_staff = _platform_staff_for_user(
+                creator,
+                created_by_user_id=user.id,
+            )
+            artifact = _export_artifact(dsr, user)
+            authorization = _authorization(user, purpose)
+            consent = _consent(user, purpose)
+            notice = _notice(user)
+            dsr.requester_note = "subject note"
+            dsr.internal_note = "internal subject note"
+            dsr.idempotency_key_hash = "idempotency-hash"
+            dsr.idempotency_fingerprint = "idempotency-fingerprint"
+            dsr.idempotency_key_expires_at = datetime.now(UTC) + timedelta(hours=1)
+            dsr.export_artifact_id = uuid4()
+            dsr.erasure_job_id = uuid4()
+            session.add_all(
+                [
+                    membership,
+                    platform_staff,
+                    artifact,
+                    authorization,
+                    consent,
+                    notice,
+                ]
+            )
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(session, dsr)
+            await session.refresh(dsr)
+            await session.refresh(user)
+            await session.refresh(membership)
+            await session.refresh(platform_staff)
+            await session.refresh(artifact)
+            await session.refresh(authorization)
+            await session.refresh(consent)
+            await session.refresh(notice)
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert membership.user_id == user.id
+            assert membership.organisation_id == organisation.id
+            assert platform_staff.created_by_user_id is None
+            assert platform_staff.suspended_reason is None
+            assert artifact.subject_user_id is None
+            assert artifact.requester_user_id is None
+            assert artifact.requested_by_user_id is None
+            assert artifact.generated_by_user_id is None
+            assert artifact.status == ExportArtifactStatus.CANCELLED.value
+            assert artifact.failure_reason_code == "subject_erasure_requested"
+            assert artifact.storage_key == "privacy-exports/object.zip"
+            assert artifact.filename is None
+            assert artifact.content_type is None
+            assert artifact.size_bytes is None
+            assert artifact.checksum_sha256 is None
+            assert artifact.failure_detail is None
+            assert artifact.processing_token is None
+            assert artifact.processing_lease_expires_at is None
+            assert authorization.subject_user_id == user.id
+            assert authorization.source is None
+            assert consent.subject_user_id == user.id
+            assert consent.withdrawal_reason_code == "user_request"
+            assert notice.subject_user_id == user.id
+            assert notice.source is None
+            assert dsr.requester_user_id is None
+            assert dsr.subject_user_id is None
+            assert dsr.requester_note is None
+            assert dsr.internal_note is None
+            assert dsr.idempotency_key_hash is None
+            assert dsr.idempotency_fingerprint is None
+            assert dsr.idempotency_key_expires_at is None
+            assert dsr.export_artifact_id is None
+            assert dsr.erasure_job_id is None
+            assert user.email is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_preserves_reviewer_only_dsr_notes(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            reviewer = await _create_user(
+                session,
+                email=f"reviewer-{uuid4()}@example.com",
+            )
+            other_subject = await _create_user(
+                session,
+                email=f"other-subject-{uuid4()}@example.com",
+            )
+            erase_dsr = _dsr_for_user(reviewer)
+            other_dsr = _dsr_for_user(other_subject, request_type="export")
+            other_dsr.reviewer_user_id = reviewer.id
+            other_dsr.requester_note = "other requester note"
+            other_dsr.internal_note = "other internal note"
+            other_dsr.execution_failure_detail = "other failure detail"
+            other_dsr.idempotency_key_hash = "other-idempotency-hash"
+            other_dsr.idempotency_fingerprint = "other-idempotency-fingerprint"
+            other_dsr.idempotency_key_expires_at = datetime.now(UTC) + timedelta(
+                hours=1
+            )
+            other_dsr.export_artifact_id = uuid4()
+            other_dsr.erasure_job_id = uuid4()
+            session.add_all([erase_dsr, other_dsr])
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(
+                session,
+                erase_dsr,
+            )
+            await session.refresh(other_dsr)
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert other_dsr.requester_user_id == other_subject.id
+            assert other_dsr.subject_user_id == other_subject.id
+            assert other_dsr.reviewer_user_id is None
+            assert other_dsr.requester_note == "other requester note"
+            assert other_dsr.internal_note == "other internal note"
+            assert other_dsr.execution_failure_detail == "other failure detail"
+            assert other_dsr.idempotency_key_hash == "other-idempotency-hash"
+            assert other_dsr.idempotency_fingerprint == (
+                "other-idempotency-fingerprint"
+            )
+            assert other_dsr.idempotency_key_expires_at is not None
+            assert other_dsr.export_artifact_id is not None
+            assert other_dsr.erasure_job_id is not None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_cancels_queued_export_artifacts(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            erase_dsr = _dsr_for_user(user)
+            export_dsr = _dsr_for_user(user, request_type="export")
+            export_dsr.execution_status = DataSubjectRequestExecutionStatus.QUEUED.value
+            session.add_all([erase_dsr, export_dsr])
+            await session.flush()
+
+            queued_artifact = _queued_export_artifact(export_dsr, user)
+            session.add(queued_artifact)
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(
+                session,
+                erase_dsr,
+            )
+            await session.refresh(export_dsr)
+            await session.refresh(queued_artifact)
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert queued_artifact.status == ExportArtifactStatus.CANCELLED.value
+            assert queued_artifact.failure_reason_code == "subject_erasure_requested"
+            assert queued_artifact.failure_detail is None
+            assert queued_artifact.subject_user_id is None
+            assert queued_artifact.requester_user_id is None
+            assert queued_artifact.requested_by_user_id is None
+            assert queued_artifact.generated_by_user_id is None
+            assert queued_artifact.processing_token is None
+            assert queued_artifact.processing_lease_expires_at is None
+            assert export_dsr.subject_user_id is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_deletes_ready_export_artifacts(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _RecordingStorageAdapter()
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: storage,
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                user = await _create_user(session)
+                erase_dsr = _dsr_for_user(user)
+                export_dsr = _dsr_for_user(user, request_type="export")
+                export_dsr.execution_status = (
+                    DataSubjectRequestExecutionStatus.READY.value
+                )
+                session.add_all([erase_dsr, export_dsr])
+                await session.flush()
+
+                ready_artifact = _ready_export_artifact(export_dsr, user)
+                session.add(ready_artifact)
+                await session.flush()
+                erase_dsr_id = erase_dsr.id
+                ready_artifact_id = ready_artifact.id
+                export_dsr_id = export_dsr.id
+
+            async with session.begin():
+                managed_erase_dsr = await session.get(
+                    DataSubjectRequest,
+                    erase_dsr_id,
+                )
+                assert managed_erase_dsr is not None
+
+                result = await execute_core_erasure_for_approved_request(
+                    session,
+                    managed_erase_dsr,
+                )
+                assert result.status is ErasureOrchestrationStatus.COMPLETED
+                assert storage.deleted_keys == []
+
+            ready_artifact = await session.get(ExportArtifact, ready_artifact_id)
+            export_dsr = await session.get(DataSubjectRequest, export_dsr_id)
+            assert ready_artifact is not None
+            assert export_dsr is not None
+
+            assert storage.deleted_keys == ["privacy-exports/ready.zip"]
+            assert ready_artifact.status == ExportArtifactStatus.CANCELLED.value
+            assert ready_artifact.failure_reason_code == "subject_erasure_requested"
+            assert ready_artifact.storage_key == "privacy-exports/ready.zip"
+            assert ready_artifact.filename is None
+            assert ready_artifact.content_type is None
+            assert ready_artifact.size_bytes is None
+            assert ready_artifact.checksum_sha256 is None
+            assert ready_artifact.subject_user_id is None
+            assert ready_artifact.requester_user_id is None
+            assert ready_artifact.requested_by_user_id is None
+            assert ready_artifact.generated_by_user_id is None
+            assert export_dsr.subject_user_id is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_preserves_actor_only_ready_export(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _RecordingStorageAdapter()
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: storage,
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            actor = await _create_user(session, email=f"actor-{uuid4()}@example.com")
+            subject = await _create_user(
+                session,
+                email=f"other-subject-{uuid4()}@example.com",
+            )
+            erase_dsr = _dsr_for_user(actor)
+            export_dsr = _dsr_for_user(subject, request_type="export")
+            export_dsr.execution_status = DataSubjectRequestExecutionStatus.READY.value
+            session.add_all([erase_dsr, export_dsr])
+            await session.flush()
+
+            ready_artifact = _ready_export_artifact(export_dsr, subject)
+            ready_artifact.requested_by_user_id = actor.id
+            ready_artifact.generated_by_user_id = actor.id
+            session.add(ready_artifact)
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(
+                session,
+                erase_dsr,
+            )
+            await session.refresh(export_dsr)
+            await session.refresh(ready_artifact)
+
+            assert result.status is ErasureOrchestrationStatus.COMPLETED
+            assert storage.deleted_keys == []
+            assert ready_artifact.status == ExportArtifactStatus.READY.value
+            assert ready_artifact.failure_reason_code is None
+            assert ready_artifact.storage_key == "privacy-exports/ready.zip"
+            assert ready_artifact.filename == "ready.zip"
+            assert ready_artifact.content_type == "application/zip"
+            assert ready_artifact.size_bytes == 128
+            assert ready_artifact.checksum_sha256 == "a" * 64
+            assert ready_artifact.subject_user_id == subject.id
+            assert ready_artifact.requester_user_id == subject.id
+            assert ready_artifact.requested_by_user_id is None
+            assert ready_artifact.generated_by_user_id is None
+            assert export_dsr.subject_user_id == subject.id
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_blocks_actor_only_processing_export(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _RecordingStorageAdapter()
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: storage,
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            actor = await _create_user(session, email=f"actor-{uuid4()}@example.com")
+            subject = await _create_user(
+                session,
+                email=f"other-subject-{uuid4()}@example.com",
+            )
+            erase_dsr = _dsr_for_user(actor)
+            export_dsr = _dsr_for_user(subject, request_type="export")
+            export_dsr.execution_status = (
+                DataSubjectRequestExecutionStatus.PROCESSING.value
+            )
+            session.add_all([erase_dsr, export_dsr])
+            await session.flush()
+
+            processing_artifact = _ready_export_artifact(export_dsr, subject)
+            processing_artifact.status = ExportArtifactStatus.PROCESSING.value
+            processing_artifact.requested_by_user_id = actor.id
+            processing_artifact.generated_by_user_id = actor.id
+            processing_artifact.processing_token = "worker-token"
+            processing_artifact.processing_lease_expires_at = datetime.now(
+                UTC
+            ) + timedelta(minutes=5)
+            session.add(processing_artifact)
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(
+                session,
+                erase_dsr,
+            )
+            await session.refresh(processing_artifact)
+            await session.refresh(erase_dsr)
+
+            assert result.status is ErasureOrchestrationStatus.FAILED
+            assert result.failure_reason_code == (
+                "export_artifact_erasure_processing_active"
+            )
+            assert storage.deleted_keys == []
+            assert processing_artifact.status == (ExportArtifactStatus.PROCESSING.value)
+            assert processing_artifact.storage_key == "privacy-exports/ready.zip"
+            assert processing_artifact.subject_user_id == subject.id
+            assert processing_artifact.requester_user_id == subject.id
+            assert processing_artifact.requested_by_user_id == actor.id
+            assert processing_artifact.generated_by_user_id == actor.id
+            assert processing_artifact.processing_token == "worker-token"
+            assert processing_artifact.processing_lease_expires_at is not None
+            assert erase_dsr.execution_status == (
+                DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert erase_dsr.execution_failure_reason_code == (
+                "export_artifact_erasure_processing_active"
+            )
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_does_not_delete_export_object_on_rollback(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _RecordingStorageAdapter()
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: storage,
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                user = await _create_user(session)
+                erase_dsr = _dsr_for_user(user)
+                export_dsr = _dsr_for_user(user, request_type="export")
+                export_dsr.execution_status = (
+                    DataSubjectRequestExecutionStatus.READY.value
+                )
+                session.add_all([erase_dsr, export_dsr])
+                await session.flush()
+
+                ready_artifact = _ready_export_artifact(export_dsr, user)
+                session.add(ready_artifact)
+                await session.flush()
+                erase_dsr_id = erase_dsr.id
+                ready_artifact_id = ready_artifact.id
+
+            with pytest.raises(_RollbackSentinel):
+                async with session.begin():
+                    managed_erase_dsr = await session.get(
+                        DataSubjectRequest,
+                        erase_dsr_id,
+                    )
+                    assert managed_erase_dsr is not None
+
+                    result = await execute_core_erasure_for_approved_request(
+                        session,
+                        managed_erase_dsr,
+                    )
+                    assert result.status is ErasureOrchestrationStatus.COMPLETED
+                    assert storage.deleted_keys == []
+                    raise _RollbackSentinel
+
+            ready_artifact = await session.get(ExportArtifact, ready_artifact_id)
+            assert ready_artifact is not None
+            assert storage.deleted_keys == []
+            assert ready_artifact.status == ExportArtifactStatus.READY.value
+            assert ready_artifact.storage_key == "privacy-exports/ready.zip"
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_preserves_retry_when_deferred_delete_fails(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: _FailingStorageAdapter(),
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                user = await _create_user(session)
+                erase_dsr = _dsr_for_user(user)
+                export_dsr = _dsr_for_user(user, request_type="export")
+                export_dsr.execution_status = (
+                    DataSubjectRequestExecutionStatus.READY.value
+                )
+                session.add_all([erase_dsr, export_dsr])
+                await session.flush()
+
+                ready_artifact = _ready_export_artifact(export_dsr, user)
+                session.add(ready_artifact)
+                await session.flush()
+                erase_dsr_id = erase_dsr.id
+                ready_artifact_id = ready_artifact.id
+
+            async with session.begin():
+                managed_erase_dsr = await session.get(
+                    DataSubjectRequest,
+                    erase_dsr_id,
+                )
+                assert managed_erase_dsr is not None
+
+                result = await execute_core_erasure_for_approved_request(
+                    session,
+                    managed_erase_dsr,
+                )
+                assert result.status is ErasureOrchestrationStatus.COMPLETED
+
+            ready_artifact = await session.get(ExportArtifact, ready_artifact_id)
+            assert ready_artifact is not None
+            assert ready_artifact.status == ExportArtifactStatus.CANCELLED.value
+            assert ready_artifact.storage_key == "privacy-exports/ready.zip"
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_marks_failed_export_purge_retryable(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        remaining_inventory,
+        "_build_export_storage_adapter",
+        lambda backend: _FailingStorageAdapter(),
+    )
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                user = await _create_user(session)
+                erase_dsr = _dsr_for_user(user)
+                export_dsr = _dsr_for_user(user, request_type="export")
+                export_dsr.execution_status = (
+                    DataSubjectRequestExecutionStatus.FAILED.value
+                )
+                session.add_all([erase_dsr, export_dsr])
+                await session.flush()
+
+                failed_artifact = _export_artifact(export_dsr, user)
+                session.add(failed_artifact)
+                await session.flush()
+                erase_dsr_id = erase_dsr.id
+                failed_artifact_id = failed_artifact.id
+
+            async with session.begin():
+                managed_erase_dsr = await session.get(
+                    DataSubjectRequest,
+                    erase_dsr_id,
+                )
+                assert managed_erase_dsr is not None
+
+                result = await execute_core_erasure_for_approved_request(
+                    session,
+                    managed_erase_dsr,
+                )
+                assert result.status is ErasureOrchestrationStatus.COMPLETED
+
+            failed_artifact = await session.get(ExportArtifact, failed_artifact_id)
+            assert failed_artifact is not None
+            assert failed_artifact.status == ExportArtifactStatus.CANCELLED.value
+            assert failed_artifact.failure_reason_code == ("subject_erasure_requested")
+            assert failed_artifact.storage_key == "privacy-exports/object.zip"
+            assert failed_artifact.filename is None
+            assert failed_artifact.content_type is None
+            assert failed_artifact.failure_detail is None
 
     run_async(_run())
 
@@ -287,6 +1001,76 @@ def test_core_erasure_orchestrator_is_idempotent_after_ready(
             assert result.provider_results == ()
             assert result.did_mutate is False
             assert result.failure_reason_code is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_short_circuits_fulfilled_ready_request(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            dsr = _dsr_for_user(
+                user,
+                status=DataSubjectRequestStatus.FULFILLED.value,
+            )
+            dsr.requester_user_id = None
+            dsr.subject_user_id = None
+            dsr.reviewer_user_id = None
+            dsr.fulfilled_at = datetime.now(UTC)
+            dsr.execution_status = DataSubjectRequestExecutionStatus.READY.value
+            dsr.execution_completed_at = datetime.now(UTC)
+            session.add(dsr)
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(session, dsr)
+            await session.refresh(dsr)
+
+            assert result.status is ErasureOrchestrationStatus.ALREADY_COMPLETED
+            assert result.subject_user_id is None
+            assert result.provider_results == ()
+            assert result.did_mutate is False
+            assert result.failure_reason_code is None
+            assert dsr.status == DataSubjectRequestStatus.FULFILLED.value
+            assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
+            assert dsr.requester_user_id is None
+            assert dsr.subject_user_id is None
+            assert dsr.reviewer_user_id is None
+
+    run_async(_run())
+
+
+def test_core_erasure_orchestrator_is_idempotent_after_dsr_minimisation(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            dsr = _dsr_for_user(user)
+            session.add(dsr)
+            await session.flush()
+
+            first_result = await execute_core_erasure_for_approved_request(session, dsr)
+            await session.refresh(dsr)
+
+            assert first_result.status is ErasureOrchestrationStatus.COMPLETED
+            assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
+            assert dsr.subject_user_id is None
+
+            second_result = await execute_core_erasure_for_approved_request(
+                session,
+                dsr,
+            )
+            await session.refresh(dsr)
+
+            assert second_result.status is ErasureOrchestrationStatus.ALREADY_COMPLETED
+            assert second_result.subject_user_id is None
+            assert second_result.provider_results == ()
+            assert second_result.did_mutate is False
+            assert second_result.failure_reason_code is None
+            assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
+            assert dsr.execution_failure_reason_code is None
 
     run_async(_run())
 

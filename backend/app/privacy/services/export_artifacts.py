@@ -19,6 +19,7 @@ from app.core.errors import ConflictError, NotFoundError
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
 from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
     DataSubjectRequestType,
@@ -140,12 +141,17 @@ class ExportArtifactService:
         if not self.settings.privacy_exports.enabled:
             raise ConflictError(detail="Privacy export artifacts are disabled")
 
+    @staticmethod
+    def _has_export_dsr_participant_links(dsr: DataSubjectRequest) -> bool:
+        return dsr.subject_user_id is not None and dsr.requester_user_id is not None
+
     async def _ensure_download_dsr_is_still_eligible(
         self, artifact: ExportArtifact
     ) -> None:
         dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
         if (
             dsr is None
+            or not self._has_export_dsr_participant_links(dsr)
             or dsr.request_type != DataSubjectRequestType.EXPORT.value
             or dsr.status not in _DOWNLOAD_ELIGIBLE_DSR_STATUSES
         ):
@@ -327,6 +333,7 @@ class ExportArtifactService:
         if (
             dsr.request_type != DataSubjectRequestType.EXPORT.value
             or dsr.status != DataSubjectRequestStatus.APPROVED.value
+            or not self._has_export_dsr_participant_links(dsr)
         ):
             raise ConflictError(
                 detail=(
@@ -579,6 +586,7 @@ class ExportArtifactService:
         if (
             dsr.request_type != DataSubjectRequestType.EXPORT.value
             or dsr.status != DataSubjectRequestStatus.APPROVED.value
+            or not self._has_export_dsr_participant_links(dsr)
         ):
             raise ValueError("dsr_not_export_eligible")
 
@@ -710,20 +718,47 @@ class ExportArtifactService:
     ) -> int:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
-        candidates = await self.repo.list_expired_ready(now=now_value, limit=limit)
-        return len(candidates)
+
+        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
+            limit=limit,
+        )
+        remaining_limit = limit - len(cancelled_erasure)
+        if remaining_limit <= 0:
+            return len(cancelled_erasure)
+
+        expired_ready = await self.repo.list_expired_ready(
+            now=now_value,
+            limit=remaining_limit,
+        )
+        return len(cancelled_erasure) + len(expired_ready)
 
     async def mark_expired_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
     ) -> int:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
-        candidates = await self.repo.list_expired_ready(now=now_value, limit=limit)
-        expired = 0
-        for artifact in candidates:
+
+        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
+            limit=limit,
+        )
+        processed = 0
+        for artifact in cancelled_erasure:
+            self._purge_export_artifact_storage_object(artifact)
+            await self.repo.save(artifact)
+            processed += 1
+
+        remaining_limit = limit - processed
+        if remaining_limit <= 0:
+            return processed
+
+        expired_ready = await self.repo.list_expired_ready(
+            now=now_value,
+            limit=remaining_limit,
+        )
+        for artifact in expired_ready:
             self._purge_export_artifact_storage_object(artifact)
             expired_artifact = await self.repo.mark_expired(artifact)
-            expired += 1
+            processed += 1
             (
                 execution_status,
                 event_at,
@@ -742,7 +777,8 @@ class ExportArtifactService:
                 AuditAction.EXPORT_ARTIFACT_EXPIRED,
                 expired_artifact,
             )
-        return expired
+
+        return processed
 
     @staticmethod
     def _validate_positive_limit(limit: int) -> None:

@@ -360,7 +360,10 @@ class DataSubjectRequestService:
             return await self._transition_status(
                 request_id=request.id,
                 target_status=DataSubjectRequestStatus.FULFILLED,
-                reviewer_user_id=executor_user_id,
+                reviewer_user_id=self._fulfilment_reviewer_user_id(
+                    request,
+                    executor_user_id,
+                ),
                 audit_context=audit_context,
                 execution_verified=True,
             )
@@ -430,10 +433,14 @@ class DataSubjectRequestService:
         if request.status != DataSubjectRequestStatus.APPROVED.value:
             raise ConflictError(detail="Only approved requests can be fulfilled")
         await self._ensure_execution_ready_for_fulfilment(request)
+        fulfilment_reviewer_user_id = self._fulfilment_reviewer_user_id(
+            request,
+            reviewer_user_id,
+        )
         return await self._transition_status(
             request_id=request_id,
             target_status=DataSubjectRequestStatus.FULFILLED,
-            reviewer_user_id=reviewer_user_id,
+            reviewer_user_id=fulfilment_reviewer_user_id,
             audit_context=audit_context,
             execution_verified=True,
         )
@@ -482,6 +489,16 @@ class DataSubjectRequestService:
                 "before fulfilment"
             )
         )
+
+    @staticmethod
+    def _fulfilment_reviewer_user_id(
+        request: DataSubjectRequest,
+        reviewer_user_id: UUID,
+    ) -> UUID | None:
+        if request.request_type == DataSubjectRequestType.ERASE.value:
+            return None
+
+        return reviewer_user_id
 
     @staticmethod
     def _is_ready_approved_erasure_request(request: DataSubjectRequest) -> bool:

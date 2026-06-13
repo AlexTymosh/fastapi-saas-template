@@ -21,6 +21,15 @@ from app.privacy.erasures.outbox import (
     OutboxErasureError,
     scrub_outbox_for_approved_erase_request,
 )
+from app.privacy.erasures.remaining_inventory import (
+    RemainingInventoryErasureError,
+    apply_membership_erasure_policy,
+    apply_organisation_erasure_policy,
+    minimise_dsr_workflow_for_approved_erase_request,
+    minimise_export_artifacts_for_approved_erase_request,
+    minimise_platform_staff_for_approved_erase_request,
+    minimise_privacy_governance_for_approved_erase_request,
+)
 from app.privacy.erasures.user_profile import (
     UserProfileErasureError,
     anonymise_user_profile_for_approved_erase_request,
@@ -37,12 +46,36 @@ _AUDIT_PROVIDER_KEY = "audit.minimise_subject_actor_or_target_identifiers"
 _OUTBOX_PROVIDER_KEY = "outbox.purge_or_scrub_payload"
 _INVITES_PROVIDER_KEY = "invites.anonymise_or_purge_subject_references"
 _USERS_PROVIDER_KEY = "users.anonymise_profile"
+_MEMBERSHIPS_PROVIDER_KEY = "memberships.minimise_subject_link"
+_ORGANISATIONS_PROVIDER_KEY = "organisations.review_subject_references"
+_PLATFORM_STAFF_PROVIDER_KEY = "platform_staff.minimise_subject_or_creator_links"
+_EXPORT_ARTIFACTS_PROVIDER_KEY = (
+    "export_artifacts.delete_object_minimise_subject_or_actor_metadata"
+)
+_PRIVACY_AUTHORIZATIONS_PROVIDER_KEY = "privacy_governance.minimise_authorizations"
+_PRIVACY_CONSENTS_PROVIDER_KEY = "privacy_governance.minimise_consent_records"
+_PRIVACY_NOTICES_PROVIDER_KEY = "privacy_governance.minimise_notice_acceptances"
+_DSR_PROVIDER_KEY = "dsr.minimise_workflow_identifiers"
 _PROVIDER_ORDER = (
     _AUDIT_PROVIDER_KEY,
     _OUTBOX_PROVIDER_KEY,
     _INVITES_PROVIDER_KEY,
+    _MEMBERSHIPS_PROVIDER_KEY,
+    _ORGANISATIONS_PROVIDER_KEY,
+    _PLATFORM_STAFF_PROVIDER_KEY,
+    _EXPORT_ARTIFACTS_PROVIDER_KEY,
+    _PRIVACY_AUTHORIZATIONS_PROVIDER_KEY,
+    _PRIVACY_CONSENTS_PROVIDER_KEY,
+    _PRIVACY_NOTICES_PROVIDER_KEY,
     _USERS_PROVIDER_KEY,
+    _DSR_PROVIDER_KEY,
 )
+
+
+def erasure_orchestration_provider_order() -> tuple[str, ...]:
+    return _PROVIDER_ORDER
+
+
 _GENERIC_FAILURE_REASON_CODE = "erasure_orchestration_failed"
 _ALREADY_PROCESSING_REASON_CODE = "erasure_orchestration_already_processing"
 
@@ -76,7 +109,7 @@ class ErasureProviderRunResult:
 @dataclass(frozen=True, slots=True)
 class ErasureOrchestrationResult:
     request_id: UUID
-    subject_user_id: UUID
+    subject_user_id: UUID | None
     status: ErasureOrchestrationStatus
     provider_results: tuple[ErasureProviderRunResult, ...]
     completed_at: datetime
@@ -121,12 +154,13 @@ async def execute_core_erasure_for_approved_request(
     if _execution_status(locked_request) is DataSubjectRequestExecutionStatus.READY:
         return ErasureOrchestrationResult(
             request_id=locked_request.id,
-            subject_user_id=_subject_user_id(locked_request),
+            subject_user_id=locked_request.subject_user_id,
             status=ErasureOrchestrationStatus.ALREADY_COMPLETED,
             provider_results=(),
             completed_at=reference_now,
         )
 
+    subject_user_id = _subject_user_id(locked_request)
     _mark_processing(locked_request, now=reference_now)
     await session.flush()
 
@@ -137,6 +171,7 @@ async def execute_core_erasure_for_approved_request(
                 session,
                 locked_request,
                 snapshot=snapshot,
+                subject_user_id=subject_user_id,
                 now=reference_now,
             )
     except _PROVIDER_ERRORS as exc:
@@ -148,7 +183,8 @@ async def execute_core_erasure_for_approved_request(
             now=reference_now,
         )
         return _failed_result(
-            request=locked_request,
+            request_id=locked_request.id,
+            subject_user_id=subject_user_id,
             reason_code=reason_code,
             completed_at=reference_now,
         )
@@ -160,7 +196,8 @@ async def execute_core_erasure_for_approved_request(
             now=reference_now,
         )
         return _failed_result(
-            request=locked_request,
+            request_id=locked_request.id,
+            subject_user_id=subject_user_id,
             reason_code=_GENERIC_FAILURE_REASON_CODE,
             completed_at=reference_now,
         )
@@ -169,7 +206,7 @@ async def execute_core_erasure_for_approved_request(
     await session.flush()
     return ErasureOrchestrationResult(
         request_id=locked_request.id,
-        subject_user_id=_subject_user_id(locked_request),
+        subject_user_id=subject_user_id,
         status=ErasureOrchestrationStatus.COMPLETED,
         provider_results=provider_results,
         completed_at=reference_now,
@@ -191,17 +228,19 @@ async def _lock_and_validate_request(
         raise ErasureOrchestrationError("erasure_orchestration_request_not_found")
     if locked_request.request_type != DataSubjectRequestType.ERASE.value:
         raise ErasureOrchestrationError("erasure_orchestration_requires_erase_request")
+
+    execution_status = _execution_status(locked_request)
+    if execution_status is DataSubjectRequestExecutionStatus.READY:
+        return locked_request
+
     if locked_request.status != DataSubjectRequestStatus.APPROVED.value:
         raise ErasureOrchestrationError(
             "erasure_orchestration_requires_approved_request"
         )
+    if execution_status is DataSubjectRequestExecutionStatus.PROCESSING:
+        raise ErasureOrchestrationError(_ALREADY_PROCESSING_REASON_CODE)
     if locked_request.subject_user_id is None:
         raise ErasureOrchestrationError("erasure_orchestration_requires_subject_user")
-    if (
-        _execution_status(locked_request)
-        is DataSubjectRequestExecutionStatus.PROCESSING
-    ):
-        raise ErasureOrchestrationError(_ALREADY_PROCESSING_REASON_CODE)
     return locked_request
 
 
@@ -255,6 +294,7 @@ async def _run_core_providers(
     request: DataSubjectRequest,
     *,
     snapshot: _ErasureSnapshot,
+    subject_user_id: UUID,
     now: datetime,
 ) -> tuple[ErasureProviderRunResult, ...]:
     audit_result = await minimise_audit_events_for_approved_erase_request(
@@ -275,36 +315,69 @@ async def _run_core_providers(
         subject_email=snapshot.subject_email,
         now=now,
     )
+    membership_result = await apply_membership_erasure_policy(
+        session,
+        request,
+        subject_user_id=subject_user_id,
+        now=now,
+    )
+    organisation_result = await apply_organisation_erasure_policy(
+        session,
+        request,
+        subject_user_id=subject_user_id,
+        now=now,
+    )
+    platform_staff_result = await minimise_platform_staff_for_approved_erase_request(
+        session,
+        request,
+        subject_user_id=subject_user_id,
+        now=now,
+    )
+    export_artifact_result = await minimise_export_artifacts_for_approved_erase_request(
+        session,
+        request,
+        subject_user_id=subject_user_id,
+        now=now,
+    )
+    privacy_governance_results = (
+        await minimise_privacy_governance_for_approved_erase_request(
+            session,
+            request,
+            subject_user_id=subject_user_id,
+            now=now,
+        )
+    )
     user_result = await anonymise_user_profile_for_approved_erase_request(
         session,
         request,
         now=now,
     )
-    return (
+    dsr_result = await minimise_dsr_workflow_for_approved_erase_request(
+        session,
+        request,
+        subject_user_id=subject_user_id,
+        now=now,
+    )
+    provider_results = (
+        audit_result,
+        outbox_result,
+        invite_result,
+        membership_result,
+        organisation_result,
+        platform_staff_result,
+        export_artifact_result,
+        *privacy_governance_results,
+        user_result,
+        dsr_result,
+    )
+    return tuple(
         _provider_result(
-            provider_key=audit_result.provider_key,
-            table_name=audit_result.table_name,
-            affected_rows=audit_result.affected_rows,
-            changed_fields=audit_result.changed_fields,
-        ),
-        _provider_result(
-            provider_key=outbox_result.provider_key,
-            table_name=outbox_result.table_name,
-            affected_rows=outbox_result.affected_rows,
-            changed_fields=outbox_result.changed_fields,
-        ),
-        _provider_result(
-            provider_key=invite_result.provider_key,
-            table_name=invite_result.table_name,
-            affected_rows=invite_result.affected_rows,
-            changed_fields=invite_result.changed_fields,
-        ),
-        _provider_result(
-            provider_key=user_result.provider_key,
-            table_name=user_result.table_name,
-            affected_rows=user_result.affected_rows,
-            changed_fields=user_result.changed_fields,
-        ),
+            provider_key=result.provider_key,
+            table_name=result.table_name,
+            affected_rows=result.affected_rows,
+            changed_fields=result.changed_fields,
+        )
+        for result in provider_results
     )
 
 
@@ -313,6 +386,7 @@ _PROVIDER_ERRORS = (
     InviteErasureError,
     OutboxErasureError,
     UserProfileErasureError,
+    RemainingInventoryErasureError,
     ErasureOrchestrationError,
 )
 
@@ -334,13 +408,14 @@ def _provider_result(
 
 def _failed_result(
     *,
-    request: DataSubjectRequest,
+    request_id: UUID,
+    subject_user_id: UUID,
     reason_code: str,
     completed_at: datetime,
 ) -> ErasureOrchestrationResult:
     return ErasureOrchestrationResult(
-        request_id=request.id,
-        subject_user_id=_subject_user_id(request),
+        request_id=request_id,
+        subject_user_id=subject_user_id,
         status=ErasureOrchestrationStatus.FAILED,
         provider_results=(),
         completed_at=completed_at,

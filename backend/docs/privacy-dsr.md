@@ -3,9 +3,9 @@
 ## Current implemented scope
 
 The current implementation provides a backend Data Subject Rights workflow for
-large parts of the personal-data stores currently present in the SaaS template.
-It should not yet be described as complete for erasure across every inventoried
-store.
+the personal-data stores currently present in the SaaS template. Runtime erasure
+coverage now matches the declared privacy inventory through executable
+minimisation providers plus explicit retain/manual-review policy entries.
 
 Implemented areas:
 
@@ -21,24 +21,31 @@ Implemented areas:
   command.
 - S3-compatible export artifact storage for staging/production.
 - Cross-table subject export providers for the current privacy inventory scope.
-- Erasure provider planning and preview.
-- Executable erasure providers for audit, outbox, invites and user profile.
-- Platform erasure execution API for the currently executable providers.
+- Erasure provider planning, preview and inventory-aligned coverage contracts.
+- Executable erasure providers for audit, outbox, invites, platform staff,
+  export-artifact metadata, privacy-governance source-field minimisation, DSR
+  workflow metadata and user profile.
+- Explicit retain/manual-review policy entries for membership and organisation
+  records where automatic mutation would break tenant or compliance integrity.
+- Platform erasure execution API for the current inventory-aligned workflow.
 - Audit minimisation before destructive erasure providers run.
 - Self-erasure execution rejection before provider orchestration.
 - Automatic fulfilment after successful approved erase execution.
 - Export artifact retention runner that removes expired archive objects from
   storage and clears storage metadata.
-- Contract tests for privacy inventory, export provider keys and platform
-  permissions.
+- Contract tests for privacy inventory, export provider keys, erasure coverage
+  and platform permissions.
 
-Known erasure limitation:
+Known erasure posture:
 
-- Executable erasure coverage does not yet match every erasure target declared in
-  the privacy inventory.
-- Membership, organisation, platform staff, DSR/export-artifact and
-  privacy-governance subject references still need executable providers or
-  explicit manual-review/retention rules before issue #328 can be closed.
+- Runtime erasure coverage now matches the declared privacy inventory through a
+  mix of executable minimisation providers and explicit retain/manual-review
+  policy entries.
+- Membership rows are retained by policy because deleting or re-parenting them
+  would break tenant relationship integrity; direct identifiers are removed by
+  the user-profile provider.
+- Organisation rows are tenant-owned and retained with explicit manual-review
+  policy for subject-related operational fields.
 
 ## User API
 
@@ -192,20 +199,33 @@ Current executable behaviour:
   - audit minimisation;
   - outbox payload scrubbing;
   - invite anonymisation/minimisation;
-  - user profile anonymisation.
+  - membership retain-by-policy evidence;
+  - organisation manual-review policy evidence;
+  - platform staff minimisation;
+  - export-artifact metadata minimisation;
+  - privacy-governance minimisation/retention policy;
+  - user profile anonymisation;
+  - DSR workflow metadata minimisation.
 - Successful erasure writes execution audit evidence and automatically fulfils
   the DSR.
 - Failed provider execution records failed execution state and does not fulfil
   the DSR.
 
-Current erasure gaps:
+Current erasure coverage:
 
-- Membership subject links are not yet handled by executable erasure.
-- Organisation subject references are not yet handled by executable erasure.
-- Platform staff subject references are not yet handled by executable erasure.
-- DSR/export-artifact subject references are not yet handled by executable
-  erasure.
-- Privacy-governance subject records are not yet handled by executable erasure.
+- Membership subject links are retained by explicit policy while the linked user
+  profile is anonymised.
+- Organisation subject references are handled through explicit tenant-owned
+  manual-review policy.
+- Platform staff creator links and free-text suspension context are minimised
+  where nullable.
+- DSR workflow links, notes and idempotency metadata are minimised after the
+  execution result has snapshotted the subject id.
+- Export-artifact subject/actor links, worker lease metadata and failure details
+  are minimised; binary object deletion remains governed by export-artifact
+  retention.
+- Privacy-governance source fields are minimised while lawful-basis, consent and
+  notice evidence is retained.
 
 ## Retention
 
@@ -229,7 +249,9 @@ The runner:
 
 ## Follow-up work
 
-The #328 backend workflow is materially advanced but not yet closable because
+The #328 backend workflow is materially advanced and has inventory-aligned
+runtime/policy erasure coverage. It still needs the final closure-review issue
+before the parent issue is closed because
 executable erasure coverage does not match the declared inventory.
 
 Closure blockers:
