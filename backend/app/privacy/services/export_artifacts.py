@@ -710,28 +710,43 @@ class ExportArtifactService:
     ) -> int:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
-        expired_ready = await self.repo.list_expired_ready(
-            now=now_value,
+
+        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
             limit=limit,
         )
-        remaining_limit = limit - len(expired_ready)
+        remaining_limit = limit - len(cancelled_erasure)
         if remaining_limit <= 0:
-            return len(expired_ready)
-        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
+            return len(cancelled_erasure)
+
+        expired_ready = await self.repo.list_expired_ready(
+            now=now_value,
             limit=remaining_limit,
         )
-        return len(expired_ready) + len(cancelled_erasure)
+        return len(cancelled_erasure) + len(expired_ready)
 
     async def mark_expired_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
     ) -> int:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
-        expired_ready = await self.repo.list_expired_ready(
-            now=now_value,
+
+        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
             limit=limit,
         )
         processed = 0
+        for artifact in cancelled_erasure:
+            self._purge_export_artifact_storage_object(artifact)
+            await self.repo.save(artifact)
+            processed += 1
+
+        remaining_limit = limit - processed
+        if remaining_limit <= 0:
+            return processed
+
+        expired_ready = await self.repo.list_expired_ready(
+            now=now_value,
+            limit=remaining_limit,
+        )
         for artifact in expired_ready:
             self._purge_export_artifact_storage_object(artifact)
             expired_artifact = await self.repo.mark_expired(artifact)
@@ -754,18 +769,6 @@ class ExportArtifactService:
                 AuditAction.EXPORT_ARTIFACT_EXPIRED,
                 expired_artifact,
             )
-
-        remaining_limit = limit - processed
-        if remaining_limit <= 0:
-            return processed
-
-        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
-            limit=remaining_limit,
-        )
-        for artifact in cancelled_erasure:
-            self._purge_export_artifact_storage_object(artifact)
-            await self.repo.save(artifact)
-            processed += 1
 
         return processed
 

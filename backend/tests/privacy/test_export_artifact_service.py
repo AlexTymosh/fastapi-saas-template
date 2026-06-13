@@ -836,6 +836,86 @@ def test_generate_download_url_clamps_ttl_to_artifact_remaining_lifetime(
     run_async(_run())
 
 
+def test_mark_expired_artifacts_prioritizes_cancelled_erasure_retry(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+
+            retry_artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            retry_key = f"exports/{retry_artifact.id}/subject-erasure.zip"
+            service.storage.put_bytes(
+                retry_key,
+                b"retry-payload",
+                "application/zip",
+            )
+            retry_artifact.status = ExportArtifactStatus.CANCELLED.value
+            retry_artifact.failure_reason_code = "subject_erasure_requested"
+            retry_artifact.storage_key = retry_key
+            retry_artifact.filename = "subject-erasure.zip"
+            retry_artifact.content_type = "application/zip"
+            retry_artifact.size_bytes = 13
+            retry_artifact.checksum_sha256 = "1" * 64
+            retry_artifact.subject_user_id = None
+            retry_artifact.requester_user_id = None
+            retry_artifact.requested_by_user_id = None
+            retry_artifact.generated_by_user_id = None
+            await service.repo.save(retry_artifact)
+
+            routine_artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            expired_at = datetime.now(UTC) - timedelta(seconds=1)
+            routine_key = f"exports/{routine_artifact.id}/routine.zip"
+            service.storage.put_bytes(
+                routine_key,
+                b"routine-payload",
+                "application/zip",
+            )
+            routine_artifact.status = ExportArtifactStatus.READY.value
+            routine_artifact.storage_key = routine_key
+            routine_artifact.filename = "routine.zip"
+            routine_artifact.content_type = "application/zip"
+            routine_artifact.size_bytes = 15
+            routine_artifact.checksum_sha256 = "2" * 64
+            routine_artifact.completed_at = expired_at - timedelta(minutes=1)
+            routine_artifact.expires_at = expired_at
+            await service.repo.save(routine_artifact)
+
+            processed = await service.mark_expired_artifacts(
+                now=datetime.now(UTC),
+                limit=1,
+            )
+            persisted_retry = await service.repo.get_by_id(retry_artifact.id)
+            persisted_routine = await service.repo.get_by_id(routine_artifact.id)
+
+            assert processed == 1
+            assert persisted_retry is not None
+            assert persisted_retry.status == ExportArtifactStatus.CANCELLED.value
+            assert persisted_retry.storage_key is None
+            assert persisted_retry.filename is None
+            assert not service.storage.exists(retry_key)
+
+            assert persisted_routine is not None
+            assert persisted_routine.status == ExportArtifactStatus.READY.value
+            assert persisted_routine.storage_key == routine_key
+            assert service.storage.exists(routine_key)
+
+    run_async(_run())
+
+
 def test_mark_expired_artifacts_retries_cancelled_erasure_storage_purge(
     migrated_session_factory,
 ) -> None:
