@@ -85,8 +85,9 @@ ERASURE_COVERAGE_MAP: dict[str, ErasureCoverageEntry] = {
         table_name="data_subject_requests",
         decision=ErasureCoverageDecision.EXECUTABLE,
         rationale=(
-            "DSR lifecycle evidence is retained while subject/requester/reviewer links "
-            "and unsafe notes/idempotency metadata are minimised."
+            "DSR lifecycle evidence is retained. Subject/requester-owned rows "
+            "minimise workflow links plus unsafe notes/idempotency metadata; "
+            "reviewer-only rows minimise only the reviewer link."
         ),
     ),
     "export_artifacts.delete_object_minimise_subject_or_actor_metadata": (
@@ -98,12 +99,12 @@ ERASURE_COVERAGE_MAP: dict[str, ErasureCoverageEntry] = {
             decision=ErasureCoverageDecision.EXECUTABLE,
             rationale=(
                 "Subject-owned export objects are deleted after erasure DB "
-                "changes commit. Downloadable subject-owned artifacts are "
-                "cancelled first and retain storage keys as non-downloadable "
-                "retry markers until cleanup confirms object deletion. "
-                "Non-processing actor identifier links are minimised without "
-                "deleting other subjects' artifacts; processing actor-linked "
-                "artifacts block erasure until the worker lease completes."
+                "changes commit. Subject-owned artifacts with storage keys are "
+                "marked as non-downloadable retry candidates until cleanup "
+                "confirms object deletion. Non-processing actor identifier "
+                "links are minimised without deleting other subjects' artifacts; "
+                "processing actor-linked artifacts block erasure until the "
+                "worker lease completes."
             ),
         )
     ),

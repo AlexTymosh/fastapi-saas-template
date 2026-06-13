@@ -190,14 +190,13 @@ async def minimise_export_artifacts_for_approved_erase_request(
     """Defer object deletion and minimise export artifact metadata.
 
     Any processing artifact that references the erasure subject is rejected to
-    avoid racing an active worker lease. Queued and ready subject-owned
-    artifacts are moved out of claimable/downloadable states before DSR links
+    avoid racing an active worker lease. Subject-owned artifacts with stored
+    objects are marked as non-downloadable retry candidates before DSR links
     are cleared. Stored subject export objects are deleted only after the DB
     transaction commits, so rollback cannot leave READY rows pointing at
-    deleted objects. The storage key is retained as a non-downloadable retry
-    marker until a later cleanup can confirm the object was purged. Actor-only
-    non-processing references are minimised without deleting another subject's
-    export object.
+    deleted objects. The storage key is retained as a retry marker until a
+    later cleanup can confirm the object was purged. Actor-only non-processing
+    references are minimised without deleting another subject's export object.
     """
 
     subject_id = _validate_request(request, subject_user_id=subject_user_id)
@@ -669,10 +668,11 @@ def _minimise_export_artifact_rows(
             row,
             subject_user_id=subject_user_id,
         )
-        if (
-            is_subject_owned_artifact
-            and row.status in _CANCELLED_EXPORT_ERASURE_STATUSES
-        ):
+        should_mark_retryable = is_subject_owned_artifact and (
+            row.storage_key is not None
+            or row.status in _CANCELLED_EXPORT_ERASURE_STATUSES
+        )
+        if should_mark_retryable:
             _set_if_changed(
                 row,
                 "status",
@@ -727,18 +727,23 @@ def _minimise_dsr_rows(
     changed_fields: set[str] = set()
     for row in rows:
         row_changed_fields: list[str] = []
+        is_subject_or_requester_row = (
+            row.requester_user_id == subject_user_id
+            or row.subject_user_id == subject_user_id
+        )
         for field_name in ("requester_user_id", "subject_user_id", "reviewer_user_id"):
             if getattr(row, field_name) == subject_user_id:
                 _set_if_changed(row, field_name, None, row_changed_fields)
-        for field_name in (
-            "requester_note",
-            "internal_note",
-            "execution_failure_detail",
-            "idempotency_key_hash",
-            "idempotency_fingerprint",
-            "idempotency_key_expires_at",
-        ):
-            _set_if_changed(row, field_name, None, row_changed_fields)
+        if is_subject_or_requester_row:
+            for field_name in (
+                "requester_note",
+                "internal_note",
+                "execution_failure_detail",
+                "idempotency_key_hash",
+                "idempotency_fingerprint",
+                "idempotency_key_expires_at",
+            ):
+                _set_if_changed(row, field_name, None, row_changed_fields)
         if row_changed_fields:
             affected_rows += 1
             changed_fields.update(row_changed_fields)
