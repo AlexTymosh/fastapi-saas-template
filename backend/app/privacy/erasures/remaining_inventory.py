@@ -742,6 +742,8 @@ def _minimise_dsr_rows(
                 "idempotency_key_hash",
                 "idempotency_fingerprint",
                 "idempotency_key_expires_at",
+                "export_artifact_id",
+                "erasure_job_id",
             ):
                 _set_if_changed(row, field_name, None, row_changed_fields)
         if row_changed_fields:

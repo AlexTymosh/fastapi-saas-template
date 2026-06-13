@@ -399,6 +399,8 @@ def test_core_erasure_orchestrator_covers_remaining_inventory_targets(
             dsr.idempotency_key_hash = "idempotency-hash"
             dsr.idempotency_fingerprint = "idempotency-fingerprint"
             dsr.idempotency_key_expires_at = datetime.now(UTC) + timedelta(hours=1)
+            dsr.export_artifact_id = uuid4()
+            dsr.erasure_job_id = uuid4()
             session.add_all(
                 [
                     membership,
@@ -453,6 +455,8 @@ def test_core_erasure_orchestrator_covers_remaining_inventory_targets(
             assert dsr.idempotency_key_hash is None
             assert dsr.idempotency_fingerprint is None
             assert dsr.idempotency_key_expires_at is None
+            assert dsr.export_artifact_id is None
+            assert dsr.erasure_job_id is None
             assert user.email is None
 
     run_async(_run())
@@ -482,6 +486,8 @@ def test_core_erasure_orchestrator_preserves_reviewer_only_dsr_notes(
             other_dsr.idempotency_key_expires_at = datetime.now(UTC) + timedelta(
                 hours=1
             )
+            other_dsr.export_artifact_id = uuid4()
+            other_dsr.erasure_job_id = uuid4()
             session.add_all([erase_dsr, other_dsr])
             await session.flush()
 
@@ -503,6 +509,8 @@ def test_core_erasure_orchestrator_preserves_reviewer_only_dsr_notes(
                 "other-idempotency-fingerprint"
             )
             assert other_dsr.idempotency_key_expires_at is not None
+            assert other_dsr.export_artifact_id is not None
+            assert other_dsr.erasure_job_id is not None
 
     run_async(_run())
 

@@ -86,8 +86,9 @@ ERASURE_COVERAGE_MAP: dict[str, ErasureCoverageEntry] = {
         decision=ErasureCoverageDecision.EXECUTABLE,
         rationale=(
             "DSR lifecycle evidence is retained. Subject/requester-owned rows "
-            "minimise workflow links plus unsafe notes/idempotency metadata; "
-            "reviewer-only rows minimise only the reviewer link."
+            "minimise user links, workflow relationship links and unsafe "
+            "notes/idempotency metadata; reviewer-only rows minimise only the "
+            "reviewer link."
         ),
     ),
     "export_artifacts.delete_object_minimise_subject_or_actor_metadata": (
