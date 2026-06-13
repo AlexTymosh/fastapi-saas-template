@@ -19,6 +19,7 @@ from app.core.errors import ConflictError, NotFoundError
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
 from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestStatus,
     DataSubjectRequestType,
@@ -140,12 +141,17 @@ class ExportArtifactService:
         if not self.settings.privacy_exports.enabled:
             raise ConflictError(detail="Privacy export artifacts are disabled")
 
+    @staticmethod
+    def _has_export_dsr_participant_links(dsr: DataSubjectRequest) -> bool:
+        return dsr.subject_user_id is not None and dsr.requester_user_id is not None
+
     async def _ensure_download_dsr_is_still_eligible(
         self, artifact: ExportArtifact
     ) -> None:
         dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
         if (
             dsr is None
+            or not self._has_export_dsr_participant_links(dsr)
             or dsr.request_type != DataSubjectRequestType.EXPORT.value
             or dsr.status not in _DOWNLOAD_ELIGIBLE_DSR_STATUSES
         ):
@@ -327,6 +333,7 @@ class ExportArtifactService:
         if (
             dsr.request_type != DataSubjectRequestType.EXPORT.value
             or dsr.status != DataSubjectRequestStatus.APPROVED.value
+            or not self._has_export_dsr_participant_links(dsr)
         ):
             raise ConflictError(
                 detail=(
@@ -579,6 +586,7 @@ class ExportArtifactService:
         if (
             dsr.request_type != DataSubjectRequestType.EXPORT.value
             or dsr.status != DataSubjectRequestStatus.APPROVED.value
+            or not self._has_export_dsr_participant_links(dsr)
         ):
             raise ValueError("dsr_not_export_eligible")
 

@@ -111,6 +111,60 @@ def test_request_requires_approved_export_dsr(migrated_session_factory):
     run_async(_run())
 
 
+def test_request_rejects_subjectless_approved_export_dsr(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            dsr.subject_user_id = None
+            await session.flush()
+
+            service = ExportArtifactService(session)
+            with pytest.raises(ConflictError):
+                await service.request_export_artifact(
+                    request_id=dsr.id,
+                    requested_by_user_id=user.id,
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+            assert await service.repo.get_by_dsr_id(dsr.id) == []
+
+    run_async(_run())
+
+
+def test_generate_export_artifact_fails_when_dsr_subject_missing(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.PROCESSING.value
+            dsr.subject_user_id = None
+
+            failed = await service.generate_export_artifact(artifact=artifact)
+
+            assert failed.status == ExportArtifactStatus.FAILED.value
+            assert failed.failure_reason_code == "dsr_not_export_eligible"
+            assert failed.storage_key is None
+
+    run_async(_run())
+
+
 def test_request_export_artifact_marks_dsr_execution_queued(
     migrated_session_factory,
 ):
