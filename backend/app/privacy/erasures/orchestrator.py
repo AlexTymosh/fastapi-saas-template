@@ -228,14 +228,15 @@ async def _lock_and_validate_request(
         raise ErasureOrchestrationError("erasure_orchestration_request_not_found")
     if locked_request.request_type != DataSubjectRequestType.ERASE.value:
         raise ErasureOrchestrationError("erasure_orchestration_requires_erase_request")
-    if locked_request.status != DataSubjectRequestStatus.APPROVED.value:
-        raise ErasureOrchestrationError(
-            "erasure_orchestration_requires_approved_request"
-        )
 
     execution_status = _execution_status(locked_request)
     if execution_status is DataSubjectRequestExecutionStatus.READY:
         return locked_request
+
+    if locked_request.status != DataSubjectRequestStatus.APPROVED.value:
+        raise ErasureOrchestrationError(
+            "erasure_orchestration_requires_approved_request"
+        )
     if execution_status is DataSubjectRequestExecutionStatus.PROCESSING:
         raise ErasureOrchestrationError(_ALREADY_PROCESSING_REASON_CODE)
     if locked_request.subject_user_id is None:

@@ -893,6 +893,42 @@ def test_core_erasure_orchestrator_is_idempotent_after_ready(
     run_async(_run())
 
 
+def test_core_erasure_orchestrator_short_circuits_fulfilled_ready_request(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session)
+            dsr = _dsr_for_user(
+                user,
+                status=DataSubjectRequestStatus.FULFILLED.value,
+            )
+            dsr.requester_user_id = None
+            dsr.subject_user_id = None
+            dsr.reviewer_user_id = None
+            dsr.fulfilled_at = datetime.now(UTC)
+            dsr.execution_status = DataSubjectRequestExecutionStatus.READY.value
+            dsr.execution_completed_at = datetime.now(UTC)
+            session.add(dsr)
+            await session.flush()
+
+            result = await execute_core_erasure_for_approved_request(session, dsr)
+            await session.refresh(dsr)
+
+            assert result.status is ErasureOrchestrationStatus.ALREADY_COMPLETED
+            assert result.subject_user_id is None
+            assert result.provider_results == ()
+            assert result.did_mutate is False
+            assert result.failure_reason_code is None
+            assert dsr.status == DataSubjectRequestStatus.FULFILLED.value
+            assert dsr.execution_status == DataSubjectRequestExecutionStatus.READY.value
+            assert dsr.requester_user_id is None
+            assert dsr.subject_user_id is None
+            assert dsr.reviewer_user_id is None
+
+    run_async(_run())
+
+
 def test_core_erasure_orchestrator_is_idempotent_after_dsr_minimisation(
     migrated_session_factory,
 ) -> None:
