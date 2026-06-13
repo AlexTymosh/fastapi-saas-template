@@ -1070,3 +1070,13 @@ def test_mark_expired_artifacts_preserves_cancelled_erasure_retry_on_failure(
 
             persisted = await service.repo.get_by_id(artifact.id)
             assert persisted is not None
+            assert persisted.status == ExportArtifactStatus.CANCELLED.value
+            assert persisted.failure_reason_code == "subject_erasure_requested"
+            assert persisted.storage_key == storage_key
+            assert persisted.filename == "subject-erasure.zip"
+            assert persisted.content_type == "application/zip"
+            assert persisted.size_bytes == 7
+            assert persisted.checksum_sha256 == "0" * 64
+            assert storage.exists(storage_key)
+
+    run_async(_run())
