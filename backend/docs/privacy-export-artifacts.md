@@ -45,6 +45,57 @@ If the product later requires a single-active-artifact model, that should be a
 separate contract change with either existing-active-artifact reuse or a
 database constraint for active statuses.
 
+## Worker operations
+
+The export artifact worker can run as a one-shot local command, a non-mutating
+dry run, or a long-running Compose service.
+
+One-shot local drain pass from the repository root:
+
+```text
+task privacy:export-worker:once
+```
+
+Non-mutating local smoke check from the repository root:
+
+```text
+task privacy:export-worker:dry-run
+```
+
+Direct backend command equivalents:
+
+```text
+python -m app.commands.privacy_export_worker --once
+python -m app.commands.privacy_export_worker --dry-run --once
+```
+
+The command supports `--batch-size` and `--poll-interval`. With the default
+`--poll-interval 0`, the worker drains available work and exits once no queued
+artifacts remain. With a positive poll interval, the worker waits and polls
+again after an empty iteration, which is the mode used by the Compose service.
+
+Local Compose service:
+
+```text
+docker compose --profile privacy-exports up -d privacy-export-worker
+```
+
+The `privacy-export-worker` service is profile-gated, so it is not part of the
+default local stack. It depends on PostgreSQL and Redis and uses the same backend
+image and environment model as the API and outbox workers.
+
+Optional Compose environment knobs:
+
+```text
+PRIVACY_EXPORT_WORKER_BATCH_SIZE=10
+PRIVACY_EXPORT_WORKER_POLL_INTERVAL_SECONDS=5
+```
+
+For staging or production, run this as a separate worker process using the same
+application image and the real deployment environment. Run migrations as a
+separate release step before starting the worker. Do not rely on the local
+Compose profile as a production deployment manifest.
+
 ## Maintenance runner
 
 Run the privacy export retention runner with:
