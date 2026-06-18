@@ -98,12 +98,21 @@ class ErasureOrchestrationError(ValueError):
 class ErasureProviderRunResult:
     provider_key: str
     table_name: str
+    decision: str
     affected_rows: int
     changed_fields: tuple[str, ...]
 
     @property
     def did_mutate(self) -> bool:
         return self.affected_rows > 0
+
+    @property
+    def requires_manual_review(self) -> bool:
+        return self.decision == "manual_review_policy"
+
+    @property
+    def retained_by_policy(self) -> bool:
+        return self.decision == "retained_by_policy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,15 +379,7 @@ async def _run_core_providers(
         user_result,
         dsr_result,
     )
-    return tuple(
-        _provider_result(
-            provider_key=result.provider_key,
-            table_name=result.table_name,
-            affected_rows=result.affected_rows,
-            changed_fields=result.changed_fields,
-        )
-        for result in provider_results
-    )
+    return tuple(_provider_result_from_provider(result) for result in provider_results)
 
 
 _PROVIDER_ERRORS = (
@@ -391,19 +392,39 @@ _PROVIDER_ERRORS = (
 )
 
 
+def _provider_result_from_provider(result: object) -> ErasureProviderRunResult:
+    return _provider_result(
+        provider_key=result.provider_key,
+        table_name=result.table_name,
+        decision=result.status,
+        affected_rows=result.affected_rows,
+        changed_fields=result.changed_fields,
+    )
+
+
 def _provider_result(
     *,
     provider_key: str,
     table_name: str,
+    decision: object,
     affected_rows: int,
     changed_fields: tuple[str, ...],
 ) -> ErasureProviderRunResult:
     return ErasureProviderRunResult(
         provider_key=provider_key,
         table_name=table_name,
+        decision=_provider_decision_value(decision),
         affected_rows=affected_rows,
         changed_fields=changed_fields,
     )
+
+
+def _provider_decision_value(decision: object) -> str:
+    if isinstance(decision, StrEnum):
+        return decision.value
+    if isinstance(decision, str):
+        return decision
+    return str(decision)
 
 
 def _failed_result(
