@@ -240,34 +240,36 @@ class DataSubjectRequestService:
                 detail=f"Invalid transition from '{current_status}' to '{next_status}'"
             )
 
-        request.status = next_status
-        request.reviewer_user_id = reviewer_user_id
-
-        if next_status == DataSubjectRequestStatus.UNDER_REVIEW.value:
-            request.reviewed_at = reference_now
-        if next_status in {
-            DataSubjectRequestStatus.APPROVED.value,
-            DataSubjectRequestStatus.REJECTED.value,
-        }:
-            request.decided_at = reference_now
-        if next_status == DataSubjectRequestStatus.FULFILLED.value:
-            request.fulfilled_at = reference_now
-        if next_status == DataSubjectRequestStatus.CANCELLED.value:
-            request.cancelled_at = reference_now
-        if next_status == DataSubjectRequestStatus.REJECTED.value:
-            request.rejection_reason_code = reason_code
-        if next_status == DataSubjectRequestStatus.APPROVED.value:
-            request.decision_reason_code = reason_code
-
-        saved = await self.repository.save(request)
-        persisted_request = saved or request
+        updated = await self.repository.transition_status_if_current(
+            request_id=request_id,
+            expected_status=current_status,
+            values=self._build_transition_values(
+                next_status=next_status,
+                reviewer_user_id=reviewer_user_id,
+                reason_code=reason_code,
+                reference_now=reference_now,
+            ),
+        )
+        if updated is None:
+            latest = await self.repository.get_by_id(
+                request_id,
+                populate_existing=True,
+            )
+            if latest is None:
+                raise NotFoundError(detail="Data subject request not found")
+            raise ConflictError(
+                detail=(
+                    "Data subject request status changed during transition; "
+                    f"current status is '{latest.status}'"
+                )
+            )
 
         await self._record_status_event(
-            request=persisted_request,
+            request=updated,
             action=self._action_for_status(target_status),
             audit_context=audit_context,
         )
-        return persisted_request
+        return updated
 
     async def list_own_requests(
         self,
@@ -470,7 +472,6 @@ class DataSubjectRequestService:
         for artifact in artifacts:
             if self._is_ready_export_artifact_usable(artifact, now=now):
                 return
-
         raise ConflictError(
             detail=(
                 "Export data-subject requests require a ready, non-expired "
@@ -522,6 +523,37 @@ class DataSubjectRequestService:
         else:
             expires_at = expires_at.astimezone(UTC)
         return expires_at > now
+
+    @staticmethod
+    def _build_transition_values(
+        *,
+        next_status: str,
+        reviewer_user_id: UUID | None,
+        reason_code: str | None,
+        reference_now: datetime,
+    ) -> dict[str, object | None]:
+        values: dict[str, object | None] = {
+            "status": next_status,
+            "reviewer_user_id": reviewer_user_id,
+        }
+
+        if next_status == DataSubjectRequestStatus.UNDER_REVIEW.value:
+            values["reviewed_at"] = reference_now
+        if next_status in {
+            DataSubjectRequestStatus.APPROVED.value,
+            DataSubjectRequestStatus.REJECTED.value,
+        }:
+            values["decided_at"] = reference_now
+        if next_status == DataSubjectRequestStatus.FULFILLED.value:
+            values["fulfilled_at"] = reference_now
+        if next_status == DataSubjectRequestStatus.CANCELLED.value:
+            values["cancelled_at"] = reference_now
+        if next_status == DataSubjectRequestStatus.REJECTED.value:
+            values["rejection_reason_code"] = reason_code
+        if next_status == DataSubjectRequestStatus.APPROVED.value:
+            values["decision_reason_code"] = reason_code
+
+        return values
 
     @staticmethod
     def _raise_erasure_execution_app_error(reason_code: str) -> None:

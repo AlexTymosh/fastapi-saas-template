@@ -5,7 +5,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects import postgresql
 
 from app.audit.context import AuditContext
@@ -30,13 +30,18 @@ from tests.helpers.asyncio_runner import run_async
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
 
 
+class _ScalarOneOrNoneResult:
+    def scalar_one_or_none(self):
+        return None
+
+
 class _StatementCaptureSession:
     def __init__(self) -> None:
         self.statement = None
 
     async def execute(self, statement):
         self.statement = statement
-        return None
+        return _ScalarOneOrNoneResult()
 
 
 async def _create_user(session, *, email: str = "subject@example.com") -> User:
@@ -87,6 +92,30 @@ def test_idempotency_requester_lock_uses_no_key_update() -> None:
         assert session.statement is not None
         compiled = str(session.statement.compile(dialect=postgresql.dialect()))
         assert "FOR NO KEY UPDATE" in compiled
+
+    run_async(_run())
+
+
+def test_transition_status_if_current_uses_conditional_update() -> None:
+    async def _run() -> None:
+        session = _StatementCaptureSession()
+        repository = DataSubjectRequestRepository(session)  # type: ignore[arg-type]
+
+        await repository.transition_status_if_current(
+            request_id=uuid4(),
+            expected_status=DataSubjectRequestStatus.SUBMITTED.value,
+            values={
+                "status": DataSubjectRequestStatus.APPROVED.value,
+                "reviewer_user_id": uuid4(),
+            },
+        )
+
+        assert session.statement is not None
+        compiled = str(session.statement.compile(dialect=postgresql.dialect()))
+        assert "UPDATE data_subject_requests" in compiled
+        assert "data_subject_requests.id =" in compiled
+        assert "data_subject_requests.status =" in compiled
+        assert "RETURNING" in compiled
 
     run_async(_run())
 
@@ -205,10 +234,10 @@ def test_idempotency_locks_requester_before_lookup(migrated_session_factory) -> 
                 calls.append("lookup")
                 return await original_lookup(**kwargs)
 
-            service.repository.lock_requester_for_idempotency = (  # type: ignore[method-assign]
+            service.repository.lock_requester_for_idempotency = (
                 _lock_requester_for_idempotency
             )
-            service.repository.get_non_expired_by_idempotency_key_hash = (  # type: ignore[method-assign]
+            service.repository.get_non_expired_by_idempotency_key_hash = (
                 _get_non_expired_by_idempotency_key_hash
             )
 
@@ -297,6 +326,91 @@ def test_idempotency_expired_key_allows_new_request(migrated_session_factory) ->
             assert (
                 second.idempotency_key_expires_at.replace(tzinfo=UTC) == expected_expiry
             )
+
+    run_async(_run())
+
+
+def test_transition_status_if_current_rejects_stale_status(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="stale-repository@example.com")
+            service = DataSubjectRequestService(session)
+            request = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="access",
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            updated = await service.repository.transition_status_if_current(
+                request_id=request.id,
+                expected_status=DataSubjectRequestStatus.UNDER_REVIEW.value,
+                values={
+                    "status": DataSubjectRequestStatus.APPROVED.value,
+                    "reviewer_user_id": user.id,
+                },
+            )
+
+            assert updated is None
+            persisted = await service.get_request(request_id=request.id)
+            assert persisted.status == DataSubjectRequestStatus.SUBMITTED.value
+
+    run_async(_run())
+
+
+def test_transition_status_stale_write_conflicts_without_audit(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="stale-service@example.com")
+            service = DataSubjectRequestService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+            request = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="access",
+                audit_context=audit_context,
+            )
+
+            async def _simulate_stale_transition(**kwargs):
+                await session.execute(
+                    update(DataSubjectRequest)
+                    .where(DataSubjectRequest.id == request.id)
+                    .values(status=DataSubjectRequestStatus.CANCELLED.value)
+                )
+                await session.flush()
+                return None
+
+            monkeypatch.setattr(
+                service.repository,
+                "transition_status_if_current",
+                _simulate_stale_transition,
+            )
+
+            with pytest.raises(ConflictError, match="status changed"):
+                await service.transition_status(
+                    request_id=request.id,
+                    target_status=DataSubjectRequestStatus.APPROVED,
+                    reviewer_user_id=user.id,
+                    audit_context=audit_context,
+                )
+
+            audit_rows = list(
+                (
+                    await session.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.target_id == request.id,
+                            AuditEvent.action
+                            == AuditAction.DATA_SUBJECT_REQUEST_APPROVED.value,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert audit_rows == []
 
     run_async(_run())
 

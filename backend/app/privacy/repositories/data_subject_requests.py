@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.privacy.models.data_subject_request import DataSubjectRequest
@@ -21,8 +23,12 @@ class DataSubjectRequestRepository:
         await self.session.refresh(request)
         return request
 
-    async def get_by_id(self, request_id: UUID) -> DataSubjectRequest | None:
+    async def get_by_id(
+        self, request_id: UUID, *, populate_existing: bool = False
+    ) -> DataSubjectRequest | None:
         stmt = select(DataSubjectRequest).where(DataSubjectRequest.id == request_id)
+        if populate_existing:
+            stmt = stmt.execution_options(populate_existing=True)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id_for_requester(
@@ -89,6 +95,27 @@ class DataSubjectRequestRepository:
             .limit(1)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def transition_status_if_current(
+        self,
+        *,
+        request_id: UUID,
+        expected_status: str,
+        values: Mapping[str, Any],
+    ) -> DataSubjectRequest | None:
+        """Atomically update one DSR only if its status has not changed."""
+        stmt = (
+            update(DataSubjectRequest)
+            .where(
+                DataSubjectRequest.id == request_id,
+                DataSubjectRequest.status == expected_status,
+            )
+            .values(**values)
+            .returning(DataSubjectRequest)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def save(self, request: DataSubjectRequest) -> DataSubjectRequest:
         self.session.add(request)
