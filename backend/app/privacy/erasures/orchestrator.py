@@ -40,44 +40,24 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
+from app.privacy.provider_keys import (
+    erasure_orchestration_provider_order as _provider_key_order,
+)
 from app.users.models.user import User
-
-_AUDIT_PROVIDER_KEY = "audit.minimise_subject_actor_or_target_identifiers"
-_OUTBOX_PROVIDER_KEY = "outbox.purge_or_scrub_payload"
-_INVITES_PROVIDER_KEY = "invites.anonymise_or_purge_subject_references"
-_USERS_PROVIDER_KEY = "users.anonymise_profile"
-_MEMBERSHIPS_PROVIDER_KEY = "memberships.minimise_subject_link"
-_ORGANISATIONS_PROVIDER_KEY = "organisations.review_subject_references"
-_PLATFORM_STAFF_PROVIDER_KEY = "platform_staff.minimise_subject_or_creator_links"
-_EXPORT_ARTIFACTS_PROVIDER_KEY = (
-    "export_artifacts.delete_object_minimise_subject_or_actor_metadata"
-)
-_PRIVACY_AUTHORIZATIONS_PROVIDER_KEY = "privacy_governance.minimise_authorizations"
-_PRIVACY_CONSENTS_PROVIDER_KEY = "privacy_governance.minimise_consent_records"
-_PRIVACY_NOTICES_PROVIDER_KEY = "privacy_governance.minimise_notice_acceptances"
-_DSR_PROVIDER_KEY = "dsr.minimise_workflow_identifiers"
-_PROVIDER_ORDER = (
-    _AUDIT_PROVIDER_KEY,
-    _OUTBOX_PROVIDER_KEY,
-    _INVITES_PROVIDER_KEY,
-    _MEMBERSHIPS_PROVIDER_KEY,
-    _ORGANISATIONS_PROVIDER_KEY,
-    _PLATFORM_STAFF_PROVIDER_KEY,
-    _EXPORT_ARTIFACTS_PROVIDER_KEY,
-    _PRIVACY_AUTHORIZATIONS_PROVIDER_KEY,
-    _PRIVACY_CONSENTS_PROVIDER_KEY,
-    _PRIVACY_NOTICES_PROVIDER_KEY,
-    _USERS_PROVIDER_KEY,
-    _DSR_PROVIDER_KEY,
-)
-
-
-def erasure_orchestration_provider_order() -> tuple[str, ...]:
-    return _PROVIDER_ORDER
-
 
 _GENERIC_FAILURE_REASON_CODE = "erasure_orchestration_failed"
 _ALREADY_PROCESSING_REASON_CODE = "erasure_orchestration_already_processing"
+
+
+def erasure_orchestration_provider_order() -> tuple[str, ...]:
+    """Return the central erasure provider execution order.
+
+    Kept as a compatibility export for callers that historically imported
+    the provider order from this module while the source of truth lives in
+    ``app.privacy.provider_keys``.
+    """
+
+    return _provider_key_order()
 
 
 class ErasureOrchestrationStatus(StrEnum):
