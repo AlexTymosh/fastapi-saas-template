@@ -73,7 +73,11 @@ async def list_platform_export_artifacts(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         object,
-        Depends(require_platform_permission(PlatformPermission.PRIVACY_REQUESTS_READ)),
+        Depends(
+            require_platform_permission(
+                PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_READ
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: int = Query(default=50, ge=1, le=100),
@@ -99,7 +103,11 @@ async def get_platform_export_artifact(
     _rate_limit: Annotated[None, Depends(rate_limit_dependency(PLATFORM_READ_POLICY))],
     _: Annotated[
         object,
-        Depends(require_platform_permission(PlatformPermission.PRIVACY_REQUESTS_READ)),
+        Depends(
+            require_platform_permission(
+                PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_READ
+            )
+        ),
     ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> ExportArtifactResponse:

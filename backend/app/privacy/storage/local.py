@@ -7,13 +7,21 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from pydantic import SecretStr
+
 from app.privacy.storage.base import StorageAdapter, StoredObject
 
 
+def _secret_value(secret: str | SecretStr) -> str:
+    if isinstance(secret, SecretStr):
+        return secret.get_secret_value()
+    return secret
+
+
 class LocalStorageAdapter(StorageAdapter):
-    def __init__(self, base_path: str, signing_secret: str) -> None:
+    def __init__(self, base_path: str, signing_secret: str | SecretStr) -> None:
         self.base_path = Path(base_path).resolve()
-        self.signing_secret = signing_secret.encode("utf-8")
+        self.signing_secret = _secret_value(signing_secret).encode("utf-8")
 
     def _resolve(self, key: str) -> Path:
         safe_key = self._validate_key(key)

@@ -29,6 +29,7 @@ class PlatformPermission(StrEnum):
     PRIVACY_REQUESTS_READ = "privacy_requests:read"
     PRIVACY_REQUESTS_REVIEW = "privacy_requests:review"
     PRIVACY_REQUESTS_EXECUTE_ERASURE = "privacy_requests:execute_erasure"
+    PRIVACY_EXPORT_ARTIFACTS_READ = "privacy_export_artifacts:read"
 
 
 ALL_PERMISSIONS = frozenset(PlatformPermission)
@@ -51,6 +52,7 @@ ROLE_PERMISSIONS = {
             PlatformPermission.PRIVACY_REQUESTS_READ,
             PlatformPermission.PRIVACY_REQUESTS_REVIEW,
             PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE,
+            PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_READ,
         }
     ),
 }
