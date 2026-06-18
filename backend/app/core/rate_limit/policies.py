@@ -213,3 +213,12 @@ PRIVACY_DSR_SUBMIT_POLICY = RateLimitPolicySpec(
     default_fail_open=False,
     sensitivity="critical",
 )
+
+
+PRIVACY_EXPORT_DOWNLOAD_URL_POLICY = RateLimitPolicySpec(
+    name="privacy_export_download_url",
+    default_limit=10,
+    default_window_seconds=300,
+    default_fail_open=False,
+    sensitivity="critical",
+)

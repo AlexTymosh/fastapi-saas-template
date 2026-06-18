@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.core.platform.permissions import PlatformRole
 from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.privacy.api import export_artifacts as export_artifacts_api
+from app.privacy.api import platform_export_artifacts as platform_export_artifacts_api
 from app.privacy.models.data_subject_request import DataSubjectRequest
 from app.privacy.models.export_artifact import (
     ExportArtifact,
@@ -340,11 +341,33 @@ def test_user_cannot_create_download_url_when_dsr_is_no_longer_approved(
     assert downloaded_at is None
 
 
-def test_user_download_url_route_uses_write_rate_limit_policy() -> None:
+def test_user_download_url_route_uses_export_download_rate_limit_policy() -> None:
     source = inspect.getsource(export_artifacts_api.create_own_export_download_url)
 
-    assert "TENANT_WRITE_POLICY" in source
+    assert "PRIVACY_EXPORT_DOWNLOAD_URL_POLICY" in source
+    assert "TENANT_WRITE_POLICY" not in source
     assert "TENANT_READ_POLICY" not in source
+    assert source.index("get_own_export_artifact") < source.index(
+        "check_export_artifact_download_url_rate_limit"
+    )
+    assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
+        "generate_download_url"
+    )
+
+
+def test_platform_download_url_route_uses_export_download_rate_limit_policy() -> None:
+    source = inspect.getsource(
+        platform_export_artifacts_api.create_platform_export_download_url
+    )
+
+    assert "PRIVACY_EXPORT_DOWNLOAD_URL_POLICY" in source
+    assert "PLATFORM_WRITE_POLICY" not in source
+    assert source.index("get_platform_export_artifact") < source.index(
+        "check_export_artifact_download_url_rate_limit"
+    )
+    assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
+        "generate_download_url"
+    )
 
 
 def test_disabled_privacy_exports_block_platform_artifact_creation(
