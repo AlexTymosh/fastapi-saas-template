@@ -211,4 +211,194 @@ id
 name
 slug
 status
+created_at
 ```
+
+The limited organisation DTO must not return `suspended_at`, `suspended_reason`, `deleted_at`, owner internals, membership internals, or audit metadata. Deleted organisations are excluded from limited views by default. Full platform organisation endpoints may have broader operational visibility, including intentional visibility of soft-deleted organisations where required for support, audit, compliance, or recovery workflows.
+
+Limited list endpoints support these query parameters unless a route-specific contract says otherwise:
+
+```text
+limit
+offset
+status
+q
+```
+
+Ordering must be deterministic for both full and limited platform lists:
+
+```text
+created_at desc
+id desc
+```
+
+## 9. Future admin frontend and OpenAPI contract
+
+`GET /api/v1/platform/me` is the first endpoint a future admin frontend should call after login. The frontend should use it to determine whether platform access is available and which sections may be shown for the resolved local platform role and permissions.
+
+Generated frontend clients should rely on stable platform paths, tags, response models, and operation IDs. Platform OpenAPI tags are grouped by platform area:
+
+```text
+platform-identity
+platform-users
+platform-organisations
+platform-staff
+platform-audit
+```
+
+Backend contract tests must freeze exact operation IDs for platform routes and must fail if a platform route is accidentally undocumented, untagged, missing a response model, or missing its expected rate-limit policy.
+
+## 10. Permission matrix testing
+
+Backend tests must prove broken function-level authorization protection across platform endpoints for:
+
+```text
+unauthenticated users
+authenticated non-platform users
+suspended local users
+suspended platform staff
+support_agent
+compliance_officer
+platform_admin
+```
+
+The matrix must also prove that limited DTOs do not expose forbidden fields, denied platform writes do not create audit events, and platform permissions are resolved from local `platform_staff` records rather than JWT roles.
+
+## 11. Platform-created organisations and initial owner assignment
+
+When a standalone tenant user creates an organisation, that creator becomes `owner`.
+
+When a platform actor creates an organisation through a platform endpoint:
+
+- the platform actor must not become tenant owner automatically;
+- platform roles must not create tenant membership implicitly;
+- the endpoint must require explicit initial owner assignment via `initial_owner_user_id` or `initial_owner_email`.
+
+Ownerless organisation creation is a special bootstrap/operational case and must not be the default path.
+
+## 12. Bootstrap first platform admin
+
+The first platform admin should be created by a management command, not by public API.
+
+Example command:
+
+```bash
+python -m app.commands.make_platform_admin --email admin@example.com
+```
+
+Expected behaviour:
+
+```text
+1. Find an existing local user by email.
+2. Require that user to be active.
+3. Create an active `platform_staff` row with `role=platform_admin`, or exit successfully if it already exists.
+4. Write a bootstrap audit event when a new grant is made.
+```
+
+Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles or manual database edits.
+
+## 13. Audit requirements
+
+All platform actions must write audit events.
+
+Shared audit table for tenant + platform sensitive actions:
+
+```text
+audit_events
+- id
+- actor_user_id
+- category
+- action
+- target_type
+- target_id
+- reason
+- metadata_json
+- created_at
+```
+
+Recommended categories:
+
+```text
+tenant
+platform
+security
+compliance
+```
+
+Recommended audited actions:
+
+```text
+user_suspended
+user_restored
+organisation_suspended
+organisation_restored
+platform_staff_created
+platform_staff_removed
+platform_staff_suspended
+data_corrected
+gdpr_export_requested
+gdpr_erasure_requested
+```
+
+## 14. Emergency owner correction
+
+Tenant API must not support ownership transfer.
+
+If a real operational case appears, add a platform-only emergency endpoint:
+
+```text
+POST /api/v1/platform/organisations/{organisation_id}/owner-correction
+```
+
+Requirements:
+
+```text
+- organisations:emergency_owner_correction permission;
+- mandatory reason;
+- audit event required;
+- no ordinary tenant endpoint;
+- preferably two-person approval in future.
+```
+
+Current implementation note: an internal-only service flow is available via
+`PlatformOrganisationsService.emergency_replace_organisation_owner`. It performs
+an atomic owner replacement and writes a platform audit event. This remains an
+internal operational path until a dedicated public API contract is introduced.
+
+
+## Implementation status update (2026-04-30)
+- Added backend-managed `platform_staff` foundation.
+- Added `/api/v1/platform/*` endpoints for identity, users, organisations, staff, and audit-events.
+- Added `require_platform_permission()` DB-backed authorization; JWT roles must not grant request-time permissions.
+
+- Platform access is DB-backed via `platform_staff`; JWT roles must never grant request-time backend permissions and may only become future controlled JIT provisioning input for local DB records.
+- Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
+- Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
+- Last-platform-admin hardening is implemented for platform staff demotion and suspension flows.
+
+## 15. OpenAPI contract for generated admin clients
+
+Platform admin frontend clients should be generated from the backend OpenAPI schema instead of hand-written route metadata. The backend uses one app-level `generate_unique_id_function` so every OpenAPI `operationId` is generated from the FastAPI `APIRoute.name` value.
+
+Contract rules:
+
+- Route handler names are the generated-client method names and must remain globally unique across all schema-included routes.
+- Route handler names should be stable, descriptive, snake_case, and TypeScript-friendly. Prefer full words such as `organisation` over abbreviations such as `org`.
+- Platform routes must use only these tags: `platform-identity`, `platform-users`, `platform-organisations`, `platform-staff`, and `platform-audit`.
+- Platform routes must not use the generic `platform` tag.
+- Health routes must not use platform tags.
+- Platform routes that return a body must declare a strict Pydantic `response_model`; bare `dict`, untyped dictionaries, `Any`, and bare list response models are not allowed.
+- Platform collection responses should use the standard `{ "data": [], "meta": {}, "links": {} }` envelope so generated clients receive stable response shapes.
+- Limited platform views must not expose restricted operational fields. Limited audit responses intentionally expose boolean indicators such as `has_actor`, `has_metadata`, and `has_reason` instead of raw actor IDs, metadata, IP address, user-agent, or free-text reason.
+- Platform read and write routes must carry explicit route-level rate-limit dependency metadata so contract tests can verify the expected `platform_read`, `audit_read`, `platform_write`, or `platform_staff_write` policy.
+
+Future admin clients may rely on `operationId` values as stable method names, but any route rename is an API-contract change and must be reviewed with the same care as a path or schema change.
+
+- Added DSR platform permissions for compliance officers (`privacy_requests:read`, `privacy_requests:review`) and kept support-agent access denied by default.
+
+- Added DSR platform endpoints under /api/v1/platform/privacy/data-subject-requests* and platform-privacy OpenAPI tag coverage.
+- Added permissions privacy_requests:read and privacy_requests:review; support_agent remains denied by default, compliance_officer allowed.
+
+- `gdpr:export` is required for platform export-artifact creation and download-url creation.
+- `privacy_export_artifacts:read` is required for platform export-artifact metadata reads.
+- `support_agent` has no export-artifact access by default.
