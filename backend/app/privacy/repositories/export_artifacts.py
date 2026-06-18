@@ -6,6 +6,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.privacy.export_artifact_lifecycle import (
+    mark_export_artifact_expired,
+    mark_export_artifact_failed,
+    mark_export_artifact_ready,
+)
 from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
 
 
@@ -188,10 +193,7 @@ class ExportArtifactRepository:
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def mark_ready(self, artifact: ExportArtifact) -> ExportArtifact:
-        artifact.status = ExportArtifactStatus.READY.value
-        artifact.completed_at = datetime.now(UTC)
-        artifact.processing_token = None
-        artifact.processing_lease_expires_at = None
+        mark_export_artifact_ready(artifact)
         await self.session.flush()
         await self.session.refresh(artifact)
         return artifact
@@ -199,18 +201,17 @@ class ExportArtifactRepository:
     async def mark_failed(
         self, artifact: ExportArtifact, *, reason_code: str, detail: str
     ) -> ExportArtifact:
-        artifact.status = ExportArtifactStatus.FAILED.value
-        artifact.failure_reason_code = reason_code
-        artifact.failure_detail = detail[:255]
-        artifact.failed_at = datetime.now(UTC)
-        artifact.processing_token = None
-        artifact.processing_lease_expires_at = None
+        mark_export_artifact_failed(
+            artifact,
+            reason_code=reason_code,
+            detail=detail,
+        )
         await self.session.flush()
         await self.session.refresh(artifact)
         return artifact
 
     async def mark_expired(self, artifact: ExportArtifact) -> ExportArtifact:
-        artifact.status = ExportArtifactStatus.EXPIRED.value
+        mark_export_artifact_expired(artifact)
         await self.session.flush()
         await self.session.refresh(artifact)
         return artifact
