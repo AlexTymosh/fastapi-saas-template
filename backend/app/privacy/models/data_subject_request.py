@@ -174,5 +174,8 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
-    export_artifact_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    export_artifact_id: Mapped[UUID | None] = mapped_column(
+        nullable=True,
+        info={"privacy_contract": "legacy_export_artifact_pointer"},
+    )
     erasure_job_id: Mapped[UUID | None] = mapped_column(nullable=True)

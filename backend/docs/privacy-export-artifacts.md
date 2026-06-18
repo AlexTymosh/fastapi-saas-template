@@ -24,6 +24,27 @@ Export artifacts are generated asynchronously from approved export DSRs.
   deletes the stored archive object, clears storage metadata, marks the artifact
   as `expired`, and synchronises the linked DSR execution state.
 
+## Export artifact cardinality
+
+DSR export requests use a multi-artifact history model.
+
+One `DataSubjectRequest` may have multiple `ExportArtifact` rows linked by
+`export_artifacts.data_subject_request_id`. This supports repeated export
+generation attempts, regenerated archives, and historical artifact records.
+
+The current export execution state for a DSR is derived from the newest export
+artifact for that request. Older artifacts may remain downloadable until they
+expire, but they must not overwrite the DSR execution state after a newer
+artifact has been queued or processed.
+
+`data_subject_requests.export_artifact_id` is a legacy reserved pointer. It is
+not the runtime source of truth for export artifact ownership or execution
+state.
+
+If the product later requires a single-active-artifact model, that should be a
+separate contract change with either existing-active-artifact reuse or a
+database constraint for active statuses.
+
 ## Maintenance runner
 
 Run the privacy export retention runner with:
