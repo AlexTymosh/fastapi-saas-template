@@ -22,6 +22,7 @@ from app.core.rate_limit.policies import (
     PLATFORM_WRITE_POLICY,
     PRE_AUTH_POLICY,
     PRIVACY_DSR_SUBMIT_POLICY,
+    PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
     TENANT_READ_POLICY,
     TENANT_WRITE_ORGANISATION_POLICY,
     TENANT_WRITE_POLICY,
@@ -57,6 +58,7 @@ EXPECTED_POLICIES = {
     "platform_write": PLATFORM_WRITE_POLICY,
     "platform_staff_write": PLATFORM_STAFF_WRITE_POLICY,
     "privacy_dsr_submit": PRIVACY_DSR_SUBMIT_POLICY,
+    "privacy_export_download_url": PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
 }
 
 
@@ -140,6 +142,11 @@ def test_default_effective_policies_preserve_current_behaviour() -> None:
     assert registry["privacy_dsr_submit"].item.amount == 5
     assert registry["privacy_dsr_submit"].item.get_expiry() == 86400
     assert registry["privacy_dsr_submit"].fail_open is False
+
+    assert registry["privacy_export_download_url"].item.amount == 10
+    assert registry["privacy_export_download_url"].item.multiples == 5
+    assert registry["privacy_export_download_url"].item.get_expiry() == 300
+    assert registry["privacy_export_download_url"].fail_open is False
 
     assert registry["invite_accept"].item.amount == 5
     assert registry["invite_accept"].item.multiples == 5
@@ -259,6 +266,9 @@ def test_override_changes_limit_window_and_fail_open() -> None:
         ("strict", "privacy_dsr_submit", 2),
         ("relaxed", "privacy_dsr_submit", 10),
         ("panic", "privacy_dsr_submit", 1),
+        ("strict", "privacy_export_download_url", 5),
+        ("relaxed", "privacy_export_download_url", 20),
+        ("panic", "privacy_export_download_url", 2),
     ],
 )
 def test_modes_transform_effective_limits(
@@ -276,12 +286,14 @@ def test_panic_forces_sensitive_and_critical_fail_closed() -> None:
             policies={
                 "tenant_write": RateLimitPolicyOverride(fail_open=True),
                 "platform_write": RateLimitPolicyOverride(fail_open=True),
+                "privacy_export_download_url": RateLimitPolicyOverride(fail_open=True),
             },
         )
     )
 
     assert registry["tenant_write"].fail_open is False
     assert registry["platform_write"].fail_open is False
+    assert registry["privacy_export_download_url"].fail_open is False
     assert registry["tenant_read"].fail_open is True
 
 

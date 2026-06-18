@@ -20,7 +20,12 @@ from app.core.platform import (
     require_platform_permission,
     require_rate_limited_platform_write_context,
 )
-from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
+from app.core.rate_limit import (
+    PLATFORM_READ_POLICY,
+    PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
+    rate_limit_dependency,
+)
+from app.privacy.rate_limits import check_export_artifact_download_url_rate_limit
 from app.privacy.schemas.export_artifacts import (
     ExportArtifactResponse,
     ExportArtifactsCollectionResponse,
@@ -115,7 +120,10 @@ async def create_platform_export_download_url(
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
-            require_rate_limited_platform_write_context(PlatformPermission.GDPR_EXPORT),
+            require_rate_limited_platform_write_context(
+                PlatformPermission.GDPR_EXPORT,
+                policy=PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
+            ),
             scope="function",
         ),
     ],
@@ -123,6 +131,10 @@ async def create_platform_export_download_url(
     actor = write_context.actor
     service = ExportArtifactService(write_context.session)
     artifact = await service.get_platform_export_artifact(artifact_id=artifact_id)
+    await check_export_artifact_download_url_rate_limit(
+        request=request,
+        artifact_id=artifact.id,
+    )
     download = await service.generate_download_url(
         artifact=artifact,
         audit_context=build_audit_context_from_request(

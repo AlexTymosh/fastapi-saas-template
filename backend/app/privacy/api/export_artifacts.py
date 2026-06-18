@@ -16,10 +16,11 @@ from app.core.errors.openapi import (
     WRITE_ERROR_RESPONSES,
 )
 from app.core.rate_limit import (
+    PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
     TENANT_READ_POLICY,
-    TENANT_WRITE_POLICY,
     rate_limit_dependency,
 )
+from app.privacy.rate_limits import check_export_artifact_download_url_rate_limit
 from app.privacy.schemas.export_artifacts import (
     ExportArtifactResponse,
     ExportArtifactsCollectionResponse,
@@ -101,7 +102,10 @@ async def create_own_export_download_url(
     identity: Annotated[
         AuthenticatedPrincipal, Depends(require_authenticated_principal)
     ],
-    _rate_limit: Annotated[None, Depends(rate_limit_dependency(TENANT_WRITE_POLICY))],
+    _rate_limit: Annotated[
+        None,
+        Depends(rate_limit_dependency(PRIVACY_EXPORT_DOWNLOAD_URL_POLICY)),
+    ],
     db_session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> ExportDownloadUrlResponse:
     async with db_session.begin():
@@ -109,6 +113,10 @@ async def create_own_export_download_url(
         service = ExportArtifactService(db_session)
         artifact = await service.get_own_export_artifact(
             artifact_id=artifact_id, requester_user_id=user.id
+        )
+        await check_export_artifact_download_url_rate_limit(
+            request=request,
+            artifact_id=artifact.id,
         )
         download = await service.generate_download_url(
             artifact=artifact,

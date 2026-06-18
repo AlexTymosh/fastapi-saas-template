@@ -136,6 +136,16 @@ def route_has_rate_limit_policy(route: APIRoute, policy_name: str) -> bool:
         ("PATCH", "/api/v1/platform/staff/{staff_id}/role", "platform_staff_write"),
         ("POST", "/api/v1/platform/staff/{staff_id}/suspend", "platform_staff_write"),
         ("POST", "/api/v1/platform/staff/{staff_id}/restore", "platform_staff_write"),
+        (
+            "POST",
+            "/api/v1/privacy/export-artifacts/{artifact_id}/download-url",
+            "privacy_export_download_url",
+        ),
+        (
+            "POST",
+            "/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url",
+            "privacy_export_download_url",
+        ),
     ],
 )
 def test_sensitive_authenticated_endpoints_have_expected_rate_limit_policy(
