@@ -112,7 +112,18 @@ async def _process_artifact(*, lease: ProcessingExportLease) -> None:
             await heartbeat
 
 
-async def run_worker(*, batch_size: int, dry_run: bool, once: bool) -> int:
+async def run_worker(
+    *,
+    batch_size: int,
+    dry_run: bool,
+    once: bool,
+    poll_interval: float = 0.0,
+) -> int:
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    if poll_interval < 0:
+        raise ValueError("poll_interval must be greater than or equal to 0")
+
     total_processed = 0
 
     while True:
@@ -128,12 +139,19 @@ async def run_worker(*, batch_size: int, dry_run: bool, once: bool) -> int:
 
         total_processed += processed_this_iteration
 
-        if dry_run or once or processed_this_iteration == 0:
+        if dry_run or once:
             break
+        if processed_this_iteration == 0:
+            if poll_interval <= 0:
+                break
+            await asyncio.sleep(poll_interval)
 
     print(
         "privacy_export_worker "
-        f"processed={total_processed} dry_run={dry_run} once={once}"
+        f"processed={total_processed} "
+        f"dry_run={dry_run} "
+        f"once={once} "
+        f"poll_interval={poll_interval}"
     )
     return 0
 
@@ -143,9 +161,23 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=0.0,
+        help=(
+            "Seconds to wait before polling again when no queued artifacts are "
+            "available. A value of 0 keeps the worker one-shot/drain-only."
+        ),
+    )
     args = parser.parse_args()
     return asyncio.run(
-        run_worker(batch_size=args.batch_size, dry_run=args.dry_run, once=args.once)
+        run_worker(
+            batch_size=args.batch_size,
+            dry_run=args.dry_run,
+            once=args.once,
+            poll_interval=args.poll_interval,
+        )
     )
 
 

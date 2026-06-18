@@ -27,6 +27,20 @@ tasks:
       - uv run --locked ruff format .
       - uv run --locked ruff check . --fix
 
+  privacy:export-worker:once:
+    desc: Run one privacy export worker drain pass.
+    dir: backend
+    cmds:
+      - uv run --locked python -m app.commands.privacy_export_worker --once
+
+  privacy:export-worker:dry-run:
+    desc: Count queued privacy export artifacts without mutating state.
+    dir: backend
+    cmds:
+      - >-
+        uv run --locked python -m app.commands.privacy_export_worker
+        --dry-run --once
+
   test:lightweight:
     desc: Run lightweight tests without expensive or opt-in execution markers.
     dir: backend

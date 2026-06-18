@@ -108,6 +108,35 @@ services:
       - ./backend:/app
     command: python -m app.outbox.dispatcher --interval 5 --batch-size 100
 
+  privacy-export-worker:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: fastapi_privacy_export_worker
+    restart: unless-stopped
+    profiles:
+      - privacy-exports
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP__ENVIRONMENT: local
+      LOGGING__AS_JSON: "true"
+      DATABASE__URL: postgresql+psycopg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-app}
+      REDIS__URL: redis://redis:6379/0
+      VAULT__ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: >
+      python -m app.commands.privacy_export_worker
+      --batch-size ${PRIVACY_EXPORT_WORKER_BATCH_SIZE:-10}
+      --poll-interval ${PRIVACY_EXPORT_WORKER_POLL_INTERVAL_SECONDS:-5}
+
   postgres:
     image: postgres:17-alpine
     container_name: fastapi_postgres
