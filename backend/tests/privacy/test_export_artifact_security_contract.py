@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
 from pydantic import SecretStr
 
 from app.core.platform.permissions import (
@@ -11,6 +12,8 @@ from app.core.platform.permissions import (
 )
 from app.privacy.api import platform_export_artifacts as platform_api
 from app.privacy.storage.local import LocalStorageAdapter
+
+pytestmark = [pytest.mark.privacy, pytest.mark.security]
 
 
 def test_platform_export_artifact_read_permission_is_specific() -> None:
