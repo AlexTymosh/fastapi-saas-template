@@ -10,7 +10,9 @@ Export artifacts are generated asynchronously from approved export DSRs.
 - Local storage backend is for development and test only.
 - `s3_compatible` is the required staging/production backend when privacy
   exports are enabled.
-- Download URLs are short-lived and signed for local development semantics.
+- Local download URLs use signed `local://privacy-export/...` references for
+  development and tests only. They are not HTTP URLs and must not be exposed as
+  a browser-download contract in staging or production.
 - S3-compatible downloads use short-lived SigV4 presigned GET URLs.
 - Raw export payloads are not stored in the database.
 - Export payloads are assembled from the current cross-table subject export
@@ -44,6 +46,16 @@ state.
 If the product later requires a single-active-artifact model, that should be a
 separate contract change with either existing-active-artifact reuse or a
 database constraint for active statuses.
+
+## Local download URL contract
+
+The local storage backend signs opaque `local://privacy-export/...` references.
+These values are local adapter references, not HTTP URLs.
+
+The local backend exists for development and tests only. It is intentionally not
+a production delivery mechanism and must not be treated as a public browser
+URL. Production-like environments must use the `s3_compatible` backend so the
+storage provider issues short-lived SigV4 presigned HTTP GET URLs.
 
 ## Worker operations
 

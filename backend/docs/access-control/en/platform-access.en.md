@@ -94,28 +94,17 @@ audit:read_limited
 
 gdpr:export
 gdpr:erase
+privacy_requests:read
+privacy_requests:review
+privacy_requests:execute_erasure
+privacy_export_artifacts:read
 ```
 
 Current role mapping:
 
 ```text
 platform_admin:
-- users:read
-- users:read_limited
-- users:suspend
-- users:restore
-- users:correct_profile
-- organisations:read
-- organisations:read_limited
-- organisations:suspend
-- organisations:restore
-- organisations:correct_profile
-- organisations:emergency_owner_correction
-- platform_staff:manage
-- audit:read
-- audit:read_limited
-- gdpr:export
-- gdpr:erase
+- all permissions
 
 support_agent:
 - users:read_limited
@@ -128,6 +117,10 @@ compliance_officer:
 - audit:read
 - audit:read_limited
 - gdpr:export
+- privacy_requests:read
+- privacy_requests:review
+- privacy_requests:execute_erasure
+- privacy_export_artifacts:read
 ```
 
 ## 5. Platform actor resolution
@@ -168,6 +161,7 @@ Platform actors must use dedicated routes:
 /api/v1/platform/staff/*
 /api/v1/platform/audit-events
 /api/v1/platform/audit-events/limited
+/api/v1/platform/privacy/export-artifacts
 ```
 
 Platform actors must not bypass ordinary tenant endpoints.
@@ -185,7 +179,6 @@ The same actor may use a dedicated platform endpoint:
 ```text
 GET /api/v1/platform/organisations/{organisation_id}
 ```
-
 
 ## 8. Full and limited platform views
 
@@ -407,5 +400,5 @@ Future admin clients may rely on `operationId` values as stable method names, bu
 - Added permissions privacy_requests:read and privacy_requests:review; support_agent remains denied by default, compliance_officer allowed.
 
 - `gdpr:export` is required for platform export-artifact creation and download-url creation.
-- `privacy_requests:read` is required for platform export-artifact metadata reads.
+- `privacy_export_artifacts:read` is required for platform export-artifact metadata reads.
 - `support_agent` has no export-artifact access by default.
