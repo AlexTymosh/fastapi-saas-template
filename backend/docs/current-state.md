@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-06-09
+2026-06-19
 
 ## Project Phase
 
@@ -39,14 +39,18 @@ should still be verified against code before extension:
   - idempotent submission controls;
   - execution state separated from administrative review status;
   - cross-table subject export providers;
-  - export artifact worker flow;
+  - export artifact worker flow and ops integration;
   - local and S3-compatible export artifact storage;
+  - opt-in MinIO/Testcontainers coverage for S3-compatible export storage;
+  - dedicated export artifact download URL rate limits;
   - platform erasure execution API;
   - executable erasure providers for audit, outbox, invites, platform staff,
     export-artifact metadata, privacy-governance minimisation, DSR workflow
     metadata and user profile;
-  - explicit retain/manual-review policy entries for membership and organisation
-    records where automatic mutation would break tenant or compliance integrity;
+  - explicit retain/manual-review policy entries for membership, organisation
+    and consent records where automatic mutation would break tenant,
+    access-control or compliance integrity;
+  - provider decision preservation in erasure orchestration results;
   - audit minimisation before destructive erasure;
   - self-erasure execution rejection;
   - automatic fulfilment after successful approved erase execution;
@@ -56,8 +60,8 @@ should still be verified against code before extension:
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies,
   settings-aware policy resolution, authenticated reads, tenant flows, invite
-  anti-abuse flows, platform read/audit reads and fail-closed platform write
-  policies.
+  anti-abuse flows, platform read/audit reads, privacy export download URL
+  limits and fail-closed platform write policies.
 - Observability/OpenTelemetry foundation.
 - pytest/Testcontainers foundation.
 - `uv` dependency workflow:
@@ -78,13 +82,15 @@ should still be verified against code before extension:
 - Observability integration beyond the current foundation.
 - Full BOLA/BFLA security test matrix outside the currently covered tenant BOLA,
   platform permission-matrix and feature-specific privacy permission tests.
-- DSR hardening items that are intentionally separate from the current
-  executable workflow:
+- DSR hardening items that are intentionally separate from the current #328
+  backend closure scope:
   - streaming export archive generation;
   - PostgreSQL-specific JSON predicate export-provider tests;
   - explicit delivery evidence semantics;
   - authorised representative workflows;
-  - frontend/UI.
+  - frontend/UI;
+  - execution pipelines for rectify/restrict/object/access/portability request
+    types.
 
 ## Not Implemented / Planned
 
@@ -125,8 +131,10 @@ verification:
 - `backend/docs/access-control/en` is the canonical access-control
   documentation source.
 - `backend/docs/privacy-dsr.md` contains the current DSR workflow summary.
+- `backend/docs/privacy-export-artifacts.md` contains export artifact storage,
+  worker, download URL and retention details.
 - `backend/docs/privacy-dsr-328-closure-checklist.md` tracks closure readiness
-  and remaining blockers for issue #328.
+  and final verification for issue #328.
 - `SESSION_NOTES.md` contains short live handoff notes for AI-agent sessions.
 - `README.md`, `AGENTS.md`, and `Taskfile.yml` are the primary developer
   workflow entry points.
@@ -173,7 +181,7 @@ External DB tests are opt-in and must not run by default.
 ## Recommended Next Steps
 
 1. Keep CI green and required before merging.
-2. Complete the final #328 closure review after #407/#408 changes pass broad CI.
+2. Close issue #328 after this documentation reconciliation PR and broad CI pass.
 3. Continue expanding BOLA/BFLA and platform permission tests.
 4. Harden Docker/runtime for production beyond dependency installation.
 5. Continue trusted proxy policy hardening and verify deployment-specific CORS
