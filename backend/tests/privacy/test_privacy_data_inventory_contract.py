@@ -58,6 +58,16 @@ def test_scope_exclusions_are_explicit_and_reasoned() -> None:
         assert len(exclusion.reason.strip()) >= 20
 
 
+def test_outbox_delivery_claims_are_excluded_from_dsr_scope() -> None:
+    exclusions = get_dsr_scope_exclusions_by_table()
+    exclusion = exclusions["outbox_delivery_claims"]
+
+    reason = exclusion.reason.lower()
+    assert "operational outbox worker ownership" in reason
+    assert "no subject payload" in reason
+    assert "delivery payload" in reason
+
+
 def test_issue_328_core_tables_have_export_and_erasure_coverage() -> None:
     inventory = get_privacy_inventory_by_table()
 

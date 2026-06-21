@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Index, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db.base import Base
@@ -52,3 +52,18 @@ class OutboxEvent(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class OutboxDeliveryClaim(Base):
+    __tablename__ = "outbox_delivery_claims"
+    __table_args__ = (Index("ix_outbox_delivery_claims_claim_token", "claim_token"),)
+
+    event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("outbox_events.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    claim_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )

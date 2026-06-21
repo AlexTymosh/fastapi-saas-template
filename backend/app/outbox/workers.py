@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from secrets import token_urlsafe
 from uuid import UUID
 
 import dramatiq
@@ -26,11 +27,17 @@ async def _get_claimed_event_context(
     event_id: str,
 ) -> tuple[str, dict[str, object], Invite | None]:
     session_factory = get_session_factory()
+    delivery_claim_token = token_urlsafe(32)
+    context: dict[str, object] = {"delivery_claim_token": delivery_claim_token}
+
     async with session_factory() as session:
         async with session.begin():
             repository = OutboxEventRepository(session)
-            event = await repository.get_by_id(UUID(event_id))
-            if event is None or event.status != OutboxStatus.PROCESSING.value:
+            event = await repository.claim_processing_event_for_delivery(
+                event_id=UUID(event_id),
+                claim_token=delivery_claim_token,
+            )
+            if event is None:
                 return "skip", {}, None
             if event.status in {
                 OutboxStatus.PROCESSED.value,
@@ -41,7 +48,7 @@ async def _get_claimed_event_context(
                 OutboxEventType.INVITE_CREATED.value,
                 OutboxEventType.INVITE_RESEND.value,
             }:
-                return "mark_processed", {}, None
+                return "mark_processed", context, None
             try:
                 payload = parse_invite_outbox_payload(event.payload_json)
             except (ValidationError, TypeError, ValueError):
@@ -50,37 +57,45 @@ async def _get_claimed_event_context(
                     event_id=event_id,
                     event_type=event.event_type,
                 )
-                return "malformed_outbox_payload", {}, None
+                return "malformed_outbox_payload", context, None
             invite = (
                 await session.execute(
                     select(Invite).where(Invite.id == payload.invite_id)
                 )
             ).scalar_one_or_none()
             if invite is None:
-                return "invite_not_found", {}, None
+                return "invite_not_found", context, None
             if invite.status != InviteStatus.PENDING:
-                return "mark_processed", {}, None
+                return "mark_processed", context, None
             crypto = OutboxPayloadCrypto.from_settings(settings=get_settings())
             try:
                 raw_token = crypto.decrypt_token(payload.encrypted_raw_token)
             except ValueError:
                 log.warning("outbox_payload_decryption_failed", event_id=event_id)
-                return "outbox_payload_decryption_failed", {}, None
+                return "outbox_payload_decryption_failed", context, None
             token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
             if token_hash != invite.token_hash:
-                return "token_hash_mismatch", {}, None
-            return "deliver", {"raw_token": raw_token}, invite
+                return "token_hash_mismatch", context, None
+            context["raw_token"] = raw_token
+            return "deliver", context, invite
 
 
 async def _apply_result(
-    event_id: str, *, success: bool, error: str | None = None
+    event_id: str,
+    *,
+    delivery_claim_token: str,
+    success: bool,
+    error: str | None = None,
 ) -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         async with session.begin():
             repository = OutboxEventRepository(session)
-            event = await repository.get_by_id(UUID(event_id))
-            if event is None or event.status != OutboxStatus.PROCESSING.value:
+            event = await repository.get_delivery_claimed_event(
+                event_id=UUID(event_id),
+                claim_token=delivery_claim_token,
+            )
+            if event is None:
                 return
             if success:
                 await repository.mark_processed(event=event)
@@ -88,12 +103,18 @@ async def _apply_result(
                 await repository.mark_failed_attempt(event=event, error=error)
 
 
+def _delivery_claim_token(context: dict[str, object]) -> str:
+    return str(context["delivery_claim_token"])
+
+
 async def _process_outbox_event(event_id: str) -> None:
     action, context, invite = await _get_claimed_event_context(event_id)
     if action == "skip":
         return
+
+    claim_token = _delivery_claim_token(context)
     if action == "mark_processed":
-        await _apply_result(event_id, success=True)
+        await _apply_result(event_id, delivery_claim_token=claim_token, success=True)
         return
     if action in {
         "invite_not_found",
@@ -101,7 +122,12 @@ async def _process_outbox_event(event_id: str) -> None:
         "outbox_payload_decryption_failed",
         "malformed_outbox_payload",
     }:
-        await _apply_result(event_id, success=False, error=action)
+        await _apply_result(
+            event_id,
+            delivery_claim_token=claim_token,
+            success=False,
+            error=action,
+        )
         return
 
     try:
@@ -110,13 +136,14 @@ async def _process_outbox_event(event_id: str) -> None:
     except Exception as exc:
         await _apply_result(
             event_id,
+            delivery_claim_token=claim_token,
             success=False,
             error=f"delivery_failed:{type(exc).__name__}",
         )
         log.warning("outbox_delivery_failed", event_id=event_id)
         return
 
-    await _apply_result(event_id, success=True)
+    await _apply_result(event_id, delivery_claim_token=claim_token, success=True)
 
 
 @dramatiq.actor(max_retries=0)

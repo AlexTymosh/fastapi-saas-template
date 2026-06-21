@@ -959,6 +959,14 @@ PRIVACY_DATA_INVENTORY: tuple[PrivacyTableInventoryEntry, ...] = (
 
 DSR_SCOPE_EXCLUDED_TABLES: tuple[DsrScopeExclusion, ...] = (
     DsrScopeExclusion(
+        table_name="outbox_delivery_claims",
+        reason=(
+            "Operational outbox worker ownership table; stores only event_id, "
+            "an opaque delivery claim token, and claim timestamp. It contains "
+            "no subject payload or delivery payload."
+        ),
+    ),
+    DsrScopeExclusion(
         table_name="processing_purposes",
         reason="Static processing-purpose catalogue; no subject identifier column.",
     ),
