@@ -1,57 +1,48 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR invite erasure provider
 
-This slice adds the second controlled mutation provider for issue #328:
+## Historical context
+
+This document described the controlled mutation provider for:
 
 - `invites.anonymise_or_purge_subject_references`
 
-The provider is intentionally narrow. It is not wired into public API endpoints,
-background workers or automatic DSR execution yet.
+The provider has since been included in the current erasure orchestration flow.
+
+## Current status
+
+Invite erasure/minimisation is part of the inventory-aligned erasure workflow
+described in `backend/docs/privacy-dsr.md`.
 
 ## Behaviour
 
-For an approved `erase` Data Subject Request, the provider locks invite rows that
-match either of these subject links:
+For an approved `erase` DSR, the provider handles invite rows linked to the
+subject through:
 
-- the invite email matches the normalised subject email;
-- `invites.revoked_by_user_id` matches the subject user id.
+- invitee email matching the normalised subject email snapshot;
+- `invites.revoked_by_user_id` matching the subject user id.
 
-Invitee-side rows are kept in place and anonymised with deterministic tombstones
-because the current schema keeps `email` and `token_hash` non-null and other
-parts of the system may still reference the invite id.
+Invitee-side rows are preserved and anonymised with deterministic tombstones
+where schema constraints or operational references require the invite row to
+remain.
 
-For pending invitee-side rows, the provider also revokes the invite and clears
-`expires_at`, making the invite unusable without deleting the row.
+Pending invitee-side rows are revoked and made unusable.
 
-Revoker-only rows keep the invitee email/token intact and only clear the
-subject-side `revoked_by_user_id` reference.
+Revoker-only rows keep invitee-side data intact and clear only the subject-side
+revoker reference.
 
-## Safety rules
+## Ordering rule
 
-The provider rejects:
-
-- non-`erase` DSRs;
-- non-approved DSRs;
-- subjectless DSRs;
-- DSRs whose subject user no longer exists.
-
-The provider does not commit the transaction. Future orchestration should call it
-inside an explicit transaction and record DSR execution/audit events separately.
-
-## Why this is separate from user profile erasure
-
-Invite erasure needs the subject email to locate invitee-side records. Once the
-user profile has been anonymised, `users.email` may already be `NULL`.
-
-To avoid ordering bugs in the future orchestration layer, the provider accepts an
-optional `subject_email` snapshot. The orchestrator can capture the subject email
-before running `users.anonymise_profile` and pass it to this provider.
-
-## Out of scope
-
-This slice does not implement:
-
-- outbox payload scrubbing;
-- audit minimisation;
-- retention purge runners;
-- DSR execution-state transitions;
-- platform API endpoints.
+Invite minimisation must run before user-profile anonymisation can remove the
+subject email. The orchestrator should therefore capture a subject email
+snapshot before direct identifiers are removed.

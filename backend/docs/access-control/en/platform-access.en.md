@@ -9,7 +9,8 @@ Platform access is used for internal operational work:
 - compliance;
 - emergency correction;
 - user and organisation suspension;
-- platform staff management.
+- platform staff management;
+- privacy and DSR operations.
 
 Platform access is not the same as organisation membership.
 
@@ -26,7 +27,8 @@ Keycloak handles:
 - optional MFA;
 - JWT issuance.
 
-JWT claims are identity input only. Backend authorization must not trust external JWT roles as request-time permissions.
+JWT claims are identity input only. Backend authorization must not trust external
+JWT roles as request-time permissions.
 
 The backend handles:
 
@@ -36,24 +38,14 @@ The backend handles:
 - permissions;
 - audit trail.
 
-Authorization is DB-driven. `platform_admin`, `realm_access.roles`, `resource_access.*.roles`, direct `roles`, legacy `superadmin`, and similar IdP role claims must never grant backend tenant/platform permissions directly at request time. External IdP roles may only be considered in the future as input for controlled, idempotent, audited JIT provisioning that writes local `memberships` or `platform_staff` records before permissions are granted.
+Authorization is DB-driven. `platform_admin`, `realm_access.roles`,
+`resource_access.*.roles`, direct `roles`, legacy `superadmin`, and similar IdP
+role claims must never grant backend tenant/platform permissions directly at
+request time.
 
 ## 3. Backend source of truth
 
 Platform authorization is stored in the backend `platform_staff` table.
-
-Current table:
-
-```text
-platform_staff
-- id
-- user_id
-- role
-- status
-- created_by_user_id
-- created_at
-- updated_at
-```
 
 Current roles:
 
@@ -72,7 +64,7 @@ suspended
 
 ## 4. Permission mapping
 
-Recommended permissions (strict enum-like names):
+Recommended permissions:
 
 ```text
 users:read
@@ -123,6 +115,11 @@ compliance_officer:
 - privacy_export_artifacts:read
 ```
 
+`compliance_officer` does not receive the generic `gdpr:erase` permission.
+Approved DSR erasure uses the dedicated `privacy_requests:execute_erasure`
+boundary instead. This keeps generic erase authority separate from the reviewed
+DSR execution flow used by the privacy API.
+
 ## 5. Platform actor resolution
 
 Platform endpoint dependency should check:
@@ -133,22 +130,22 @@ Platform endpoint dependency should check:
 3. user.status = active.
 4. Active platform_staff record exists.
 5. platform_staff.status = active.
-6. role has required permission, unless the endpoint only needs the active platform identity.
+6. role has required permission, unless the endpoint only needs the active
+   platform identity.
 ```
 
-If any check fails, return 403, except missing/invalid JWT which should return 401.
+If any check fails, return `403`, except missing/invalid JWT which should return
+`401`.
 
 ## 6. Platform identity endpoint
 
-`GET /api/v1/platform/me` exposes the safe platform identity for the currently authenticated actor. It is intended for a future admin frontend immediately after login so the frontend can decide whether platform access is available and which admin UI sections should be shown.
+`GET /api/v1/platform/me` exposes the safe platform identity for the currently
+authenticated actor.
 
-The endpoint returns the local `user_id`, `staff_id`, platform `role`, `staff_status`, effective platform `permissions`, safe profile fields (`email`, `email_verified`, `first_name`, `last_name`), `user_status`, and relevant user/staff timestamps. It must not expose internal ORM objects, `external_auth_id`, suspension reasons, raw audit metadata, or credential/token data.
-
-The role and permissions in the response are resolved only from the local `platform_staff` row and backend role-to-permission mapping. JWT roles, `realm_access`, `resource_access`, direct `roles`, and similar IdP claims are not trusted for platform authorization.
-
-`GET /api/v1/platform/me` requires an authenticated principal, an existing local user projection, `user.status = active`, an existing `platform_staff` row, and `platform_staff.status = active`. It resolves an active platform actor without requiring an arbitrary business permission such as `users:read` or `audit:read`. Non-platform users, suspended local users, missing staff rows, and suspended staff rows receive the same generic `403` platform access denial. Missing or invalid authentication receives `401`.
-
-The endpoint is read-only and must be protected by the platform read rate-limit policy. It does not create users, does not create staff records, and does not grant access from JWT-provided roles.
+The role and permissions in the response are resolved only from the local
+`platform_staff` row and backend role-to-permission mapping. JWT roles,
+`realm_access`, `resource_access`, direct `roles`, and similar IdP claims are not
+trusted for platform authorization.
 
 ## 7. Endpoint separation
 
@@ -161,12 +158,11 @@ Platform actors must use dedicated routes:
 /api/v1/platform/staff/*
 /api/v1/platform/audit-events
 /api/v1/platform/audit-events/limited
-/api/v1/platform/privacy/export-artifacts
+/api/v1/platform/privacy/data-subject-requests*
+/api/v1/platform/privacy/export-artifacts*
 ```
 
 Platform actors must not bypass ordinary tenant endpoints.
-
-Limited audit view (`/api/v1/platform/audit-events/limited`) is for `AUDIT_READ_LIMITED` and must not expose raw `metadata_json`, `ip_address`, `user_agent`, free-text `reason`, or direct `actor_user_id`.
 
 A `platform_admin` who is not a member of organisation X must receive `403` from:
 
@@ -182,9 +178,14 @@ GET /api/v1/platform/organisations/{organisation_id}
 
 ## 8. Full and limited platform views
 
-Full platform list and detail views are reserved for `platform_admin` or actors with the corresponding full permissions from `ROLE_PERMISSIONS`, such as `users:read`, `organisations:read`, `platform_staff:manage`, or `audit:read`. Full views may expose operational fields required for privileged support, audit, compliance, or recovery workflows.
+Full platform list and detail views are reserved for `platform_admin` or actors
+with the corresponding full permissions from `ROLE_PERMISSIONS`.
 
-Limited platform views are separate endpoints for `support_agent` and `compliance_officer` according to `ROLE_PERMISSIONS`. They intentionally expose reduced DTOs and must not be treated as aliases for full platform views. Current limited view endpoints are:
+Limited platform views are separate endpoints for `support_agent` and
+`compliance_officer` according to `ROLE_PERMISSIONS`. They intentionally expose
+reduced DTOs and must not be treated as aliases for full platform views.
+
+Current limited view endpoints:
 
 ```text
 GET /api/v1/platform/users/limited
@@ -202,7 +203,11 @@ status
 created_at
 ```
 
-The limited user DTO must not return `email`, `external_auth_id`, `email_verified`, `suspended_at`, `suspended_reason`, onboarding or other internal fields, token or credential data, or audit metadata. The endpoint may search by email internally when `q` is used, but the full email address must never be returned in the limited response.
+The limited user DTO must not return `email`, `external_auth_id`,
+`email_verified`, `suspended_at`, `suspended_reason`, onboarding fields, token or
+credential data, or audit metadata. The endpoint may search by email internally
+when `q` is used, but the full email address must never be returned in the
+limited response.
 
 The limited organisation DTO may contain only:
 
@@ -214,9 +219,13 @@ status
 created_at
 ```
 
-The limited organisation DTO must not return `suspended_at`, `suspended_reason`, `deleted_at`, owner internals, membership internals, or audit metadata. Deleted organisations are excluded from limited views by default. Full platform organisation endpoints may have broader operational visibility, including intentional visibility of soft-deleted organisations where required for support, audit, compliance, or recovery workflows.
+The limited organisation DTO must not return `suspended_at`, `deleted_at`, owner
+internals, membership internals, operational correction metadata, or audit
+metadata. Full platform organisation endpoints may have broader operational
+visibility where required for support, audit, compliance, or recovery workflows.
 
-Limited list endpoints support these query parameters unless a route-specific contract says otherwise:
+Limited list endpoints support these query parameters unless a route-specific
+contract says otherwise:
 
 ```text
 limit
@@ -232,11 +241,43 @@ created_at desc
 id desc
 ```
 
-## 9. Future admin frontend and OpenAPI contract
+Limited views must not expose restricted operational fields, raw audit metadata,
+raw actor ids, network identifiers, credential data, or token material.
 
-`GET /api/v1/platform/me` is the first endpoint a future admin frontend should call after login. The frontend should use it to determine whether platform access is available and which sections may be shown for the resolved local platform role and permissions.
+## 9. Privacy and DSR platform access
 
-Generated frontend clients should rely on stable platform paths, tags, response models, and operation IDs. Platform OpenAPI tags are grouped by platform area:
+DSR platform endpoints are grouped under:
+
+```text
+/api/v1/platform/privacy/*
+```
+
+Required permission boundaries:
+
+| Area | Permission |
+|---|---|
+| DSR list/detail reads | `privacy_requests:read` |
+| DSR review/approve/reject/cancel | `privacy_requests:review` |
+| Approved erase execution | `privacy_requests:execute_erasure` |
+| Export artifact metadata list/detail | `privacy_export_artifacts:read` |
+| Export artifact creation | `gdpr:export` |
+| Export artifact download URL creation | `gdpr:export` |
+
+`support_agent` has no DSR/export-artifact access by default.
+
+`compliance_officer` can read/review DSRs, execute approved erasure through the
+dedicated boundary, read export artifact metadata, and create export artifacts.
+The role does not receive generic `gdpr:erase`.
+
+## 10. Future admin frontend and OpenAPI contract
+
+`GET /api/v1/platform/me` is the first endpoint a future admin frontend should
+call after login.
+
+Generated frontend clients should rely on stable platform paths, tags, response
+models, and operation IDs.
+
+Platform OpenAPI tags are grouped by platform area:
 
 ```text
 platform-identity
@@ -244,13 +285,17 @@ platform-users
 platform-organisations
 platform-staff
 platform-audit
+platform-privacy
 ```
 
-Backend contract tests must freeze exact operation IDs for platform routes and must fail if a platform route is accidentally undocumented, untagged, missing a response model, or missing its expected rate-limit policy.
+Backend contract tests must freeze exact operation IDs for platform routes and
+must fail if a platform route is accidentally undocumented, untagged, missing a
+response model, or missing its expected rate-limit policy.
 
-## 10. Permission matrix testing
+## 11. Permission matrix testing
 
-Backend tests must prove broken function-level authorization protection across platform endpoints for:
+Backend tests must prove broken function-level authorization protection across
+platform endpoints for:
 
 ```text
 unauthenticated users
@@ -262,42 +307,46 @@ compliance_officer
 platform_admin
 ```
 
-The matrix must also prove that limited DTOs do not expose forbidden fields, denied platform writes do not create audit events, and platform permissions are resolved from local `platform_staff` records rather than JWT roles.
+The matrix must also prove that:
 
-## 11. Platform-created organisations and initial owner assignment
+- limited DTOs do not expose forbidden fields;
+- denied platform writes do not create audit events;
+- platform permissions are resolved from local `platform_staff` records rather
+  than JWT roles;
+- DSR/export-artifact endpoints use the `platform-privacy` tag;
+- privacy permissions are enforced separately from generic platform read/write
+  permissions.
 
-When a standalone tenant user creates an organisation, that creator becomes `owner`.
+## 12. Platform-created organisations and initial owner assignment
+
+When a standalone tenant user creates an organisation, that creator becomes
+`owner`.
 
 When a platform actor creates an organisation through a platform endpoint:
 
 - the platform actor must not become tenant owner automatically;
 - platform roles must not create tenant membership implicitly;
-- the endpoint must require explicit initial owner assignment via `initial_owner_user_id` or `initial_owner_email`.
+- the endpoint must require explicit initial owner assignment via
+  `initial_owner_user_id` or `initial_owner_email`.
 
-Ownerless organisation creation is a special bootstrap/operational case and must not be the default path.
+Ownerless organisation creation is a special bootstrap/operational case and must
+not be the default path.
 
-## 12. Bootstrap first platform admin
+## 13. Bootstrap first platform admin
 
-The first platform admin should be created by a management command, not by public API.
+The first platform admin should be created by a management command, not by
+public API.
 
-Example command:
+Example command from `backend/`:
 
 ```bash
-python -m app.commands.make_platform_admin --email admin@example.com
+uv run python -m app.commands.make_platform_admin --email admin@example.com
 ```
 
-Expected behaviour:
+Do not allow public self-service creation of `platform_admin`. Do not bootstrap
+platform access with Keycloak roles or manual database edits.
 
-```text
-1. Find an existing local user by email.
-2. Require that user to be active.
-3. Create an active `platform_staff` row with `role=platform_admin`, or exit successfully if it already exists.
-4. Write a bootstrap audit event when a new grant is made.
-```
-
-Do not allow public self-service creation of `platform_admin`. Do not bootstrap platform access with Keycloak roles or manual database edits.
-
-## 13. Audit requirements
+## 14. Audit requirements
 
 All platform actions must write audit events.
 
@@ -325,80 +374,35 @@ security
 compliance
 ```
 
-Recommended audited actions:
-
-```text
-user_suspended
-user_restored
-organisation_suspended
-organisation_restored
-platform_staff_created
-platform_staff_removed
-platform_staff_suspended
-data_corrected
-gdpr_export_requested
-gdpr_erasure_requested
-```
-
-## 14. Emergency owner correction
-
-Tenant API must not support ownership transfer.
-
-If a real operational case appears, add a platform-only emergency endpoint:
-
-```text
-POST /api/v1/platform/organisations/{organisation_id}/owner-correction
-```
-
-Requirements:
-
-```text
-- organisations:emergency_owner_correction permission;
-- mandatory reason;
-- audit event required;
-- no ordinary tenant endpoint;
-- preferably two-person approval in future.
-```
-
-Current implementation note: an internal-only service flow is available via
-`PlatformOrganisationsService.emergency_replace_organisation_owner`. It performs
-an atomic owner replacement and writes a platform audit event. This remains an
-internal operational path until a dedicated public API contract is introduced.
-
-
-## Implementation status update (2026-04-30)
-- Added backend-managed `platform_staff` foundation.
-- Added `/api/v1/platform/*` endpoints for identity, users, organisations, staff, and audit-events.
-- Added `require_platform_permission()` DB-backed authorization; JWT roles must not grant request-time permissions.
-
-- Platform access is DB-backed via `platform_staff`; JWT roles must never grant request-time backend permissions and may only become future controlled JIT provisioning input for local DB records.
-- Platform actors can act only via `/api/v1/platform/*` and do not bypass tenant `/api/v1/organisations/*` endpoints.
-- Platform write actions require a non-blank reason, are audited, and self-suspension is forbidden.
-- Last-platform-admin hardening is implemented for platform staff demotion and suspension flows.
+Privacy/DSR execution audit events must avoid storing raw export payloads,
+signed URLs, storage keys, local paths, processing tokens, or unsafe free-text
+details.
 
 ## 15. OpenAPI contract for generated admin clients
 
-Platform admin frontend clients should be generated from the backend OpenAPI schema instead of hand-written route metadata. The backend uses one app-level `generate_unique_id_function` so every OpenAPI `operationId` is generated from the FastAPI `APIRoute.name` value.
-
 Contract rules:
 
-- Route handler names are the generated-client method names and must remain globally unique across all schema-included routes.
-- Route handler names should be stable, descriptive, snake_case, and TypeScript-friendly. Prefer full words such as `organisation` over abbreviations such as `org`.
-- Platform routes must use only these tags: `platform-identity`, `platform-users`, `platform-organisations`, `platform-staff`, and `platform-audit`.
+- Route handler names are the generated-client method names and must remain
+  globally unique across all schema-included routes.
+- Route handler names should be stable, descriptive, snake_case, and
+  TypeScript-friendly.
+- Platform routes must use only these tags:
+  - `platform-identity`
+  - `platform-users`
+  - `platform-organisations`
+  - `platform-staff`
+  - `platform-audit`
+  - `platform-privacy`
 - Platform routes must not use the generic `platform` tag.
 - Health routes must not use platform tags.
-- Platform routes that return a body must declare a strict Pydantic `response_model`; bare `dict`, untyped dictionaries, `Any`, and bare list response models are not allowed.
-- Platform collection responses should use the standard `{ "data": [], "meta": {}, "links": {} }` envelope so generated clients receive stable response shapes.
-- Limited platform views must not expose restricted operational fields. Limited audit responses intentionally expose boolean indicators such as `has_actor`, `has_metadata`, and `has_reason` instead of raw actor IDs, metadata, IP address, user-agent, or free-text reason.
-- Platform read and write routes must carry explicit route-level rate-limit dependency metadata so contract tests can verify the expected `platform_read`, `audit_read`, `platform_write`, or `platform_staff_write` policy.
+- Platform routes that return a body must declare a strict Pydantic
+  `response_model`.
+- Platform collection responses should use the standard envelope:
+  `{ "data": [], "meta": {}, "links": {} }`.
+- Limited platform views must not expose restricted operational fields.
+- Platform read and write routes must carry explicit route-level rate-limit
+  dependency metadata.
 
-Future admin clients may rely on `operationId` values as stable method names, but any route rename is an API-contract change and must be reviewed with the same care as a path or schema change.
-
-- Added DSR platform permissions for compliance officers (`privacy_requests:read`, `privacy_requests:review`) and kept support-agent access denied by default.
-
-- Added DSR platform endpoints under /api/v1/platform/privacy/data-subject-requests* and platform-privacy OpenAPI tag coverage.
-- Added permissions privacy_requests:read and privacy_requests:review; support_agent remains denied by default, compliance_officer allowed.
-
-- `gdpr:export` is required for platform export-artifact creation and download-url creation.
-- `privacy_export_artifacts:read` is required for platform export-artifact metadata reads.
-- `support_agent` has no export-artifact access by default.
+Future admin clients may rely on `operationId` values as stable method names,
+but any route rename is an API-contract change and must be reviewed with the
+same care as a path or schema change.

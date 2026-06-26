@@ -1,20 +1,33 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR outbox erasure provider
 
-This slice adds the controlled mutation provider for:
+## Historical context
+
+This document described the controlled mutation provider for:
 
 - `outbox.purge_or_scrub_payload`
 
-The provider is intentionally narrow. It only scrubs subject-linked outbox
-payloads for approved `erase` Data Subject Requests. It does not update DSR
-execution state, does not commit transactions, and is not wired into public API
-or workers yet.
+The provider has since been included in the current erasure orchestration flow.
 
-## Why this exists
+## Current status
+
+Outbox payload scrubbing is part of the inventory-aligned erasure workflow
+described in `backend/docs/privacy-dsr.md`.
+
+## Purpose
 
 Outbox rows may contain delivery-only personal data and secrets in
-`payload_json`, for example invite email addresses and encrypted raw invite
-tokens. Those values are needed only until delivery has completed or the invite
-is no longer allowed to be delivered.
+`payload_json`, such as invite email addresses or encrypted raw invite tokens.
 
 After an erasure request is approved, subject-linked outbox payloads must be
 scrubbed before the workflow can be considered complete.
@@ -26,51 +39,16 @@ The provider can match subject-linked rows by:
 - invite id snapshots via `aggregate_id`;
 - subject email snapshots via `payload_json.email`.
 
-The snapshot parameters matter because the wider erasure workflow can run user
-and invite anonymisation before outbox scrubbing. Once those earlier providers
-run, the original subject email and invite email may no longer be available from
-current database rows.
+Snapshot parameters are required because earlier providers may remove the
+current database values that would otherwise be used for matching.
 
 ## Mutation rules
 
 For matched rows, the provider:
 
-- keeps safe reference fields such as `invite_id`, `organisation_id`, `purpose`
-  and `role`;
-- removes delivery-only or unsafe payload values, including email, encrypted raw
-  token and unknown future keys;
+- preserves safe operational references;
+- removes delivery-only or unsafe payload values;
 - adds scrub markers to `payload_json`;
-- terminalises pending rows as failed with the safe reason code
-  `privacy_erasure_scrubbed`;
-- rejects processing rows with `outbox_erasure_processing_rows_in_flight`;
+- terminalises pending rows with a safe reason code where allowed;
+- blocks unsafe in-flight processing rows;
 - clears unsafe historical `last_error` values on already-terminal rows.
-
-The provider preserves row ids, aggregate references, event type and timestamps
-so audit and operational history remain structurally intact.
-
-## Processing rows
-
-Processing rows are not safely cancellable inside this provider.
-
-The outbox worker reads and decrypts delivery material while the row is in
-`processing`, then performs the external delivery outside that transaction. If
-the erasure provider simply changed that row to `failed`, an already-running
-worker could still send the invite token after the provider returns.
-
-For that reason, this slice treats subject-linked processing rows as a blocking
-failure. A later orchestration slice must coordinate this with the worker claim
-and dispatch path before treating outbox erasure as complete.
-
-## Out of scope
-
-This slice does not implement:
-
-- audit minimisation;
-- DSR orchestration;
-- platform API endpoints;
-- worker execution coordination;
-- retention/purge runners.
-
-The next slice should either start controlled audit minimisation or add a small
-orchestration layer that runs the already implemented user, invite and outbox
-providers in a safe transaction with worker coordination.

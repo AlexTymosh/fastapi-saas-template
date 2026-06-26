@@ -1,13 +1,34 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR user profile erasure provider
 
-This slice adds the first controlled mutation provider for issue #328:
+## Historical context
+
+This document described the first controlled mutation provider for issue #328:
 
 - `users.anonymise_profile`
 
-The provider anonymises only the subject's local `users` row for an approved
-`erase` Data Subject Request. It does not commit the transaction and does not
-change DSR lifecycle fields. Wider orchestration, audit recording and execution
-state updates remain separate follow-up work.
+At the time of that slice, orchestration, execution audit recording, and
+lifecycle updates were intentionally handled later. The current implementation
+has since added those pieces.
+
+## Current status
+
+User-profile anonymisation is part of the inventory-aligned erasure workflow
+described in `backend/docs/privacy-dsr.md`.
+
+The provider remains responsible for removing or resetting direct local user
+profile identifiers while preserving the local user primary key for referential
+integrity.
 
 ## Mutated fields
 
@@ -22,35 +43,12 @@ The provider removes or resets direct user-profile identifiers:
 - `suspended_reason` is set to `NULL` because it may contain free-text personal
   data.
 
-The provider deliberately keeps the local user primary key so existing foreign
-keys, audit references, DSR records, memberships and export artifacts remain
-referentially intact.
-
 ## Safety rules
 
-The provider rejects:
+The provider must remain:
 
-- non-`erase` DSRs;
-- non-approved DSRs;
-- DSRs without `subject_user_id`;
-- DSRs whose subject user no longer exists.
-
-The provider is idempotent. Running it again for the same already anonymised
-profile returns `already_anonymised` with `affected_rows = 0`.
-
-## Out of scope
-
-This slice does not mutate:
-
-- invites;
-- outbox payloads;
-- memberships;
-- organisations;
-- audit events;
-- privacy-governance records;
-- export artifacts;
-- DSR status or execution state.
-
-Next implementation slices should add invite/outbox mutation providers, then a
-separate orchestration layer that executes providers inside one audited erasure
-workflow.
+- limited to approved `erase` DSRs;
+- subject-user scoped;
+- idempotent;
+- referentially safe for memberships, audit references, DSR records, and export
+  artifacts.

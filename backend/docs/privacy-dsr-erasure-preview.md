@@ -1,54 +1,45 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR erasure preview
 
-This slice adds a dry-run preview layer for `erase` Data Subject Requests.
+## Historical context
 
-The preview is intentionally non-destructive. It does not update, delete or
-anonymise database rows. It translates the inventory-derived erasure provider
-plan into a request-scoped execution preview so later destructive providers can
-be implemented behind a safer contract.
+This document described the dry-run preview slice that was introduced before
+concrete erasure providers were wired into the current runtime.
 
-## Why this exists
+The preview layer remains useful as an operator-facing view of the provider set,
+but this file is no longer the current implementation status document.
 
-Erasure is the riskiest part of issue #328 because it can permanently remove or
-minimise personal data while audit and tenant integrity still need to be
-preserved.
+## Current status
 
-The project should not jump directly from inventory metadata to SQL mutations.
-The safer sequence is:
+The current erasure implementation is documented in:
 
-1. Inventory-derived erasure provider plan.
-2. Request-scoped erasure preview.
-3. User, invite and outbox erasure providers.
-4. Audit minimisation providers.
-5. Retention and purge runners.
-6. Platform API execution controls.
+- `backend/docs/privacy-dsr.md`;
+- `backend/docs/privacy-dsr-erasure-orchestrator.md`;
+- `backend/docs/privacy-dsr-erasure-execution.md`.
 
-## Current behaviour
+The current workflow includes database-backed providers, provider decisions,
+platform execution, failed-state recording, audit evidence, and automatic
+fulfilment after successful approved erasure.
 
-`build_erasure_preview()` accepts a DSR id, subject user id and request type. It
-rejects non-`erase` request types and returns:
+## Preview contract
 
-- all planned erasure providers;
-- execution mode for each provider;
-- retention policy key;
-- manual-review requirement;
-- automatic/manual/retain-only/not-applicable provider groups.
+The preview should continue to expose request-scoped erasure impact without
+mutating records.
 
-Retain-with-legal-basis providers are grouped as `retain_only` before the
-manual-review fallback is applied. They may still carry
-`requires_manual_review=true`, but they are not mixed into the generic
-`manual_review_required` provider group.
+It should remain aligned with:
 
-The preview deliberately does not query the database yet. Database-row counting
-and operator-facing diff previews should be added in the next implementation
-slice together with the first concrete erasure providers.
-
-## Remaining work
-
-The next branch should add controlled erasure providers for:
-
-- `users.anonymise_profile`;
-- `invites.anonymise_or_purge_subject_references`;
-- `outbox.purge_or_scrub_payload`.
-
-That branch should keep audit minimisation and retention purge out of scope.
+- inventory-derived provider keys;
+- provider execution order;
+- retained-by-policy decisions;
+- manual-review decisions;
+- executable minimisation providers.

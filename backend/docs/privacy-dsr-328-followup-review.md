@@ -1,80 +1,63 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # Issue #328 follow-up review
 
-## Current status after PR #405
+## Historical context
 
-The current `main` branch has moved beyond the original #328 starting point.
+This review captured the project state after PR #405, before the final
+inventory-aligned erasure coverage, provider decision preservation, platform
+execution API, export retention, and documentation reconciliation work were
+completed.
 
-Implemented:
+The findings in this file are retained only as historical implementation
+context. They must not be used to decide whether #328 can be closed.
 
-- Data Subject Request persistence, lifecycle fields, repository, service and
-  user/platform API.
-- Platform permissions for DSR read/review, export artifact operations and
-  approved erasure execution.
-- Export artifact model, worker command, local storage adapter, S3-compatible
-  storage adapter and signed download URL flows.
-- DSR architecture inventory contract with table-level and column-level privacy
-  declarations.
-- Execution-state fields separated from administrative review status.
-- Cross-table subject export providers for the current privacy inventory scope.
-- Contract tests that align concrete subject export providers with inventory
-  export provider keys.
-- Erasure provider plan and preview.
-- Executable erasure providers for user profile, invites, outbox and audit
-  minimisation.
-- Core erasure orchestrator and command-layer execution boundary.
-- Platform erasure execution API.
-- Self-erasure execution rejection before provider orchestration.
-- Automatic fulfilment after successful approved erase execution.
-- Export artifact retention runner that deletes expired archive objects and
-  clears storage metadata.
+## Superseded findings
 
-Issue #328 is still not ready for closure. The executable erasure workflow does
-not yet cover every personal-data store declared by the erasure inventory.
+The earlier review identified missing runtime/policy coverage for several
+privacy inventory areas. That status has been superseded.
 
-## Remaining quality gaps
+Current documentation now records that the backend DSR scope includes:
 
-| Finding | Priority | Required action |
-|---|---:|---|
-| Executable erasure covers audit, outbox, invites and users only. | P1 | Add executable providers or explicit manual-review policy for the remaining inventory targets. |
-| Membership and organisation subject links are inventoried but not executed. | P1 | Implement minimisation/review providers before closing #328. |
-| Platform staff, DSR/export-artifact and privacy-governance records are inventoried but not executed. | P1 | Implement safe minimisation or documented retention/manual-review rules. |
-| Export generation still builds the subject payload and ZIP in memory. | P2 | Add streaming archive generation before supporting large production exports. |
-| PostgreSQL-specific JSON predicate behaviour is not covered by default tests. | P2 | Add an external-db test for outbox JSON matching and audit target joins. |
-| Delivery evidence is inferred from download URL/download count. | P2 | Add explicit delivery event semantics if formal receipt evidence becomes required. |
-| Rectification, restriction, objection, access and portability execution pipelines are not implemented. | P2 | Keep those request types reviewable but not fulfilment-ready until concrete execution policies exist. |
-| Authorised representative workflows are not implemented. | P2 | Add a separate representative authority and verification workflow if the product needs it. |
-| No frontend/UI is implemented. | P2 | Build UI separately; current scope is backend-only. |
+- DSR persistence, repository, service lifecycle, and user/platform APIs;
+- export artifacts, local development storage, S3-compatible storage, worker
+  operations, download URL generation, and retention;
+- cross-table subject export providers for the current privacy inventory;
+- inventory-aligned erasure orchestration;
+- provider decisions for executable, retained-by-policy, and manual-review
+  records;
+- platform erase execution and automatic fulfilment after successful execution;
+- contract tests for inventory, export providers, erasure coverage, provider
+  decisions, platform permissions, and privacy documentation.
 
-## Recommended next branch
+## Current closure rule
 
-Use a small implementation branch before closing #328:
+Use `backend/docs/privacy-dsr-328-closure-checklist.md` as the closure checklist.
 
-```text
-privacy/dsr-erasure-remaining-inventory-coverage
-```
+The current backend #328 scope may be closed when:
 
-Scope:
+1. the documentation reconciliation is merged;
+2. `task ci` passes;
+3. any remaining non-blocking hardening work is tracked as separate follow-up
+   issues.
 
-1. Add executable provider coverage or explicit manual-review rules for:
-   - memberships;
-   - organisations;
-   - platform staff;
-   - DSR/export-artifact records;
-   - privacy-governance records.
-2. Extend orchestration tests to prove those targets are handled.
-3. Update the erasure closure checklist only after the executable coverage and
-   tests are in place.
+## Remaining follow-up categories
 
-## Decomposition warning
+The following categories are not #328 closure blockers:
 
-The remaining #328 closure work should not be collapsed into this documentation
-PR.
-
-Recommended order:
-
-1. Close the current documentation overclaim in PR #406.
-2. Implement remaining erasure inventory coverage in a dedicated runtime PR.
-3. Add coverage tests for the newly executable erasure targets.
-4. Revisit the #328 closure checklist after those tests pass.
-5. Close #328 only when executable erasure coverage matches the documented
-   privacy inventory or the remaining items have explicit manual-review policy.
+- streaming archive generation for very large exports;
+- PostgreSQL-specific export-provider integration coverage;
+- explicit export delivery evidence semantics;
+- authorised representative workflows;
+- frontend/UI;
+- execution pipelines for rectify/restrict/object/access/portability request
+  types.

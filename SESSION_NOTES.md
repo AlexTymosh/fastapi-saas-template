@@ -1,37 +1,52 @@
 # SESSION_NOTES
-DSR PR-1 foundation now includes model/migration/repository/service with state machine, idempotency TTL handling, and service tests; API/export/erasure remain follow-up scope.
 
 ## Current Focus
 
-Align documentation with the completed `uv`, Docker, Taskfile, pre-commit, and GitHub Actions CI migration.
+Final documentation reconciliation after the #328 DSR/privacy backend
+implementation.
 
 ## Current Project State
 
-The backend dependency workflow now uses `uv`.
+The backend DSR/privacy scope is implemented for the current SaaS template
+inventory.
 
-Current dependency/tooling sources of truth:
+Implemented areas:
 
-- `.python-version` pins Python 3.12.
-- `backend/pyproject.toml` contains runtime dependencies and `[dependency-groups].dev`.
-- `backend/uv.lock` is the only dependency lock source.
-- `Taskfile.yml` provides the stable developer/agent command interface.
-- `.pre-commit-config.yaml` runs local hooks through `uv`.
-- `.github/workflows/ci.yml` runs a path-filtered backend quality gate through `uv` and exposes an aggregate `CI status` job.
-- `docker/backend/Dockerfile` installs runtime dependencies through `uv sync --frozen --no-dev --no-editable`.
+- DSR persistence, repository, service lifecycle, user API, and platform API;
+- cross-table subject export providers;
+- export artifact service, worker command, local development storage,
+  S3-compatible storage, download URL generation, and retention runner;
+- platform erasure execution API;
+- inventory-aligned erasure orchestration with executable, retained-by-policy,
+  and manual-review provider decisions;
+- automatic fulfilment after successful approved erasure execution;
+- contract tests for privacy docs, inventory, export providers, erasure
+  coverage, provider decisions, platform permissions, and rate-limit policy
+  coverage.
 
-Legacy dependency workflow is removed:
+## Current #328 Status
 
-- no Poetry;
-- no `pip-tools`;
-- no `requirements.txt`;
-- no `requirements-dev.txt`.
+Issue #328 is ready to close after broad CI is confirmed green.
+
+Remaining work should be tracked as separate follow-up issues and must not be
+treated as #328 blockers.
+
+Non-blocking follow-up categories:
+
+- streaming archive generation for very large exports;
+- PostgreSQL-specific export-provider integration coverage;
+- explicit export delivery evidence semantics;
+- authorised representative workflows;
+- frontend/UI;
+- execution pipelines for rectify/restrict/object/access/portability request
+  types;
+- production hardening work that is not part of the current #328 backend scope.
 
 ## Preferred Local Commands
 
-Install development dependencies:
+Install development dependencies from `backend/`:
 
 ```bash
-cd backend
 uv sync --group dev
 ```
 
@@ -45,49 +60,54 @@ task test:contracts
 task ci
 ```
 
-Direct backend equivalents:
+Direct backend equivalents from `backend/`:
 
 ```bash
-cd backend
 uv lock --check
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest -q -m "not external_db"
 ```
 
-Focused security and contract commands remain available for local/manual diagnosis.
-
-## CI Commands
-
-GitHub Actions should run the strict backend quality gate once for backend/tooling/CI-relevant changes:
+Focused privacy/docs checks from `backend/`:
 
 ```bash
-cd backend
-uv lock --check
-uv sync --frozen --group dev
-uv run --frozen ruff format --check .
-uv run --frozen ruff check .
-uv run --frozen pytest -q -m "not external_db"
+uv run pytest -q tests/contracts/test_privacy_docs_contract.py
+uv run pytest -q -m "privacy and not external_db"
+uv run pytest -q -m contract
 ```
 
-## Recently Completed
+## Dependency and Tooling Sources of Truth
 
-- Migrated backend development dependencies from `[project.optional-dependencies].dev` to `[dependency-groups].dev`.
-- Added `backend/uv.lock`.
-- Removed `pip-tools` from the development workflow.
-- Updated `Taskfile.yml` to run lint/tests through `uv`.
-- Updated pre-commit hooks to use local `uv` commands.
-- Added GitHub Actions backend CI workflow.
-- Migrated backend Dockerfile to install runtime dependencies through `uv`.
-- Removed legacy `requirements.txt` and `requirements-dev.txt`.
+- `.python-version` pins Python 3.12.
+- `backend/pyproject.toml` contains runtime dependencies and
+  `[dependency-groups].dev`.
+- `backend/uv.lock` is the only dependency lock source.
+- `Taskfile.yml` provides the stable developer/agent command interface.
+- `.pre-commit-config.yaml` runs local hooks through `uv`.
+- `.github/workflows/ci.yml` runs the backend quality gate through `uv`.
+- `docker/backend/Dockerfile` installs runtime dependencies through
+  `uv sync --frozen --no-dev --no-editable`.
+
+Legacy dependency workflow is removed:
+
+- no Poetry;
+- no `pip-tools`;
+- no `requirements.txt`;
+- no `requirements-dev.txt`.
 
 ## Files That Must Stay Aligned
 
 - `README.md`
 - `AGENTS.md`
-- `backend/docs/testing-e2e.md`
 - `backend/docs/current-state.md`
-- `backend/docs/observability.md`
+- `backend/docs/privacy-dsr.md`
+- `backend/docs/privacy-dsr-328-closure-checklist.md`
+- `backend/docs/privacy-export-artifacts.md`
+- `backend/docs/rate-limiting.md`
+- `backend/docs/admin-frontend-client-generation.md`
+- `backend/docs/access-control/en/platform-access.en.md`
+- `backend/tests/contracts/test_privacy_docs_contract.py`
 - `SESSION_NOTES.md`
 - `Taskfile.yml`
 - `.pre-commit-config.yaml`
@@ -96,43 +116,29 @@ uv run --frozen pytest -q -m "not external_db"
 
 ## Known Risks
 
-- Documentation can easily drift back to old `pip install -e ".[dev]"` or `requirements-dev.txt` instructions.
-- If `requirements.txt` or `requirements-dev.txt` reappear, that is likely a regression unless explicitly justified.
-- If Codex runs raw `pytest`/`ruff` without `uv run` or Taskfile, it may use the wrong environment.
-- GitHub Actions should be verified as green after each tooling change.
+- Documentation can drift back to old #328 slice notes that describe implemented
+  DSR/export/erasure components as pending.
+- Historical implementation-slice documents must be clearly marked as historical
+  and must not be used as the current closure source of truth.
+- If `requirements.txt` or `requirements-dev.txt` reappear, that is likely a
+  regression unless explicitly justified.
+- If Codex runs raw `pytest`/`ruff` without `uv run` or Taskfile, it may use the
+  wrong environment.
+- GitHub Actions should be verified as green after each tooling or documentation
+  reconciliation change.
 
 ## Next Recommended Step
 
-After merging documentation alignment, continue with the next backend hardening task only after confirming:
+After this documentation reconciliation, close #328 only after confirming:
 
 ```bash
 task ci
 ```
 
-and the GitHub Actions `Backend quality gate` are green.
+and the GitHub Actions backend quality gate are green.
 
+## Historical notes
 
-## Latest update
-
-- grouped business rate-limit consume path now uses Redis Lua all-or-nothing semantics for Redis-backed execution to close TOCTOU concurrency leaks.
-- grouped atomic checks currently target single-node Redis; Redis Cluster needs same-slot hash tags for grouped keys.
-
-## Latest update
-
-- PR-2 DSR API foundation in progress: user and platform endpoints, permissions, and rate limits.
-
-- PR-377 hardening pass: registered privacy_dsr_submit in policy registry; added DSR API/security and OpenAPI contract tests.
-
-## Latest update
-
-- Export artifact foundation extended with worker command, API endpoints, storage hardening, and additional privacy tests.
-
-## 2026-06-11 DSR erasure coverage update
-
-- #407/#408 implementation added inventory-aligned erasure runtime/policy
-  coverage and contract tests.
-- Remaining #328 work should be final closure review only, assuming broad CI
-  passes on the target branch.
-- Memberships are retained by policy; organisations are tenant-owned/manual
-  review policy; platform staff/export artifact/privacy governance/DSR metadata
-  now have minimisation or explicit retention policy coverage.
+Earlier session notes mentioned DSR API/export/erasure as follow-up scope. Those
+notes are now superseded by the completed #328 backend implementation and are
+retained only as historical context.

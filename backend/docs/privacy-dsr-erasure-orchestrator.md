@@ -1,9 +1,28 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR core erasure orchestrator
 
-This document describes the internal orchestration contract for the inventory-
-aligned erasure providers and explicit policy steps.
+## Current status
 
-The orchestrator now covers:
+This document now describes the current internal orchestration contract for the
+inventory-aligned erasure providers and explicit policy steps.
+
+The orchestrator is called by the command/service boundary used by the platform
+erasure execution API. The outer caller owns the application transaction and DSR
+lifecycle transition.
+
+## Provider coverage
+
+The orchestrator covers:
 
 1. `audit.minimise_subject_actor_or_target_identifiers`
 2. `outbox.purge_or_scrub_payload`
@@ -18,26 +37,22 @@ The orchestrator now covers:
 11. `users.anonymise_profile`
 12. `dsr.minimise_workflow_identifiers`
 
-The orchestrator is intentionally not exposed through public API or a worker yet.
-It does not commit the transaction and does not fulfil the Data Subject Request.
-
 ## Why this exists
 
-The individual providers are safe in isolation, but they must be run in a fixed
+The individual providers are safe in isolation, but they must run in a fixed
 order.
 
 The workflow needs a pre-erasure snapshot before direct identifiers are removed:
 
 - subject email;
-- subject-linked invite ids.
+- subject-linked invite ids;
+- subject user id.
 
-Those values are needed by the outbox and invite providers. If user or invite
-anonymisation ran first without passing snapshots, later providers could lose the
-ability to find subject-linked rows.
+Those values are required by outbox, invite, audit, and workflow metadata
+providers. Without snapshots, later providers could lose the ability to find
+subject-linked rows.
 
 ## Execution order
-
-The order is:
 
 ```text
 snapshot subject_email/invite_ids/subject_user_id
@@ -53,59 +68,27 @@ snapshot subject_email/invite_ids/subject_user_id
 → DSR workflow metadata minimisation
 ```
 
-Audit and outbox run early because they may contain direct subject identifiers,
-delivery-only personal data and encrypted invite token material. Outbox still
-blocks execution when subject-linked rows are currently `processing`, because the
-worker may already have decrypted delivery material.
-
-Invites run before the user profile because invite email and token material
-should be minimised before the local user projection loses its original email.
-
-Membership and organisation steps are policy coverage entries, not destructive
-mutations. They preserve tenant relationship integrity while making the policy
-explicit in provider results and contract tests.
-
-Platform staff, export artifact metadata and privacy-governance source fields are
-minimised before user-profile anonymisation where nullable. Compliance evidence
-fields remain retained.
-
-The user profile runs near the end because it removes direct subject identifiers
-from the local account projection. DSR workflow metadata is minimised last so the
-execution result and audit event can snapshot the subject id before request links
-are cleared.
-
-## Snapshot locking
-
-The orchestrator locks and refreshes the subject user row before deriving the
-snapshot. This prevents stale identity-map data from being used when a concurrent
-profile refresh updates the local user email shortly before erasure execution.
-
-The lock query uses `with_for_update()` and `populate_existing=True`, matching
-the same stale-row guard used for DSR and outbox locking.
-
 ## Transaction behaviour
 
 The orchestrator uses a nested transaction around provider mutations.
 
 If a provider fails, provider mutations are rolled back and the DSR execution
-status is marked as `failed` with a safe reason code. The caller still controls
-the outer transaction boundary.
+status is marked as failed with a safe reason code. The caller still controls the
+outer transaction boundary.
 
-Provider/runtime failures during execution are returned as a failed
-orchestration result so the caller's normal outer transaction can commit the DSR
-failed state. Validation errors before execution starts still raise an error.
+On success, the DSR execution status is marked as ready. The service layer then
+maps successful approved erase execution to DSR fulfilment.
 
-On success, the DSR execution status is marked as `ready`.
+## Provider decision contract
 
-## Out of scope
+Provider results must preserve the policy decision, not just row counts.
 
-This slice does not implement:
+Important decisions include:
 
-- platform API endpoints;
-- background worker execution;
-- fulfilment of `erase` requests;
-- retention/purge runners;
-- worker lock/dispatch coordination beyond blocking in-flight processing rows.
+- `minimised`;
+- `already_minimised`;
+- `retained_by_policy`;
+- `manual_review_policy`.
 
-The next slice should perform the final #328 closure review after the runtime
-coverage and contract tests pass broad CI.
+This prevents retained/manual-review rows from being misread as unhandled simply
+because they have `affected_rows = 0`.

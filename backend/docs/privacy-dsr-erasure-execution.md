@@ -1,16 +1,24 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR erasure execution command layer
 
-This slice adds an internal command-layer entry point for approved erasure DSRs.
+## Current status
 
-The previous slices implemented and wired the core providers:
+This document describes the internal command-layer entry point used for approved
+erasure DSR execution.
 
-- audit minimisation;
-- outbox payload scrubbing;
-- invite anonymisation/minimisation;
-- user profile anonymisation.
-
-This slice does not expose a public API endpoint and does not create a worker.
-It adds the safe service boundary that future API/worker code should call.
+The command layer is part of the current erase execution flow. It is called by
+the service/API boundary and records execution evidence while leaving the outer
+transaction boundary to the caller.
 
 ## Entry point
 
@@ -39,25 +47,14 @@ these roles may execute an erasure:
 
 A support agent is intentionally not enough for destructive erasure execution.
 
-Both checks are required:
-
-- `platform_staff.status == active`;
-- `users.status == active`.
-
-This mirrors the platform actor access path and prevents a suspended local user
-from executing destructive erasure through a worker or other non-API caller that
-passes `executor_user_id` directly.
-
 ## Self-erasure guard
 
 The executor must not be the same local user as the DSR subject. Self-execution
 is rejected before provider orchestration starts and before the execution audit
 row is written.
 
-This prevents a successful self-erasure from creating a final
-`data_subject_request_erasure_executed` audit event whose `actor_user_id` still
-contains the erased subject's direct user identifier after audit minimisation has
-already completed.
+This prevents the final erasure execution audit event from retaining the erased
+subject as its own actor after audit minimisation has already run.
 
 ## Execution audit trail
 
@@ -71,15 +68,11 @@ The audit event stores:
 - `target_id`: the DSR id;
 - `action`: `data_subject_request_erasure_executed`;
 - structured metadata with orchestration status, provider keys, affected rows,
-  mutation flag, and optional failure reason code.
-
-Unauthorised attempts, missing-request failures, and self-erasure attempts do not
-create this execution audit event because no valid execution was authorised.
+  mutation flag, provider decisions, and optional failure reason code.
 
 ## Fulfilment transition
 
-The command layer only executes erasure and persists the execution audit event.
-It deliberately does not change the administrative DSR lifecycle status.
+The command layer executes erasure and persists execution audit evidence.
 
 Platform/API callers should use `DataSubjectRequestService`, which maps command
 errors and automatically moves an approved erase DSR to `fulfilled` after a
@@ -88,23 +81,3 @@ successful `ready` execution state.
 Failed orchestration results keep the DSR in `approved` with
 `execution_status=failed` so staff can investigate or retry after the blocking
 condition is resolved.
-
-## Transaction boundary
-
-The command layer does not commit. Callers should run it inside the existing
-application transaction boundary, for example an API route or a background worker
-unit of work.
-
-Provider failures are still handled by the orchestrator:
-
-- provider mutations are rolled back through nested transactions;
-- the DSR failed execution state can be committed by the outer transaction;
-- the execution audit event is persisted by the same outer transaction.
-
-## Out of scope
-
-This slice does not add:
-
-- a public API endpoint;
-- a background worker;
-- final retention/purge runners.

@@ -2,8 +2,7 @@
 
 ## Purpose
 
-This document describes the follow-up contract added after the first DSR data
-inventory slice.
+This document describes the column-level privacy inventory contract.
 
 The table-level inventory is useful, but it is not enough on its own. A table can
 be inventoried while a newly added column silently falls outside export,
@@ -45,19 +44,15 @@ The test suite fails when:
 - internal storage keys, worker tokens, outbox payloads, or idempotency hashes are
   exposed through the export contract.
 
-## Why this should be merged before full export providers
+## Current status
 
-The next major phase is cross-table export provider implementation. Without
-column-level coverage, that phase can accidentally export too little, export too
-much, or miss new columns added during parallel development.
-
-This slice is low-risk because it adds a contract and tests only. It does not add
-migrations, API changes, runtime behaviour changes, or storage behaviour changes.
+The column inventory remains a current DSR/privacy contract. It must stay aligned
+with the table-level inventory, export providers, erasure providers, and closure
+checklist.
 
 ## Suggested validation
 
 ```bash
-cd backend
 uv run --frozen ruff format --check .
 uv run --frozen ruff check .
 uv run --frozen pytest -q tests/privacy/test_privacy_column_inventory_contract.py
