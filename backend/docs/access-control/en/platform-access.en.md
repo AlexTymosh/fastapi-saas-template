@@ -109,12 +109,16 @@ compliance_officer:
 - audit:read
 - audit:read_limited
 - gdpr:export
-- gdpr:erase
 - privacy_requests:read
 - privacy_requests:review
 - privacy_requests:execute_erasure
 - privacy_export_artifacts:read
 ```
+
+`compliance_officer` does not receive the generic `gdpr:erase` permission.
+Approved DSR erasure is executed through the dedicated
+`privacy_requests:execute_erasure` boundary, which keeps DSR execution separate
+from broader generic erase capabilities.
 
 ## 5. Platform actor resolution
 
@@ -214,7 +218,8 @@ Required permission boundaries:
 `support_agent` has no DSR/export-artifact access by default.
 
 `compliance_officer` can read/review DSRs, execute approved erasure through the
-dedicated boundary, read export artifact metadata, and create export artifacts.
+dedicated `privacy_requests:execute_erasure` boundary, read export artifact
+metadata, and create export artifacts through `gdpr:export`.
 
 ## 10. Future admin frontend and OpenAPI contract
 
@@ -262,7 +267,9 @@ The matrix must also prove that:
   than JWT roles;
 - DSR/export-artifact endpoints use the `platform-privacy` tag;
 - privacy permissions are enforced separately from generic platform read/write
-  permissions.
+  permissions;
+- approved DSR erasure uses `privacy_requests:execute_erasure`, not a generic
+  `gdpr:erase` grant for `compliance_officer`.
 
 ## 12. Platform-created organisations and initial owner assignment
 
