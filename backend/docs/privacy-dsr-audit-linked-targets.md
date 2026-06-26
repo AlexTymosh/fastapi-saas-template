@@ -1,6 +1,20 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR audit linked-target minimisation
 
-This slice extends the DSR-specific audit minimisation provider.
+## Historical context
+
+This slice extended the DSR-specific audit minimisation provider beyond direct
+subject audit rows.
 
 The first audit minimisation slice handled only direct subject audit rows:
 
@@ -8,12 +22,12 @@ The first audit minimisation slice handled only direct subject audit rows:
 - direct subject targets such as `target_type='user'` and `target_id` matching
   the subject user id.
 
-This slice adds linked target discovery for audit rows where the subject is
+This slice added linked target discovery for audit rows where the subject is
 identified through another privacy-inventory table.
 
 ## Linked target types
 
-The provider now snapshots linked target ids before mutating audit rows:
+The provider snapshots linked target ids before mutating audit rows:
 
 - invites reached through the subject email or `invites.revoked_by_user_id`;
 - memberships reached through `memberships.user_id`;
@@ -36,8 +50,8 @@ For matched rows, the provider removes:
 
 Rows under active legal hold still block the provider before any mutation.
 
-## Out of scope
+## Superseded scope note
 
-This slice does not wire audit minimisation into the core erasure orchestrator.
-That should happen in a later PR after this linked-target provider has passed
-review.
+The current implementation has since integrated audit linked-target
+minimisation into the inventory-aligned erasure orchestration. Use the current
+DSR documentation and closure checklist for #328 status.

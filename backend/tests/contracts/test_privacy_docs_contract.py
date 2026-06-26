@@ -23,16 +23,17 @@ ADMIN_FRONTEND_DOC = DOCS_ROOT / "admin-frontend-client-generation.md"
 PLATFORM_ACCESS_DOC = DOCS_ROOT / "access-control" / "en" / "platform-access.en.md"
 SESSION_NOTES_DOC = REPO_ROOT / "SESSION_NOTES.md"
 
-HISTORICAL_SLICE_DOCS = (
-    DOCS_ROOT / "privacy-dsr-328-followup-review.md",
-    DOCS_ROOT / "privacy-dsr-erasure-plan.md",
-    DOCS_ROOT / "privacy-dsr-erasure-preview.md",
-    DOCS_ROOT / "privacy-dsr-user-profile-erasure.md",
-    DOCS_ROOT / "privacy-dsr-invite-erasure.md",
-    DOCS_ROOT / "privacy-dsr-outbox-erasure.md",
-    DOCS_ROOT / "privacy-dsr-erasure-orchestrator.md",
-    DOCS_ROOT / "privacy-dsr-erasure-execution.md",
-    DOCS_ROOT / "privacy-dsr-architecture-contract.md",
+CURRENT_DSR_CONTRACT_DOC_NAMES = frozenset(
+    {
+        "privacy-dsr-328-closure-checklist.md",
+        "privacy-dsr-column-inventory.md",
+    }
+)
+
+HISTORICAL_SLICE_DOCS = tuple(
+    path
+    for path in sorted(DOCS_ROOT.glob("privacy-dsr-*.md"))
+    if path.name not in CURRENT_DSR_CONTRACT_DOC_NAMES
 )
 
 CURRENT_STATUS_DOCS = (
@@ -46,7 +47,6 @@ CURRENT_STATUS_DOCS = (
 )
 
 ALL_RECONCILED_DOCS = CURRENT_STATUS_DOCS + HISTORICAL_SLICE_DOCS
-
 
 PLATFORM_PRIVACY_RATE_LIMIT_ROWS = (
     (
@@ -81,7 +81,7 @@ PLATFORM_PRIVACY_RATE_LIMIT_ROWS = (
     ),
     (
         "POST",
-        "/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure",
+        ("/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure"),
         "platform_write",
     ),
     (
@@ -91,7 +91,7 @@ PLATFORM_PRIVACY_RATE_LIMIT_ROWS = (
     ),
     (
         "POST",
-        "/api/v1/platform/privacy/data-subject-requests/{request_id}/export-artifact",
+        ("/api/v1/platform/privacy/data-subject-requests/{request_id}/export-artifact"),
         "platform_write",
     ),
     (
@@ -201,12 +201,29 @@ def test_current_privacy_docs_do_not_keep_stale_328_blockers() -> None:
         "does not fulfil the Data Subject Request",
         "public API/export/erasure remain follow-up scope",
         "API/export/erasure remain follow-up scope",
+        "not wired into the core erasure orchestrator yet",
+        "This slice does not wire audit minimisation into the core erasure",
+        "This is not the final 328-3 implementation",
+        "Remaining follow-up work:",
+        "add production object storage",
+        "add erasure/anonymisation providers",
+        "add retention purge for expired export objects",
+        "future API route",
     )
 
     for path in ALL_RECONCILED_DOCS:
         document = _read(path)
         for stale_claim in stale_claims:
             assert stale_claim not in document, f"{path} contains {stale_claim!r}"
+
+
+def test_historical_slice_docs_are_discovered_by_glob() -> None:
+    discovered_names = {path.name for path in HISTORICAL_SLICE_DOCS}
+
+    assert "privacy-dsr-audit-erasure.md" in discovered_names
+    assert "privacy-dsr-export-providers.md" in discovered_names
+    assert "privacy-dsr-328-closure-checklist.md" not in discovered_names
+    assert "privacy-dsr-column-inventory.md" not in discovered_names
 
 
 def test_historical_slice_docs_are_marked_as_superseded() -> None:

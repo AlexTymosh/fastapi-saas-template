@@ -1,9 +1,22 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR subject export providers
 
-## Scope
+## Historical context
 
-This slice replaces the metadata-only DSR export payload with a provider-based
+This slice replaced the metadata-only DSR export payload with a provider-based
 JSON export for the current DSR inventory tables.
+
+## Provider coverage introduced by this slice
 
 Implemented provider coverage:
 
@@ -20,8 +33,8 @@ Implemented provider coverage:
 - `privacy_governance.consent_records`
 - `privacy_governance.notice_acceptances`
 
-The exporter keeps the previous top-level schema keys for compatibility and
-adds:
+The exporter kept the previous top-level schema keys for compatibility and
+added:
 
 - `manifest`
 - `manifest.providers`
@@ -63,20 +76,23 @@ Required checks:
 - provider keys are unique;
 - concrete providers expose the async `iter_export_records()` contract.
 
-A dedicated contract test should enforce these rules so future personal-data
-models cannot silently enter the inventory without export-provider coverage.
+A dedicated contract test enforces these rules so future personal-data models
+cannot silently enter the inventory without export-provider coverage.
 
-## Remaining work
+## Superseded follow-up status
 
-This is not the final 328-3 implementation.
+The original follow-up list has been completed or moved into non-blocking
+follow-up categories.
 
-Remaining follow-up work:
+Current implemented scope includes:
 
-- split large exports into multiple ZIP entries instead of one in-memory
-  `export.json`;
-- add a streaming archive writer;
-- add production object storage;
-- add erasure/anonymisation providers;
-- add retention purge for expired export objects;
-- add larger integration tests on PostgreSQL-compatible JSON predicates;
-- add a versioned export payload schema contract.
+- provider-backed subject exports;
+- S3-compatible export object storage;
+- erasure/anonymisation providers;
+- retention purge for expired export objects.
+
+Non-blocking follow-up categories include:
+
+- streaming archive generation for very large exports;
+- larger integration tests on PostgreSQL-compatible JSON predicates;
+- a versioned export payload schema contract.

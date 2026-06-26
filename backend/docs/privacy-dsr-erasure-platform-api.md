@@ -1,6 +1,19 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # DSR erasure platform API
 
-This slice exposes the approved erase DSR execution path through a platform-only
+## Historical context
+
+This slice exposed the approved erase DSR execution path through a platform-only
 API endpoint.
 
 ## Endpoint
@@ -56,10 +69,7 @@ Provider execution failures that are represented as failed orchestration results
 return `200` with `status=approved` and `execution_status=failed`, leaving the
 request open for staff investigation or retry.
 
-## Out of scope
+## Superseded scope note
 
-This slice does not add:
-
-- background worker execution;
-- retention/purge runners;
-- final issue #328 closure checklist.
+The platform erasure endpoint is now part of the implemented backend DSR scope.
+Use the current DSR documentation and closure checklist for #328 status.
