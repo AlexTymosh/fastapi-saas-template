@@ -116,9 +116,9 @@ compliance_officer:
 ```
 
 `compliance_officer` does not receive the generic `gdpr:erase` permission.
-Approved DSR erasure is executed through the dedicated
-`privacy_requests:execute_erasure` boundary, which keeps DSR execution separate
-from broader generic erase capabilities.
+Approved DSR erasure uses the dedicated `privacy_requests:execute_erasure`
+boundary instead. This keeps generic erase authority separate from the reviewed
+DSR execution flow used by the privacy API.
 
 ## 5. Platform actor resolution
 
@@ -193,6 +193,54 @@ GET /api/v1/platform/organisations/limited
 GET /api/v1/platform/audit-events/limited
 ```
 
+The limited user DTO may contain only:
+
+```text
+id
+first_name
+last_name
+status
+created_at
+```
+
+The limited user DTO must not return `email`, `external_auth_id`,
+`email_verified`, `suspended_at`, `suspended_reason`, onboarding fields, token or
+credential data, or audit metadata. The endpoint may search by email internally
+when `q` is used, but the full email address must never be returned in the
+limited response.
+
+The limited organisation DTO may contain only:
+
+```text
+id
+name
+slug
+status
+created_at
+```
+
+The limited organisation DTO must not return `suspended_at`, `deleted_at`, owner
+internals, membership internals, operational correction metadata, or audit
+metadata. Full platform organisation endpoints may have broader operational
+visibility where required for support, audit, compliance, or recovery workflows.
+
+Limited list endpoints support these query parameters unless a route-specific
+contract says otherwise:
+
+```text
+limit
+offset
+status
+q
+```
+
+Ordering must be deterministic for both full and limited platform lists:
+
+```text
+created_at desc
+id desc
+```
+
 Limited views must not expose restricted operational fields, raw audit metadata,
 raw actor ids, network identifiers, credential data, or token material.
 
@@ -218,8 +266,8 @@ Required permission boundaries:
 `support_agent` has no DSR/export-artifact access by default.
 
 `compliance_officer` can read/review DSRs, execute approved erasure through the
-dedicated `privacy_requests:execute_erasure` boundary, read export artifact
-metadata, and create export artifacts through `gdpr:export`.
+dedicated boundary, read export artifact metadata, and create export artifacts.
+The role does not receive generic `gdpr:erase`.
 
 ## 10. Future admin frontend and OpenAPI contract
 
@@ -267,9 +315,7 @@ The matrix must also prove that:
   than JWT roles;
 - DSR/export-artifact endpoints use the `platform-privacy` tag;
 - privacy permissions are enforced separately from generic platform read/write
-  permissions;
-- approved DSR erasure uses `privacy_requests:execute_erasure`, not a generic
-  `gdpr:erase` grant for `compliance_officer`.
+  permissions.
 
 ## 12. Platform-created organisations and initial owner assignment
 

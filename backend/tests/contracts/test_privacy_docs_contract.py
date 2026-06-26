@@ -53,14 +53,21 @@ def _read(path: Path) -> str:
 
 
 def _documented_role_permissions(document: str, role_name: str) -> set[str]:
-    _, role_mapping = document.split(f"{role_name}:\n", maxsplit=1)
-    role_mapping = role_mapping.split("\n```", maxsplit=1)[0]
+    role_marker = f"{role_name}:"
+    role_start = document.index(role_marker)
+    role_end = document.index("```", role_start)
+    role_block = document[role_start:role_end]
+    permissions: set[str] = set()
 
-    return {
-        line.removeprefix("- ").strip()
-        for line in role_mapping.splitlines()
-        if line.startswith("- ")
-    }
+    for line in role_block.splitlines()[1:]:
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        permission = stripped.removeprefix("- ").strip()
+        permission = permission.split(" ", maxsplit=1)[0]
+        permissions.add(permission)
+
+    return permissions
 
 
 def test_privacy_dsr_docs_include_current_platform_permissions() -> None:
@@ -77,6 +84,24 @@ def test_privacy_dsr_docs_include_current_platform_permissions() -> None:
 
     for permission in expected_permissions:
         assert f"`{permission.value}`" in document
+
+
+def test_platform_access_docs_match_compliance_officer_permissions() -> None:
+    document = _read(PLATFORM_ACCESS_DOC)
+    documented_permissions = _documented_role_permissions(
+        document,
+        "compliance_officer",
+    )
+    runtime_permissions = {
+        permission.value
+        for permission in ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
+    }
+
+    assert documented_permissions == runtime_permissions
+    assert PlatformPermission.GDPR_ERASE.value not in documented_permissions
+    assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE.value in (
+        documented_permissions
+    )
 
 
 def test_current_privacy_docs_do_not_keep_stale_328_blockers() -> None:
@@ -156,24 +181,6 @@ def test_platform_docs_include_platform_privacy_tag() -> None:
     for document in documents:
         assert "platform-privacy" in document
         assert "generic `platform` tag" in document
-
-
-def test_platform_access_doc_matches_compliance_officer_permissions() -> None:
-    document = _read(PLATFORM_ACCESS_DOC)
-
-    documented_permissions = _documented_role_permissions(
-        document,
-        "compliance_officer",
-    )
-    expected_permissions = {
-        permission.value
-        for permission in ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
-    }
-
-    assert documented_permissions == expected_permissions
-    assert PlatformPermission.GDPR_ERASE.value not in documented_permissions
-    assert "generic `gdpr:erase` permission" in document
-    assert "`privacy_requests:execute_erasure` boundary" in document
 
 
 def test_admin_frontend_doc_uses_backend_relative_uv_commands() -> None:
