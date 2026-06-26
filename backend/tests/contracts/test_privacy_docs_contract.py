@@ -48,6 +48,70 @@ CURRENT_STATUS_DOCS = (
 ALL_RECONCILED_DOCS = CURRENT_STATUS_DOCS + HISTORICAL_SLICE_DOCS
 
 
+PLATFORM_PRIVACY_RATE_LIMIT_ROWS = (
+    (
+        "GET",
+        "/api/v1/platform/privacy/data-subject-requests",
+        "platform_read",
+    ),
+    (
+        "GET",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}",
+        "platform_read",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/review",
+        "platform_write",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve",
+        "platform_write",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject",
+        "platform_write",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel",
+        "platform_write",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure",
+        "platform_write",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
+        "platform_write",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/export-artifact",
+        "platform_write",
+    ),
+    (
+        "GET",
+        "/api/v1/platform/privacy/export-artifacts",
+        "platform_read",
+    ),
+    (
+        "GET",
+        "/api/v1/platform/privacy/export-artifacts/{artifact_id}",
+        "platform_read",
+    ),
+    (
+        "POST",
+        "/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url",
+        "privacy_export_download_url",
+    ),
+)
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -68,6 +132,25 @@ def _documented_role_permissions(document: str, role_name: str) -> set[str]:
         permissions.add(permission)
 
     return permissions
+
+
+def _assert_rate_limit_matrix_row(
+    document: str,
+    *,
+    method: str,
+    endpoint: str,
+    policy: str,
+) -> None:
+    expected_endpoint = f"`{endpoint}`"
+    expected_policy = f"`{policy}`"
+    matching_rows = [
+        line for line in document.splitlines() if expected_endpoint in line
+    ]
+
+    assert matching_rows, f"missing rate-limit matrix row for {endpoint}"
+    assert any(
+        f"| {method} |" in row and expected_policy in row for row in matching_rows
+    ), f"missing {method} {endpoint} policy {policy} in rate-limit matrix"
 
 
 def test_privacy_dsr_docs_include_current_platform_permissions() -> None:
@@ -170,6 +253,21 @@ def test_rate_limiting_docs_include_privacy_policies() -> None:
 
     for text in required_text:
         assert text in document
+
+
+def test_rate_limiting_docs_include_all_platform_privacy_endpoints() -> None:
+    document = _read(RATE_LIMITING_DOC)
+
+    for method, endpoint, policy in PLATFORM_PRIVACY_RATE_LIMIT_ROWS:
+        _assert_rate_limit_matrix_row(
+            document,
+            method=method,
+            endpoint=endpoint,
+            policy=policy,
+        )
+
+    assert "Platform privacy rate-limit model" in document
+    assert "platform privacy read/write route-limit documentation coverage" in document
 
 
 def test_platform_docs_include_platform_privacy_tag() -> None:

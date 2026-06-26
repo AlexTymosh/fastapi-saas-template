@@ -196,6 +196,17 @@ Protected endpoint matrix:
 | POST | `/api/v1/platform/staff/{staff_id}/restore` | `platform_staff_write` |
 | GET | `/api/v1/platform/audit-events/limited` | `audit_read` |
 | GET | `/api/v1/platform/audit-events` | `audit_read` |
+| GET | `/api/v1/platform/privacy/data-subject-requests` | `platform_read` |
+| GET | `/api/v1/platform/privacy/data-subject-requests/{request_id}` | `platform_read` |
+| POST | `/api/v1/platform/privacy/data-subject-requests/{request_id}/review` | `platform_write` |
+| POST | `/api/v1/platform/privacy/data-subject-requests/{request_id}/approve` | `platform_write` |
+| POST | `/api/v1/platform/privacy/data-subject-requests/{request_id}/reject` | `platform_write` |
+| POST | `/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel` | `platform_write` |
+| POST | `/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure` | `platform_write` |
+| POST | `/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil` | `platform_write` |
+| POST | `/api/v1/platform/privacy/data-subject-requests/{request_id}/export-artifact` | `platform_write` |
+| GET | `/api/v1/platform/privacy/export-artifacts` | `platform_read` |
+| GET | `/api/v1/platform/privacy/export-artifacts/{artifact_id}` | `platform_read` |
 | POST | `/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url` | authorised artifact-scoped `privacy_export_download_url` |
 
 ## Invite layered anti-abuse model
@@ -209,6 +220,22 @@ Invite create and resend endpoints use two layers of protection:
 Authorised business-scope invite buckets are consumed through
 `check_rate_limits_for_buckets()`. Redis-backed runtime uses a static Lua script
 with all-or-nothing semantics.
+
+## Platform privacy rate-limit model
+
+Platform privacy endpoints use the same layered model as the rest of the
+platform API:
+
+- platform privacy list/detail reads use `platform_read`;
+- DSR review, approval, rejection, cancellation, erasure execution, fulfilment,
+  and export-artifact creation use `platform_write` through the rate-limited
+  platform write context;
+- export-artifact metadata list/detail reads use `platform_read`;
+- export download URL generation uses `privacy_export_download_url`, followed by
+  an authorised artifact-scoped bucket after platform permission succeeds.
+
+This keeps operator-facing documentation aligned with route dependencies and
+prevents future drift from hiding unlisted platform privacy endpoints.
 
 ## Privacy DSR/export anti-abuse model
 
@@ -315,6 +342,7 @@ Fake-limiter API tests cover:
 - health endpoint bypasses;
 - blocking before service/DB execution for sensitive paths;
 - fail-closed and fail-open Redis/backend behaviour;
+- platform privacy read/write route-limit documentation coverage;
 - privacy DSR submission/cancellation throttling;
 - export download URL throttling after authorisation.
 
@@ -360,6 +388,10 @@ task ci
 - [x] Tenant read/write/create endpoint groups are rate limited.
 - [x] Platform read/list/detail endpoint groups are rate limited.
 - [x] Platform full and limited audit listing endpoints are rate limited.
+- [x] Platform privacy DSR read/write endpoints are documented in the protected
+      endpoint matrix.
+- [x] Platform privacy export-artifact read/write/download endpoints are
+      documented in the protected endpoint matrix.
 - [x] DSR submit/cancel endpoints are rate limited.
 - [x] User and platform export artifact download URL generation is rate limited
       after ownership/platform permission succeeds.
