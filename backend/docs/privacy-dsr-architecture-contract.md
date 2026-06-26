@@ -1,49 +1,67 @@
+> Historical implementation-slice note.
+>
+> This document describes an earlier implementation slice of issue #328.
+> It is not the current DSR/privacy source of truth.
+>
+> Current status is documented in:
+>
+> - `backend/docs/privacy-dsr.md`
+> - `backend/docs/privacy-dsr-328-closure-checklist.md`
+> - `backend/docs/current-state.md`
+
 # Privacy DSR architecture contract
 
-## Status
+## Historical context
 
-This document defines the first architecture-contract slice for issue #328.
-It does not implement the final export or erasure execution pipeline. It makes
-that pipeline safer to build by creating a mandatory inventory and provider
-contract before more code is added.
+This document defines the architecture-contract slice that introduced the
+privacy inventory and provider registry idea for issue #328.
 
-## Problem
+It is preserved because the architectural decision remains useful, but the
+implementation status in the original slice has been superseded by the current
+DSR/export/erasure implementation.
 
-The project now has a DSR model, DSR API, export-artifact model, local storage
-adapter and worker foundation. The remaining risk is that export and erasure
-logic can become a set of ad-hoc SQL queries spread across services.
+## Current source of truth
 
-That would create three problems:
+Use these documents for current implementation status:
 
-1. A new table can start storing personal data without being included in DSR
-   export/erasure coverage.
+- `backend/docs/privacy-dsr.md`;
+- `backend/docs/privacy-dsr-328-closure-checklist.md`;
+- `backend/docs/privacy-export-artifacts.md`;
+- `backend/docs/current-state.md`.
+
+## Original problem
+
+DSR export and erasure logic can become unsafe if subject lookups and mutation
+rules are spread across services as ad-hoc SQL.
+
+That creates three risks:
+
+1. A new table can store personal data without being included in DSR coverage.
 2. Audit and compliance records can be deleted too aggressively, breaking
    integrity and legal evidence.
-3. Outbox/invite/audit payloads can leak personal data into exports or be kept
-   longer than necessary.
+3. Outbox, invite, audit, and privacy-governance payloads can leak personal data
+   into exports or retain it longer than necessary.
 
 ## Decision
 
-Add a code-level privacy data inventory and provider registry contract:
+The project uses a code-level privacy data inventory and provider registry
+contract.
 
-- `app/privacy/data_inventory.py`
-  - declares all current tables that are inside DSR scope;
-  - declares explicit exclusions for non-subject tables;
-  - identifies subject lookup strategy, data categories, fields, export provider
-    key, erasure provider key, erasure strategy and retention policy key.
-- `app/privacy/providers/base.py`
-  - defines future export and erasure provider protocols.
-- `app/privacy/providers/registry.py`
-  - derives provider registry metadata from the inventory.
-- `tests/privacy/test_privacy_data_inventory_contract.py`
-  - fails if a SQLAlchemy model table is not either inventoried or explicitly
-    excluded;
-  - fails if core #328 tables are missing export/erasure coverage;
-  - validates model references and provider-key consistency.
+The inventory declares:
+
+- DSR-scoped tables;
+- explicit exclusions for non-subject tables;
+- subject lookup strategy;
+- data categories;
+- fields;
+- export provider keys;
+- erasure provider keys;
+- erasure strategy;
+- retention policy keys.
 
 ## Current inventory scope
 
-The inventory covers the following current tables:
+The current inventory covers:
 
 - `users`
 - `memberships`
@@ -58,55 +76,40 @@ The inventory covers the following current tables:
 - `consent_records`
 - `privacy_notice_acceptances`
 
-The inventory explicitly excludes:
-
-- `processing_purposes` — static processing-purpose catalogue without a subject
-  identifier column.
+The inventory explicitly excludes static, non-subject catalogue tables where
+there is no subject identifier column.
 
 ## Provider contract rules
 
 Every DSR-scoped table must have:
 
-1. A subject locator.
-2. At least one field entry.
-3. An export provider key.
-4. An erasure strategy.
-5. A retention policy key.
-6. Either an erasure provider key or an explicit retain/minimise legal strategy.
-
-Provider keys are intentionally string keys at this stage. They are stable names
-that future implementation providers will bind to. This avoids importing future
-runtime services into a static contract module.
+1. a subject locator;
+2. at least one field entry;
+3. an export provider key;
+4. an erasure strategy;
+5. a retention policy key;
+6. either an erasure provider key or an explicit retain/minimise legal strategy.
 
 ## Why this is not over-engineering
 
-The current issue is architectural, not just endpoint-level. DSR export and
-anonymisation will cross users, memberships, organisations, invites, outbox,
-audit, privacy-governance records and future patient/clinical records. A static
-inventory with tests is cheaper than discovering missed personal data after a
-feature has already shipped.
+The DSR workflow crosses users, memberships, organisations, invites, outbox,
+audit, export artifacts, DSR workflow records, platform staff records, and
+privacy-governance records.
 
-## What this does not do yet
+A static inventory with contract tests is cheaper and safer than discovering
+missed personal-data stores after a feature has shipped.
 
-This slice does not:
+## Superseded follow-up status
 
-- generate full export files;
-- query data through provider implementations;
-- anonymise database records;
-- delete export objects from storage;
-- add migrations;
-- change public API contracts;
-- change permissions.
+The original follow-up implementation order has been completed or superseded by
+the current DSR implementation.
 
-Those belong to later #328 child issues.
+Current implemented scope includes:
 
-## Follow-up implementation order
-
-1. Convert `MinimalSubjectDataExporter` to use inventory-backed export providers.
-2. Add provider implementations for users, memberships, organisations, invites,
-   outbox references and audit events.
-3. Add execution-state separation so `fulfilled` cannot be set before export or
-   erasure execution is complete.
-4. Add erasure/anonymisation providers using the same inventory keys.
-5. Add retention runners for export artifacts, outbox payloads, invite records
-   and audit minimisation.
+- inventory-backed export providers;
+- executable and policy-based erasure providers;
+- execution-state separation;
+- export artifact storage and retention;
+- platform DSR and erasure APIs;
+- provider decision preservation;
+- privacy documentation contract tests.

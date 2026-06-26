@@ -2,7 +2,8 @@
 
 ## Purpose
 
-This document defines how a future admin frontend should generate and refresh its TypeScript API client from the backend OpenAPI schema.
+This document defines how a future admin frontend should generate and refresh
+its TypeScript API client from the backend OpenAPI schema.
 
 The backend is the source of truth for:
 
@@ -13,11 +14,14 @@ The backend is the source of truth for:
 - authentication and authorization boundaries;
 - platform/admin contract tests.
 
-This document does not implement a frontend application. It only defines the expected workflow for generating a frontend client when the admin UI is introduced.
+This document does not implement a frontend application. It only defines the
+expected workflow for generating a frontend client when the admin UI is
+introduced.
 
 ## Current status
 
-The project is currently a backend-only FastAPI SaaS template. The admin frontend is planned but not implemented yet.
+The project is currently a backend-only FastAPI SaaS template. The admin
+frontend is planned but not implemented yet.
 
 The backend already exposes platform/admin endpoints under:
 
@@ -31,7 +35,8 @@ The future admin frontend should use:
 GET /api/v1/platform/me
 ```
 
-as the first request after login to resolve the current platform actor, role, status, and effective permissions.
+as the first request after login to resolve the current platform actor, role,
+status, and effective permissions.
 
 ## OpenAPI contract rules
 
@@ -42,7 +47,8 @@ The current contract rules are:
 - OpenAPI `operationId` values are generated from FastAPI `APIRoute.name`.
 - Route handler names are generated-client method names.
 - Route handler names must be globally unique across schema-included routes.
-- Route handler names must be stable, descriptive, snake_case, and frontend-friendly.
+- Route handler names must be stable, descriptive, snake_case, and
+  frontend-friendly.
 - Renaming a route handler is an API contract change.
 - Platform routes must use specific tags:
   - `platform-identity`
@@ -50,8 +56,10 @@ The current contract rules are:
   - `platform-organisations`
   - `platform-staff`
   - `platform-audit`
+  - `platform-privacy`
 - Platform routes must not use the generic `platform` tag.
-- Platform routes that return a body must declare a strict Pydantic `response_model`.
+- Platform routes that return a body must declare a strict Pydantic
+  `response_model`.
 - Platform collection responses must use the standard envelope:
 
 ```json
@@ -67,34 +75,33 @@ The current contract rules are:
 
 ## Backend validation before generating a client
 
-Before generating or refreshing a frontend client, run the backend contract tests:
+Before generating or refreshing a frontend client, run the backend contract
+tests from `backend/`:
 
 ```bash
-cd backend
-pytest -q backend/tests/contracts/test_openapi_platform_contract.py
+uv run pytest -q tests/contracts/test_openapi_platform_contract.py
 ```
 
-Recommended broader checks:
+Recommended broader checks from `backend/`:
 
 ```bash
-cd backend
-pytest -q -m "not external_db"
-pytest -q -m "security and not external_db"
-ruff check .
-ruff format --check .
+uv run pytest -q -m "not external_db"
+uv run pytest -q -m "security and not external_db"
+uv run ruff check .
+uv run ruff format --check .
 ```
 
-If these checks fail, do not regenerate and commit a new frontend client. Fix the backend contract first.
+If these checks fail, do not regenerate and commit a new frontend client. Fix the
+backend contract first.
 
 ## Exporting the OpenAPI schema
 
 Start the backend locally with documentation enabled.
 
-Example:
+Example from `backend/`:
 
 ```bash
-cd backend
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 ```
 
 Then export the OpenAPI schema:
@@ -105,11 +112,13 @@ curl http://localhost:8000/openapi.json -o openapi.json
 
 If the backend runs on a different port, update the URL accordingly.
 
-The exported schema should be treated as a generated artifact. Do not manually edit it.
+The exported schema should be treated as a generated artifact. Do not manually
+edit it.
 
 ## Recommended future frontend location
 
-When the frontend application is added, prefer a clear generated-client boundary such as:
+When the frontend application is added, prefer a clear generated-client boundary
+such as:
 
 ```text
 frontend/src/api/generated/
@@ -123,7 +132,8 @@ frontend/src/admin/api/generated/
 
 The generated directory should contain only generated files.
 
-Hand-written API wrappers, hooks, query clients, or UI adapters should live outside the generated directory, for example:
+Hand-written API wrappers, hooks, query clients, or UI adapters should live
+outside the generated directory, for example:
 
 ```text
 frontend/src/admin/api/client.ts
@@ -141,19 +151,19 @@ Recommended TypeScript-friendly options:
    - generate TypeScript types from OpenAPI;
    - use a small hand-written fetch wrapper;
    - good when the team wants explicit control over requests.
-
 2. Client generation:
    - generate typed request functions from OpenAPI;
    - good when the team wants faster CRUD screen development.
 
-The important rule is not the specific generator. The important rule is that generated method names must come from backend `operationId` values.
+The important rule is not the specific generator. The important rule is that
+generated method names must come from backend `operationId` values.
 
 ## Example type-only workflow
 
 Example command shape:
 
 ```bash
-npx openapi-typescript ./openapi.json -o ./frontend/src/admin/api/generated/schema.ts
+npx openapi-typescript ./openapi.json   -o ./frontend/src/admin/api/generated/schema.ts
 ```
 
 Then keep a small hand-written client wrapper outside the generated folder:
@@ -176,12 +186,14 @@ The wrapper should handle:
 Example command shape:
 
 ```bash
-npx @hey-api/openapi-ts -i ./openapi.json -o ./frontend/src/admin/api/generated
+npx @hey-api/openapi-ts -i ./openapi.json   -o ./frontend/src/admin/api/generated
 ```
 
-Generator configuration should preserve backend `operationId` values as frontend method names where possible.
+Generator configuration should preserve backend `operationId` values as frontend
+method names where possible.
 
-If a generator transforms `snake_case` into `camelCase`, the transformation should be deterministic and documented.
+If a generator transforms `snake_case` into `camelCase`, the transformation
+should be deterministic and documented.
 
 ## Authentication assumptions
 
@@ -229,7 +241,8 @@ Production origins must be explicit HTTPS origins.
 
 ## Handling backend contract changes
 
-A backend change should be treated as a frontend client contract change if it modifies any of the following:
+A backend change should be treated as a frontend client contract change if it
+modifies any of the following:
 
 - route path;
 - HTTP method;
@@ -263,7 +276,9 @@ Recommended generated file header:
 // Regenerate using the documented OpenAPI client generation workflow.
 ```
 
-Generated files may be committed if the frontend project uses committed generated clients. If the project later chooses generation during CI/build, document that decision explicitly.
+Generated files may be committed if the frontend project uses committed generated
+clients. If the project later chooses generation during CI/build, document that
+decision explicitly.
 
 ## Review checklist
 
