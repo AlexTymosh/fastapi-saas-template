@@ -45,7 +45,8 @@ should still be verified against code before extension:
   - export artifact worker flow and ops integration;
   - local and S3-compatible export artifact storage;
   - opt-in MinIO/Testcontainers coverage for S3-compatible export storage;
-  - dedicated export artifact download URL rate limits;
+  - dedicated export artifact download URL and delivery confirmation rate
+    limits;
   - platform erasure execution API;
   - executable erasure providers for audit, outbox, invites, platform staff,
     export-artifact metadata, privacy-governance minimisation, DSR workflow
@@ -89,7 +90,9 @@ should still be verified against code before extension:
   backend closure scope:
   - streaming export archive generation;
   - PostgreSQL-specific JSON predicate export-provider tests;
-  - explicit delivery evidence semantics;
+  - explicit delivery evidence semantics; done for URL issuance vs user or
+    platform delivery confirmation, but future storage-native evidence can
+    still extend it;
   - authorised representative workflows;
   - frontend/UI;
   - concrete execution pipelines for access, rectify, restrict, object and

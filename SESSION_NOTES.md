@@ -16,19 +16,20 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR-328-1 is done: non-export/non-erase request types are review-only.
 - Approval for request types without execution policy is blocked in the central
   DSR service transition path.
-- `approve_request()` is a thin wrapper over `transition_status()`.
-- `export` and `erase` remain approvable and executable under the current
-  policies.
-- `access`, `rectify`, `restrict`, `object` and `portability` can be submitted,
-  reviewed, rejected and cancelled, but cannot be approved or fulfilled.
+- PR #427 is merged into `main`.
+- PR-328-2 is done: self-service DSR submissions accept `requester_note`,
+  normalise blank notes, keep user responses minimal and expose notes only to
+  authorised platform reviewers.
+- PR-328-3 files prepared: URL issuance is separated from delivery evidence
+  through dedicated URL-issue metadata and explicit delivery confirmation.
 
 ## Roadmap status
 
 | Order | PR | Blocks #328 closure | Status |
 |---:|---|---:|---|
 | 1 | Define execution policy for non-export DSR types | Yes | Done |
-| 2 | Accept requester details on DSR submissions | Yes | In progress |
-| 3 | Separate URL issuance from delivery evidence | Yes | Not started |
+| 2 | Accept requester details on DSR submissions | Yes | Done |
+| 3 | Separate URL issuance from delivery evidence | Yes | Files prepared |
 | 4 | Real invite delivery provider / NoOp guard | Yes | Not started |
 | 5 | Retention runner Taskfile and ops docs | Yes | Not started |
 | 6 | Runtime secrets and Docker hardening | Yes | Not started |
@@ -37,63 +38,42 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 9 | Authorised representative DSR workflow | Yes | Not started |
 | 10 | Final #328 closure reconciliation | Yes | Not started |
 
-## PR-328-2 — Accept requester details on DSR submissions
+## PR-328-3 — Separate URL issuance from delivery evidence
 
 Priority: P2
 Type: `feat(privacy)`
-Recommended branch: `feat/privacy-dsr-requester-note`
-Recommended PR title: `✨ feat(privacy): accept requester notes on DSR submissions`
+Recommended branch: `feat/privacy-export-delivery-evidence`
+Recommended PR title: `✨ feat(privacy): separate export URL issuance from delivery evidence`
 
 ### Goal
 
-Expose requester-provided details at the self-service DSR API boundary and make
-those details available to authorised platform reviewers without leaking them
-into user-facing DSR responses or audit metadata.
+A generated download URL proves only that the application issued a short-lived
+access URL. It must not be treated as proof that the export artifact was
+received. Delivery evidence is now explicit.
 
 ### Implementation plan
 
-1. Add optional `requester_note` to `CreateDataSubjectRequest`.
-2. Keep `extra="forbid"` on the request schema.
-3. Trim `requester_note` at the API schema boundary.
-4. Store blank notes as `None`.
-5. Enforce a 2000-character request-schema limit.
-6. Pass the normalised note into `DataSubjectRequestService.submit_request()`.
-7. Keep user-facing `DataSubjectRequestResponse` minimal and do not echo
-   `requester_note` back to the requester.
-8. Add `requester_note` to platform DSR responses so authorised reviewers can
-   evaluate the request.
-9. Add API tests for persistence, platform visibility, response minimisation,
-   overlong-note rejection and idempotency fingerprint behaviour.
-10. Update `backend/docs/privacy-dsr.md` and `backend/docs/current-state.md`.
+1. Add export artifact URL-issuance metadata:
+   - `download_url_issued_at`;
+   - `download_url_issue_count`.
+2. Keep `downloaded_at` and `download_count` for confirmed delivery only.
+3. Generate download URLs without marking DSR execution as `delivered`.
+4. Add self-service and platform `confirm-delivery` endpoints.
+5. Mark the export DSR execution as `delivered` only after delivery
+   confirmation.
+6. Add an audit action for confirmed export delivery.
+7. Update API/service tests and docs.
 
 ### Failure cases to cover
 
-- Overlong requester note is rejected and no DSR row is created.
-- Blank requester note is normalised to `None`.
-- Idempotency key conflict is raised when the same key is reused with a
-  different note.
-- User-facing response does not include `requester_note`.
-- Platform DSR response includes `requester_note` for authorised reviewers.
-- Audit metadata remains minimal and does not copy full requester notes.
-
-### Suggested verification
-
-Run from `backend`:
-
-```powershell
-task format
-uv run --locked ruff check app/privacy/schemas/data_subject_requests.py app/privacy/api/data_subject_requests.py tests/privacy/test_data_subject_request_api.py
-uv run --locked ruff format --check app/privacy/schemas/data_subject_requests.py app/privacy/api/data_subject_requests.py tests/privacy/test_data_subject_request_api.py
-uv run --locked pytest -q tests/privacy/test_data_subject_request_api.py
-uv run --locked pytest -q tests/privacy/test_data_subject_request_service.py
-uv run --locked pytest -q tests/privacy/test_dsr_execution_policy.py
-uv run --locked pytest -q -m "privacy and not external_db"
-uv run --locked pytest -q -m contract
-```
-
-## Next work after PR-328-2
-
-PR-328-3 — separate export download URL issuance from delivery evidence.
+- URL issued but delivery not confirmed keeps DSR execution state non-delivered.
+- Delivery confirmation marks DSR execution as delivered.
+- Expired artifacts cannot be confirmed as delivered.
+- Another user cannot confirm delivery for someone else's export artifact.
+- Multiple URL issuances increase URL issue metadata without increasing delivery
+  count.
+- Existing download URL rate limits still apply to URL issuance and delivery
+  confirmation endpoints.
 
 ## Notes for future agents
 

@@ -133,3 +133,12 @@ without mutating the database or deleting storage objects.
 - Streaming archive generation for very large exports.
 - Authorised representative workflows.
 - Frontend/UI.
+
+
+## Delivery evidence
+
+Download URL creation records that a URL was issued. It does not prove
+that the artifact was received, especially for S3-compatible presigned
+URLs. Confirmed delivery is recorded through the explicit delivery
+confirmation endpoints, which update `downloaded_at`, `download_count`
+and the export DSR execution state.

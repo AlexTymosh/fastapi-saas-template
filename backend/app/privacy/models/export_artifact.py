@@ -109,6 +109,12 @@ class ExportArtifact(UUIDMixin, TimestampMixin, Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    download_url_issued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    download_url_issue_count: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default=sa.text("0")
+    )
     downloaded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

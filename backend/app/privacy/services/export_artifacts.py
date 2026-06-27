@@ -423,20 +423,48 @@ class ExportArtifactService:
         )
         storage = self._storage_for_backend(artifact.storage_backend)
         url = storage.generate_download_url(artifact.storage_key, effective_ttl_seconds)
-        updated_artifact = await self.repo.increment_download_count(artifact)
-        await self._sync_export_dsr_execution_state(
-            updated_artifact,
-            execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
-            event_at=updated_artifact.downloaded_at,
-        )
+        issued_artifact = await self.repo.record_download_url_issued(artifact)
         await self._record_event(
             audit_context,
             AuditAction.EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED,
-            artifact,
+            issued_artifact,
         )
         return GeneratedExportDownloadUrl(
             url=url, expires_in_seconds=effective_ttl_seconds
         )
+
+    async def confirm_export_delivery(
+        self, *, artifact: ExportArtifact, audit_context: AuditContext
+    ) -> ExportArtifact:
+        self._ensure_exports_enabled()
+        now = datetime.now(UTC)
+
+        if artifact.status != ExportArtifactStatus.READY.value:
+            raise ConflictError(detail="Export artifact is not available for delivery")
+
+        await self._ensure_download_dsr_is_still_eligible(artifact)
+
+        expires_at = _ensure_aware_utc(artifact.expires_at)
+        if expires_at <= now:
+            raise ConflictError(
+                detail="Export artifact delivery cannot be confirmed after expiry"
+            )
+
+        if artifact.storage_key is None:
+            raise ConflictError(detail="Export artifact is missing storage key")
+
+        delivered = await self.repo.confirm_delivery(artifact, delivered_at=now)
+        await self._sync_export_dsr_execution_state(
+            delivered,
+            execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
+            event_at=delivered.downloaded_at,
+        )
+        await self._record_event(
+            audit_context,
+            AuditAction.EXPORT_ARTIFACT_DELIVERY_CONFIRMED,
+            delivered,
+        )
+        return delivered
 
     async def count_queued_artifacts(self, *, limit: int) -> int:
         if not self.settings.privacy_exports.enabled:

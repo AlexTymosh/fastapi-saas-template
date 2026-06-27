@@ -21,6 +21,9 @@ class ExportArtifactResponse(BaseModel):
     completed_at: datetime | None
     failed_at: datetime | None
     expires_at: datetime
+    download_url_issued_at: datetime | None
+    download_url_issue_count: int
+    downloaded_at: datetime | None
     download_count: int
 
 

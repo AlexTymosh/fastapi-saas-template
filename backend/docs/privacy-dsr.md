@@ -102,6 +102,8 @@ Current user API constraints:
   user-facing DSR responses.
 - Download URLs do not expose storage keys, local paths, processing tokens or raw
   payload internals.
+- Download URL creation records URL issuance only. It does not mark the export
+  DSR as delivered until delivery is explicitly confirmed.
 - Download URL generation is rate-limited at actor and authorised artifact scope.
 
 ## Request-type execution policy
@@ -165,6 +167,10 @@ Endpoints:
 - `GET /export-artifacts/{artifact_id}` read export artifact metadata.
 - `POST /export-artifacts/{artifact_id}/download-url` create a short-lived
   download URL for a ready artifact.
+- `POST /export-artifacts/{artifact_id}/confirm-delivery` confirm export
+  delivery evidence for an artifact.
+- `POST /{artifact_id}/confirm-delivery` confirm that the requester received
+  the export artifact.
 
 ## Permissions
 
@@ -245,6 +251,8 @@ Current behaviour:
   are enabled.
 - Ready artifacts remain downloadable after export DSR fulfilment until expiry.
 - S3-compatible downloads use short-lived presigned GET URLs.
+- URL issuance is tracked separately from delivery evidence; confirmed
+  delivery is recorded only through the delivery confirmation endpoint.
 - Local download references use signed `local://privacy-export/...` values and
   must not be treated as production HTTP download URLs.
 - Download URL generation uses a dedicated privacy export download URL policy

@@ -216,20 +216,45 @@ class ExportArtifactRepository:
         await self.session.refresh(artifact)
         return artifact
 
-    async def increment_download_count(
+    async def record_download_url_issued(
         self, artifact: ExportArtifact
     ) -> ExportArtifact:
         await self.session.execute(
             update(ExportArtifact)
             .where(ExportArtifact.id == artifact.id)
             .values(
-                download_count=ExportArtifact.download_count + 1,
-                downloaded_at=datetime.now(UTC),
+                download_url_issue_count=(ExportArtifact.download_url_issue_count + 1),
+                download_url_issued_at=datetime.now(UTC),
             )
         )
         await self.session.flush()
         await self.session.refresh(artifact)
         return artifact
+
+    async def confirm_delivery(
+        self, artifact: ExportArtifact, *, delivered_at: datetime | None = None
+    ) -> ExportArtifact:
+        reference_time = delivered_at or datetime.now(UTC)
+        if artifact.downloaded_at is not None or artifact.download_count > 0:
+            await self.session.refresh(artifact)
+            return artifact
+
+        await self.session.execute(
+            update(ExportArtifact)
+            .where(ExportArtifact.id == artifact.id)
+            .values(
+                download_count=ExportArtifact.download_count + 1,
+                downloaded_at=reference_time,
+            )
+        )
+        await self.session.flush()
+        await self.session.refresh(artifact)
+        return artifact
+
+    async def increment_download_count(
+        self, artifact: ExportArtifact
+    ) -> ExportArtifact:
+        return await self.confirm_delivery(artifact)
 
     async def save(self, artifact: ExportArtifact) -> ExportArtifact:
         self.session.add(artifact)
