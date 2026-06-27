@@ -76,7 +76,6 @@ received. Delivery evidence is now explicit.
   confirmation endpoints.
 
 
-
 ### PR #428 local test-failure follow-up
 
 - Updated `tests/privacy/test_export_artifact_repository.py` so the statement
@@ -135,3 +134,12 @@ Fixes:
 - Guard the atomic delivery-confirmation update with READY, non-expired and
   non-null storage predicates so retention or subject-erasure races cannot mark
   unavailable artifacts as delivered.
+
+### PR #428 follow-up: DSR eligibility race guard
+
+- Recheck linked DSR eligibility inside the same atomic export artifact delivery
+  confirmation update.
+- Delivery confirmation now requires the linked DSR to remain an export request
+  with status `approved` or `fulfilled` and both requester/subject links present.
+- If platform cancellation or erasure minimisation wins the race before delivery
+  confirmation, no delivery evidence is written and the request is rejected.

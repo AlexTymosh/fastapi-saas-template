@@ -164,7 +164,10 @@ confirmed delivery evidence.
 ### Delivery confirmation availability guard
 
 Delivery confirmation uses an atomic conditional update that only succeeds while
-the artifact is still ready, non-expired, has storage metadata, and has not
-already been confirmed. If retention or subject-erasure cancellation wins the
-race before the confirmation update, the request is rejected instead of writing
-confirmed delivery evidence onto an unavailable artifact.
+the artifact is still ready, non-expired, has storage metadata, has not already
+been confirmed, and its linked DSR is still an eligible export request. Eligible
+DSRs are `approved` or `fulfilled` export requests with requester and subject
+links still present. If retention, subject-erasure cancellation, or platform DSR
+cancellation wins the race before the confirmation update, the request is
+rejected instead of writing confirmed delivery evidence onto an unavailable or
+ineligible artifact.

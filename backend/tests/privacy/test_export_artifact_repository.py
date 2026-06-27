@@ -79,6 +79,11 @@ def test_increment_download_count_uses_atomic_delivery_update_statement() -> Non
         assert "export_artifacts.status=" in compact_no_spaces
         assert "export_artifacts.expires_at>" in compact_no_spaces
         assert "export_artifacts.storage_keyISNOTNULL" in compact_no_spaces
+        assert "EXISTS(SELECT" in compact_no_spaces
+        assert "data_subject_requests.statusIN" in compact_no_spaces
+        assert "data_subject_requests.request_type=" in compact_no_spaces
+        assert "data_subject_requests.subject_user_idISNOTNULL" in compact_no_spaces
+        assert "data_subject_requests.requester_user_idISNOTNULL" in compact_no_spaces
         assert session.statement._execution_options.get("synchronize_session") is False
         assert session.refreshed is artifact
 
