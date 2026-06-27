@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-06-19
+2026-06-27
 
 ## Project Phase
 
@@ -38,6 +38,8 @@ should still be verified against code before extension:
   - DSR persistence model, repository, service lifecycle and APIs;
   - idempotent submission controls;
   - execution state separated from administrative review status;
+  - self-service submission for all modelled request types;
+  - approval restricted to request types with concrete execution policies;
   - cross-table subject export providers;
   - export artifact worker flow and ops integration;
   - local and S3-compatible export artifact storage;
@@ -89,8 +91,8 @@ should still be verified against code before extension:
   - explicit delivery evidence semantics;
   - authorised representative workflows;
   - frontend/UI;
-  - execution pipelines for rectify/restrict/object/access/portability request
-    types.
+  - concrete execution pipelines for access, rectify, restrict, object and
+    portability request types.
 
 ## Not Implemented / Planned
 
@@ -157,41 +159,3 @@ task test:security
 task test:contracts
 task ci
 ```
-
-Direct strict CI-equivalent checks from `backend/`:
-
-```bash
-uv lock --check
-uv sync --frozen --group dev
-uv run --frozen ruff format --check .
-uv run --frozen ruff check .
-uv run --frozen pytest -q -m "not external_db"
-```
-
-External DB tests are opt-in and must not run by default.
-
-## Dependency Management Status
-
-- Do not use Poetry.
-- Do not use `pip-tools`.
-- Do not recreate `requirements.txt` or `requirements-dev.txt`.
-- `backend/uv.lock` is the single dependency lock source.
-- Runtime Docker dependency installation is based on `uv sync --frozen`.
-
-## Recommended Next Steps
-
-1. Keep CI green and required before merging.
-2. Close issue #328 after this documentation reconciliation PR and broad CI pass.
-3. Continue expanding BOLA/BFLA and platform permission tests.
-4. Harden Docker/runtime for production beyond dependency installation.
-5. Continue trusted proxy policy hardening and verify deployment-specific CORS
-   origins.
-
-## Source of Truth
-
-1. Code is primary source of truth.
-2. `AGENTS.md` controls AI-agent workflow.
-3. `backend/docs/architecture.md` controls architecture docs.
-4. `backend/docs/current-state.md` controls current status.
-5. `SESSION_NOTES.md` controls live handoff state.
-6. Feature-specific docs control details only for their area.

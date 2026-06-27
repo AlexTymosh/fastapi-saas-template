@@ -34,6 +34,7 @@ from app.privacy.repositories.export_artifacts import ExportArtifactRepository
 _FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset(
     {DataSubjectRequestType.EXPORT.value, DataSubjectRequestType.ERASE.value}
 )
+_APPROVABLE_REQUEST_TYPES = _FULFILMENT_PIPELINE_REQUEST_TYPES
 _ERASURE_EXECUTION_NOT_FOUND_REASON_CODES = frozenset(
     {
         "erasure_execution_request_not_found",
@@ -390,6 +391,8 @@ class DataSubjectRequestService:
         reason_code: str | None,
         audit_context: AuditContext,
     ) -> DataSubjectRequest:
+        request = await self.get_request(request_id=request_id)
+        self._ensure_request_type_can_be_approved(request)
         return await self.transition_status(
             request_id=request_id,
             target_status=DataSubjectRequestStatus.APPROVED,
@@ -463,6 +466,17 @@ class DataSubjectRequestService:
             return
 
         await self._ensure_export_ready_for_fulfilment(request)
+
+    @staticmethod
+    def _ensure_request_type_can_be_approved(request: DataSubjectRequest) -> None:
+        if request.request_type in _APPROVABLE_REQUEST_TYPES:
+            return
+        raise ConflictError(
+            detail=(
+                "Data-subject request type has no execution policy and cannot "
+                "be approved"
+            )
+        )
 
     async def _ensure_export_ready_for_fulfilment(
         self, request: DataSubjectRequest
