@@ -45,7 +45,7 @@ For organisation-scoped foundation endpoints, this branch now applies a single a
 
 This policy is applied to organisation read/membership-list flows and organisation-scoped invite creation.
 
-To keep invite API tests realistic without exposing raw tokens in the public API contract, token delivery is executed only by outbox workers through a token sink abstraction (`InviteTokenSink`). The production default sink remains a no-op placeholder for out-of-band delivery, while tests can override the sink with an in-memory capture implementation.
+To keep invite API tests realistic without exposing raw tokens in the public API contract, token delivery is executed only by outbox workers through a token sink abstraction (`InviteTokenSink`). Local/test environments may use an in-memory or NoOp sink. Protected environments must use the SMTP sink when invite delivery is enabled.
 
 
 ## Outbox runtime operations (P0)
@@ -81,6 +81,37 @@ At-least-once delivery remains the contract: duplicate delivery is still possibl
 - Worker decryption/key mismatch is handled safely: event is failed/retried without exposing raw token or encrypted payload.
 - Key rotation and KMS integration are not part of this task.
 - Processed-outbox retention/cleanup remains a separate follow-up task.
+
+## Invite delivery provider
+
+Invite delivery is configured with `INVITE_DELIVERY__*` environment variables.
+
+Supported providers:
+
+- `noop`: local/test placeholder only.
+- `smtp`: real SMTP delivery provider used by protected environments.
+
+When `OUTBOX__INVITE_DELIVERY_ENABLED=true`, `dev`, `staging`, and `prod` must not use `INVITE_DELIVERY__PROVIDER=noop`. The worker refuses to create a NoOp sink in those environments, so an unsafe configuration fails the outbox delivery attempt instead of silently marking invite events as delivered.
+
+Required SMTP settings:
+
+- `INVITE_DELIVERY__PROVIDER=smtp`
+- `INVITE_DELIVERY__FROM_EMAIL`
+- `INVITE_DELIVERY__ACCEPT_URL_TEMPLATE`, containing `{token}`
+- `INVITE_DELIVERY__SMTP_HOST`
+
+Optional SMTP settings:
+
+- `INVITE_DELIVERY__SMTP_PORT`, default `587`
+- `INVITE_DELIVERY__SMTP_USERNAME`
+- `INVITE_DELIVERY__SMTP_PASSWORD`
+- `INVITE_DELIVERY__SMTP_TIMEOUT_SECONDS`, default `10.0`
+- `INVITE_DELIVERY__SMTP_USE_TLS`, for direct TLS/SMTPS
+- `INVITE_DELIVERY__SMTP_START_TLS`, for STARTTLS on plain SMTP
+
+`SMTP_USERNAME` and `SMTP_PASSWORD` must be configured together. Direct TLS and STARTTLS are mutually exclusive. `staging` and `prod` invitation accept URL templates must use `https://`.
+
+The SMTP sink builds the accept link by URL-encoding the raw token into the configured `{token}` placeholder. Raw tokens remain in memory only: they are decrypted by the worker, validated against `invites.token_hash`, inserted into the outbound email link, and not logged or persisted by the delivery provider.
 
 ## SQLite and PostgreSQL compatibility note
 
