@@ -53,6 +53,17 @@ def test_local_invite_delivery_uses_noop_sink_by_default() -> None:
     assert isinstance(sink, NoOpInviteTokenSink)
 
 
+def test_noop_invite_delivery_treats_blank_sender_as_unset(monkeypatch) -> None:
+    monkeypatch.setenv("INVITE_DELIVERY__PROVIDER", "noop")
+    monkeypatch.setenv("INVITE_DELIVERY__FROM_EMAIL", "   ")
+
+    settings = get_invite_delivery_settings()
+    sink = get_invite_token_sink()
+
+    assert settings.from_email is None
+    assert isinstance(sink, NoOpInviteTokenSink)
+
+
 def test_protected_invite_delivery_rejects_noop_provider(monkeypatch) -> None:
     _set_dev_invite_delivery_baseline(monkeypatch)
 
@@ -90,6 +101,16 @@ def test_smtp_invite_delivery_requires_token_url_template() -> None:
             provider="smtp",
             from_email="invites@example.com",
             accept_url_template="https://app.example.test/invites/accept",
+            smtp_host="smtp.example.test",
+        )
+
+
+def test_smtp_invite_delivery_requires_sender_after_blank_normalisation() -> None:
+    with pytest.raises(ValueError, match="INVITE_DELIVERY__FROM_EMAIL"):
+        InviteDeliverySettings(
+            provider="smtp",
+            from_email="  ",
+            accept_url_template="https://app.example.test/invites/{token}",
             smtp_host="smtp.example.test",
         )
 

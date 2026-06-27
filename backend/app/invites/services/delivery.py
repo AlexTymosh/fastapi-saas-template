@@ -49,6 +49,7 @@ class InviteDeliverySettings(BaseSettings):
 
     @field_validator(
         "provider",
+        "from_email",
         "subject",
         "accept_url_template",
         "smtp_host",
