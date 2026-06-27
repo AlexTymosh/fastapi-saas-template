@@ -355,6 +355,92 @@ def test_user_download_url_route_uses_export_download_rate_limit_policy() -> Non
     )
 
 
+def test_user_confirm_delivery_route_uses_artifact_rate_limit_policy() -> None:
+    source = inspect.getsource(
+        export_artifacts_api.confirm_own_export_artifact_delivery
+    )
+
+    assert "PRIVACY_EXPORT_DOWNLOAD_URL_POLICY" in source
+    assert "TENANT_WRITE_POLICY" not in source
+    assert "TENANT_READ_POLICY" not in source
+    assert source.index("get_own_export_artifact") < source.index(
+        "check_export_artifact_download_url_rate_limit"
+    )
+    assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
+        "confirm_export_delivery"
+    )
+
+
+def test_user_can_confirm_export_artifact_delivery(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _enable_privacy_exports(monkeypatch, tmp_path)
+    user = _provision_user(
+        migrated_session_factory,
+        "kc-export-confirm-delivery",
+        "export-confirm-delivery@example.com",
+    )
+    artifact_id = _create_ready_artifact(migrated_session_factory, user)
+    client = authenticated_client_factory(
+        identity=identity_for(user.external_auth_id, user.email),
+        database_url=migrated_database_url,
+    )
+
+    response = client.client.post(
+        f"/api/v1/privacy/export-artifacts/{artifact_id}/confirm-delivery"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["download_count"] == 1
+    assert body["downloaded_at"] is not None
+
+
+def test_user_cannot_confirm_another_users_export_artifact_delivery(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _enable_privacy_exports(monkeypatch, tmp_path)
+    owner = _provision_user(
+        migrated_session_factory, "kc-confirm-owner", "confirm-owner@example.com"
+    )
+    stranger = _provision_user(
+        migrated_session_factory,
+        "kc-confirm-stranger",
+        "confirm-stranger@example.com",
+    )
+    artifact_id = _create_ready_artifact(migrated_session_factory, owner)
+    client = authenticated_client_factory(
+        identity=identity_for(stranger.external_auth_id, stranger.email),
+        database_url=migrated_database_url,
+    )
+
+    response = client.client.post(
+        f"/api/v1/privacy/export-artifacts/{artifact_id}/confirm-delivery"
+    )
+
+    assert response.status_code == 404
+
+    source = inspect.getsource(export_artifacts_api.create_own_export_download_url)
+
+    assert "PRIVACY_EXPORT_DOWNLOAD_URL_POLICY" in source
+    assert "TENANT_WRITE_POLICY" not in source
+    assert "TENANT_READ_POLICY" not in source
+    assert source.index("get_own_export_artifact") < source.index(
+        "check_export_artifact_download_url_rate_limit"
+    )
+    assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
+        "generate_download_url"
+    )
+
+
 def test_platform_download_url_route_uses_export_download_rate_limit_policy() -> None:
     source = inspect.getsource(
         platform_export_artifacts_api.create_platform_export_download_url
@@ -367,6 +453,21 @@ def test_platform_download_url_route_uses_export_download_rate_limit_policy() ->
     )
     assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
         "generate_download_url"
+    )
+
+
+def test_platform_confirm_delivery_route_uses_artifact_rate_limit_policy() -> None:
+    source = inspect.getsource(
+        platform_export_artifacts_api.confirm_platform_export_artifact_delivery
+    )
+
+    assert "PRIVACY_EXPORT_DOWNLOAD_URL_POLICY" in source
+    assert "PLATFORM_WRITE_POLICY" not in source
+    assert source.index("get_platform_export_artifact") < source.index(
+        "check_export_artifact_download_url_rate_limit"
+    )
+    assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
+        "confirm_export_delivery"
     )
 
 

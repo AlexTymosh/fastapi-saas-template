@@ -78,6 +78,9 @@ PLATFORM_PATHS = {
     "/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url": {
         "post": "platform-privacy"
     },
+    "/api/v1/platform/privacy/export-artifacts/{artifact_id}/confirm-delivery": {
+        "post": "platform-privacy"
+    },
 }
 
 EXPECTED_PLATFORM_OPERATION_IDS = {
@@ -167,6 +170,10 @@ EXPECTED_PLATFORM_OPERATION_IDS = {
         "post",
         "/api/v1/platform/privacy/export-artifacts/{artifact_id}/download-url",
     ): "create_platform_export_download_url",
+    (
+        "post",
+        "/api/v1/platform/privacy/export-artifacts/{artifact_id}/confirm-delivery",
+    ): "confirm_platform_export_artifact_delivery",
 }
 
 READ_POLICIES = {

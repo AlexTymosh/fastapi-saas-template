@@ -133,3 +133,41 @@ without mutating the database or deleting storage objects.
 - Streaming archive generation for very large exports.
 - Authorised representative workflows.
 - Frontend/UI.
+
+
+## Delivery evidence
+
+Download URL creation records that a URL was issued. It does not prove
+that the artifact was received, especially for S3-compatible presigned
+URLs. Confirmed delivery is recorded through the explicit delivery
+confirmation endpoints. Those endpoints reuse the export download URL
+rate-limit policy and authorised artifact-scoped bucket before they
+update `downloaded_at`, increment `download_count`, and sync the export
+DSR execution state.
+
+## Migration notes for URL issuance split
+
+Before delivery confirmation existed, `downloaded_at` and `download_count`
+represented URL issuance, not confirmed receipt. The migration moves those
+legacy values into `download_url_issued_at` and `download_url_issue_count`, then
+clears the confirmed-delivery fields so historical rows are not treated as
+confirmed delivery evidence.
+
+Delivery confirmation is idempotent. Repeated or concurrent confirmations must
+leave `download_count` at `1` and must not create duplicate delivery evidence.
+
+Legacy DSR execution state is reclassified from the latest export artifact after
+that backfill. Latest ready artifacts become `ready`; latest expired artifacts
+become failed with `artifact_expired`, because URL issuance alone is not
+confirmed delivery evidence.
+
+### Delivery confirmation availability guard
+
+Delivery confirmation uses an atomic conditional update that only succeeds while
+the artifact is still ready, non-expired, has storage metadata, has not already
+been confirmed, and its linked DSR is still an eligible export request. Eligible
+DSRs are `approved` or `fulfilled` export requests with requester and subject
+links still present. If retention, subject-erasure cancellation, or platform DSR
+cancellation wins the race before the confirmation update, the request is
+rejected instead of writing confirmed delivery evidence onto an unavailable or
+ineligible artifact.

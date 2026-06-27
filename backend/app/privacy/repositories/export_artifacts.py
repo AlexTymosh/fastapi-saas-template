@@ -11,7 +11,17 @@ from app.privacy.export_artifact_lifecycle import (
     mark_export_artifact_failed,
     mark_export_artifact_ready,
 )
+from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
+    DataSubjectRequestStatus,
+    DataSubjectRequestType,
+)
 from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
+
+_ELIGIBLE_DELIVERY_DSR_STATUSES = (
+    DataSubjectRequestStatus.APPROVED.value,
+    DataSubjectRequestStatus.FULFILLED.value,
+)
 
 
 class ExportArtifactRepository:
@@ -216,19 +226,56 @@ class ExportArtifactRepository:
         await self.session.refresh(artifact)
         return artifact
 
-    async def increment_download_count(
+    async def record_download_url_issued(
         self, artifact: ExportArtifact
     ) -> ExportArtifact:
         await self.session.execute(
             update(ExportArtifact)
             .where(ExportArtifact.id == artifact.id)
             .values(
-                download_count=ExportArtifact.download_count + 1,
-                downloaded_at=datetime.now(UTC),
+                download_url_issue_count=(ExportArtifact.download_url_issue_count + 1),
+                download_url_issued_at=datetime.now(UTC),
             )
         )
         await self.session.flush()
         await self.session.refresh(artifact)
+        return artifact
+
+    async def confirm_delivery(
+        self, artifact: ExportArtifact, *, delivered_at: datetime | None = None
+    ) -> tuple[ExportArtifact, bool]:
+        reference_time = delivered_at or datetime.now(UTC)
+        eligible_dsr = (
+            select(DataSubjectRequest.id)
+            .where(
+                DataSubjectRequest.id == ExportArtifact.data_subject_request_id,
+                DataSubjectRequest.request_type == DataSubjectRequestType.EXPORT.value,
+                DataSubjectRequest.status.in_(_ELIGIBLE_DELIVERY_DSR_STATUSES),
+                DataSubjectRequest.subject_user_id.is_not(None),
+                DataSubjectRequest.requester_user_id.is_not(None),
+            )
+            .exists()
+        )
+        result = await self.session.execute(
+            update(ExportArtifact)
+            .where(ExportArtifact.id == artifact.id)
+            .where(ExportArtifact.downloaded_at.is_(None))
+            .where(ExportArtifact.download_count == 0)
+            .where(ExportArtifact.status == ExportArtifactStatus.READY.value)
+            .where(ExportArtifact.expires_at > reference_time)
+            .where(ExportArtifact.storage_key.is_not(None))
+            .where(eligible_dsr)
+            .values(download_count=1, downloaded_at=reference_time)
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.flush()
+        await self.session.refresh(artifact)
+        return artifact, result.rowcount == 1
+
+    async def increment_download_count(
+        self, artifact: ExportArtifact
+    ) -> ExportArtifact:
+        artifact, _ = await self.confirm_delivery(artifact)
         return artifact
 
     async def save(self, artifact: ExportArtifact) -> ExportArtifact:

@@ -48,6 +48,7 @@ class AuditAction(StrEnum):
     EXPORT_ARTIFACT_GENERATED = "export_artifact_generated"
     EXPORT_ARTIFACT_FAILED = "export_artifact_failed"
     EXPORT_ARTIFACT_DOWNLOAD_URL_CREATED = "export_artifact_download_url_created"
+    EXPORT_ARTIFACT_DELIVERY_CONFIRMED = "export_artifact_delivery_confirmed"
     EXPORT_ARTIFACT_EXPIRED = "export_artifact_expired"
 
 

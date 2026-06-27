@@ -7,8 +7,10 @@ from io import BytesIO
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.audit.context import AuditContext
+from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.core.config.settings import get_settings
 from app.core.errors import ConflictError
 from app.privacy.models.data_subject_request import (
@@ -748,6 +750,8 @@ def test_mark_expired_artifacts_preserves_delivered_dsr_execution_state(
                 == DataSubjectRequestExecutionStatus.DELIVERED.value
             )
             assert persisted.execution_completed_at is not None
+            assert persisted_artifact.download_count == 1
+            assert persisted_artifact.downloaded_at is not None
             assert persisted.execution_failed_at is None
             assert persisted.execution_failure_reason_code is None
             assert persisted.execution_failure_detail is None
@@ -809,7 +813,7 @@ def test_mark_expired_artifacts_respects_newer_queued_export_run(
     run_async(_run())
 
 
-def test_generate_download_url_marks_dsr_execution_delivered(
+def test_generate_download_url_records_issuance_without_delivery(
     migrated_session_factory,
 ):
     async def _run():
@@ -842,11 +846,150 @@ def test_generate_download_url_marks_dsr_execution_delivered(
             assert 0 < download.expires_in_seconds <= 60
             persisted = await service.dsr_repo.get_by_id(dsr.id)
             assert persisted is not None
+            assert persisted.execution_status != (
+                DataSubjectRequestExecutionStatus.DELIVERED.value
+            )
+            assert persisted.execution_completed_at is None
+            persisted_artifact = await service.repo.get_by_id(artifact.id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.download_url_issue_count == 1
+            assert persisted_artifact.download_url_issued_at is not None
+            assert persisted_artifact.download_count == 0
+            assert persisted_artifact.downloaded_at is None
+
+    run_async(_run())
+
+
+def test_confirm_export_delivery_marks_dsr_execution_delivered(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            service.storage.put_bytes(
+                artifact.storage_key,
+                b"payload",
+                "application/zip",
+            )
+            await service.repo.save(artifact)
+
+            delivered = await service.confirm_export_delivery(
+                artifact=artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            assert delivered.download_count == 1
+            assert delivered.downloaded_at is not None
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
             assert (
                 persisted.execution_status
                 == DataSubjectRequestExecutionStatus.DELIVERED.value
             )
             assert persisted.execution_completed_at is not None
+            assert persisted.execution_failed_at is None
+
+    run_async(_run())
+
+
+def test_confirm_export_delivery_is_idempotent_for_repeated_calls(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            await service.repo.save(artifact)
+
+            await service.confirm_export_delivery(
+                artifact=artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            await service.confirm_export_delivery(
+                artifact=artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            persisted_artifact = await service.repo.get_by_id(artifact.id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.download_count == 1
+            assert persisted_artifact.downloaded_at is not None
+
+            events = (
+                (
+                    await session.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.action
+                            == AuditAction.EXPORT_ARTIFACT_DELIVERY_CONFIRMED.value,
+                            AuditEvent.target_id == artifact.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(events) == 1
+
+    run_async(_run())
+
+
+def test_confirm_export_delivery_rejects_expired_artifact(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            await service.repo.save(artifact)
+
+            with pytest.raises(ConflictError, match="after expiry"):
+                await service.confirm_export_delivery(
+                    artifact=artifact,
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert persisted.execution_status != (
+                DataSubjectRequestExecutionStatus.DELIVERED.value
+            )
 
     run_async(_run())
 
@@ -1078,5 +1221,56 @@ def test_mark_expired_artifacts_preserves_cancelled_erasure_retry_on_failure(
             assert persisted.size_bytes == 7
             assert persisted.checksum_sha256 == "0" * 64
             assert storage.exists(storage_key)
+
+    run_async(_run())
+
+
+def test_confirm_export_delivery_rejects_stale_unavailable_artifact(
+    migrated_session_factory,
+    monkeypatch,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            await service.repo.save(artifact)
+
+            async def _stale_confirmation(
+                artifact_arg,
+                *,
+                delivered_at=None,
+            ):
+                del delivered_at
+                artifact_arg.status = ExportArtifactStatus.CANCELLED.value
+                artifact_arg.storage_key = None
+                artifact_arg.downloaded_at = None
+                artifact_arg.download_count = 0
+                return artifact_arg, False
+
+            monkeypatch.setattr(service.repo, "confirm_delivery", _stale_confirmation)
+
+            with pytest.raises(ConflictError, match="no longer available"):
+                await service.confirm_export_delivery(
+                    artifact=artifact,
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert persisted.execution_status != (
+                DataSubjectRequestExecutionStatus.DELIVERED.value
+            )
 
     run_async(_run())

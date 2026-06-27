@@ -102,7 +102,10 @@ Current user API constraints:
   user-facing DSR responses.
 - Download URLs do not expose storage keys, local paths, processing tokens or raw
   payload internals.
-- Download URL generation is rate-limited at actor and authorised artifact scope.
+- Download URL creation records URL issuance only. It does not mark the export
+  DSR as delivered until delivery is explicitly confirmed.
+- Download URL generation and delivery confirmation are rate-limited at actor and
+  authorised artifact scope.
 
 ## Request-type execution policy
 
@@ -165,6 +168,10 @@ Endpoints:
 - `GET /export-artifacts/{artifact_id}` read export artifact metadata.
 - `POST /export-artifacts/{artifact_id}/download-url` create a short-lived
   download URL for a ready artifact.
+- `POST /export-artifacts/{artifact_id}/confirm-delivery` confirm export
+  delivery evidence for an artifact.
+- `POST /{artifact_id}/confirm-delivery` confirm that the requester received
+  the export artifact.
 
 ## Permissions
 
@@ -245,10 +252,14 @@ Current behaviour:
   are enabled.
 - Ready artifacts remain downloadable after export DSR fulfilment until expiry.
 - S3-compatible downloads use short-lived presigned GET URLs.
+- URL issuance is tracked separately from delivery evidence; confirmed
+  delivery is recorded only through the delivery confirmation endpoint.
 - Local download references use signed `local://privacy-export/...` values and
   must not be treated as production HTTP download URLs.
-- Download URL generation uses a dedicated privacy export download URL policy
-  and an authorised artifact-scoped bucket.
+- Download URL generation and delivery confirmation use a dedicated privacy
+  export download URL policy and an authorised artifact-scoped bucket.
+- Delivery confirmation performs an atomic final eligibility check against the
+  linked DSR before writing confirmed-delivery evidence.
 - Audit metadata is minimised and does not include export payloads, signed URLs,
   storage keys, local paths or processing tokens.
 
@@ -256,3 +267,24 @@ Current behaviour:
 
 Approved erase DSRs execute through the platform erasure API and the internal
 command-layer boundary.
+
+### Export URL issuance migration
+
+Legacy export rows created before explicit delivery confirmation used download
+metadata as URL issuance metadata. The delivery-evidence migration reclassifies
+those values into URL issuance columns and clears confirmed-delivery columns.
+After the migration, `delivered` execution state is reserved for explicit
+confirmation evidence only.
+
+During the PR #428 migration, legacy URL-issued export DSR rows are
+reclassified from their latest export artifact. Ready legacy artifacts remain
+ready for confirmation, while expired legacy artifacts become failed with
+`artifact_expired` evidence.
+
+### Export delivery evidence migration guardrails
+
+The export delivery evidence migration reclassifies legacy URL-issued export DSRs
+from the latest artifact state. Latest ready artifacts return to `ready`, latest
+expired artifacts become `artifact_expired` failures, and latest cancelled
+artifacts become failed delivery evidence using the cancellation reason. This
+prevents legacy URL issuance from remaining visible as confirmed delivery.

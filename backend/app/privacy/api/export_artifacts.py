@@ -128,3 +128,39 @@ async def create_own_export_download_url(
         url=download.url,
         expires_in_seconds=download.expires_in_seconds,
     )
+
+
+@router.post(
+    "/{artifact_id}/confirm-delivery",
+    response_model=ExportArtifactResponse,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+)
+async def confirm_own_export_artifact_delivery(
+    artifact_id: UUID,
+    request: Request,
+    identity: Annotated[
+        AuthenticatedPrincipal, Depends(require_authenticated_principal)
+    ],
+    _rate_limit: Annotated[
+        None,
+        Depends(rate_limit_dependency(PRIVACY_EXPORT_DOWNLOAD_URL_POLICY)),
+    ],
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ExportArtifactResponse:
+    async with db_session.begin():
+        user = await _provision_current_user(db_session=db_session, identity=identity)
+        service = ExportArtifactService(db_session)
+        artifact = await service.get_own_export_artifact(
+            artifact_id=artifact_id, requester_user_id=user.id
+        )
+        await check_export_artifact_download_url_rate_limit(
+            request=request,
+            artifact_id=artifact.id,
+        )
+        delivered = await service.confirm_export_delivery(
+            artifact=artifact,
+            audit_context=build_audit_context_from_request(
+                actor_user_id=user.id, request=request
+            ),
+        )
+    return ExportArtifactResponse.model_validate(delivered)

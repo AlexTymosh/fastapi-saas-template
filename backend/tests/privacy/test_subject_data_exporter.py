@@ -272,6 +272,82 @@ def test_dsr_export_minimises_reviewer_only_requests(
     run_async(_run())
 
 
+def test_export_includes_url_issuance_metadata_for_subject_artifacts(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            user = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"artifact-subject-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add(user)
+            await session.flush()
+
+            dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+                requester_user_id=user.id,
+                subject_user_id=user.id,
+                submitted_at=now - timedelta(days=1),
+                due_at=now + timedelta(days=29),
+            )
+            session.add(dsr)
+            await session.flush()
+
+            artifact = ExportArtifact(
+                data_subject_request_id=dsr.id,
+                subject_user_id=user.id,
+                requester_user_id=user.id,
+                status=ExportArtifactStatus.READY.value,
+                format=ExportArtifactFormat.JSON_ZIP.value,
+                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
+                storage_key=f"exports/{uuid4()}/artifact.zip",
+                filename="privacy-export.zip",
+                content_type="application/zip",
+                size_bytes=128,
+                checksum_sha256="a" * 64,
+                schema_version="1.0",
+                queued_at=now - timedelta(hours=1),
+                started_at=now - timedelta(minutes=45),
+                completed_at=now - timedelta(minutes=30),
+                expires_at=now + timedelta(days=7),
+                download_url_issued_at=now - timedelta(minutes=10),
+                download_url_issue_count=3,
+                download_count=0,
+            )
+            session.add(artifact)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=user.id,
+                    requester_user_id=user.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["export_artifacts.subject_or_actor_metadata"]
+            artifact_record = next(
+                item for item in records if item["payload"]["id"] == str(artifact.id)
+            )
+            artifact_payload = artifact_record["payload"]
+            assert artifact_record["record_kind"] == "data"
+            assert artifact_payload["download_url_issue_count"] == 3
+            assert artifact_payload["download_url_issued_at"] is not None
+            assert artifact_payload["download_count"] == 0
+            assert artifact_payload["downloaded_at"] is None
+
+    run_async(_run())
+
+
 def test_export_minimises_actor_only_export_artifact_rows(
     migrated_session_factory,
 ) -> None:
@@ -323,6 +399,8 @@ def test_export_minimises_actor_only_export_artifact_rows(
                 started_at=now - timedelta(minutes=45),
                 completed_at=now - timedelta(minutes=30),
                 expires_at=now + timedelta(days=7),
+                download_url_issued_at=now - timedelta(minutes=20),
+                download_url_issue_count=2,
                 download_count=0,
             )
             session.add(actor_artifact)
@@ -355,6 +433,8 @@ def test_export_minimises_actor_only_export_artifact_rows(
             assert artifact_payload["requested_by_user_id"] == str(actor.id)
             assert artifact_payload["generated_by_user_id"] == str(actor.id)
             assert artifact_payload["status"] == ExportArtifactStatus.READY.value
+            assert artifact_payload["download_url_issue_count"] == 2
+            assert artifact_payload["download_url_issued_at"] is not None
             assert "data_subject_request_id" not in artifact_payload
             assert "subject_user_id" not in artifact_payload
             assert "requester_user_id" not in artifact_payload

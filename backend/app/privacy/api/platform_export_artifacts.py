@@ -153,3 +153,38 @@ async def create_platform_export_download_url(
         url=download.url,
         expires_in_seconds=download.expires_in_seconds,
     )
+
+
+@router.post(
+    "/export-artifacts/{artifact_id}/confirm-delivery",
+    response_model=ExportArtifactResponse,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+)
+async def confirm_platform_export_artifact_delivery(
+    artifact_id: UUID,
+    request: Request,
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(
+            require_rate_limited_platform_write_context(
+                PlatformPermission.GDPR_EXPORT,
+                policy=PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
+            ),
+            scope="function",
+        ),
+    ],
+) -> ExportArtifactResponse:
+    actor = write_context.actor
+    service = ExportArtifactService(write_context.session)
+    artifact = await service.get_platform_export_artifact(artifact_id=artifact_id)
+    await check_export_artifact_download_url_rate_limit(
+        request=request,
+        artifact_id=artifact.id,
+    )
+    delivered = await service.confirm_export_delivery(
+        artifact=artifact,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=actor.user.id, request=request
+        ),
+    )
+    return ExportArtifactResponse.model_validate(delivered)

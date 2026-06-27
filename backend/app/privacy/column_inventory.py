@@ -1125,11 +1125,27 @@ PRIVACY_COLUMN_POLICIES: tuple[PrivacyColumnPolicy, ...] = (
     ),
     _policy(
         "export_artifacts",
+        "download_url_issued_at",
+        CLASS_LIFECYCLE,
+        True,
+        ACTION_RETAIN,
+        "Last download URL issuance time.",
+    ),
+    _policy(
+        "export_artifacts",
+        "download_url_issue_count",
+        CLASS_METADATA,
+        True,
+        ACTION_RETAIN,
+        "Download URL issuance count.",
+    ),
+    _policy(
+        "export_artifacts",
         "downloaded_at",
         CLASS_LIFECYCLE,
         True,
         ACTION_MINIMISE,
-        "Last download URL time.",
+        "Confirmed delivery time.",
     ),
     _policy(
         "export_artifacts",
@@ -1137,7 +1153,7 @@ PRIVACY_COLUMN_POLICIES: tuple[PrivacyColumnPolicy, ...] = (
         CLASS_METADATA,
         True,
         ACTION_MINIMISE,
-        "Download URL count.",
+        "Confirmed delivery count.",
     ),
     # data_processing_authorizations
     _policy(
