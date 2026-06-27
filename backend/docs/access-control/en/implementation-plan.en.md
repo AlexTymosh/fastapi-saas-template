@@ -388,7 +388,8 @@ GET   /api/v1/platform/audit-events/limited
 ### Rules
 
 ```text
-- all endpoints must require require_platform_permission(permission)
+- all endpoints must enforce platform permission checks through
+  require_platform_permission(permission)
 - all sensitive actions must emit audit_events records
 - platform endpoints must not create implicit tenant membership
 ```
