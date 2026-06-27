@@ -163,8 +163,11 @@ def get_invite_delivery_settings() -> InviteDeliverySettings:
 
 
 def get_invite_token_sink() -> InviteTokenSink:
-    delivery_settings = get_invite_delivery_settings()
     app_settings = get_settings()
+    if not app_settings.outbox.invite_delivery_enabled:
+        return _DEFAULT_INVITE_TOKEN_SINK
+
+    delivery_settings = get_invite_delivery_settings()
     if delivery_settings.provider == "smtp":
         _ensure_protected_smtp_url_policy(
             delivery_settings,

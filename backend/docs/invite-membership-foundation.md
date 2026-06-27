@@ -91,6 +91,8 @@ Supported providers:
 - `noop`: local/test placeholder only.
 - `smtp`: real SMTP delivery provider used by protected environments.
 
+When `OUTBOX__INVITE_DELIVERY_ENABLED=false`, workers always use the NoOp sink before reading provider-specific invite delivery settings. This lets operators disable invite delivery without clearing stale SMTP environment variables and prevents disabled workers from sending invite emails.
+
 When `OUTBOX__INVITE_DELIVERY_ENABLED=true`, `dev`, `staging`, and `prod` must not use `INVITE_DELIVERY__PROVIDER=noop`. The worker refuses to create a NoOp sink in those environments, so an unsafe configuration fails the outbox delivery attempt instead of silently marking invite events as delivered.
 
 Required SMTP settings:

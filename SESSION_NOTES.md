@@ -32,7 +32,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 1 | Define execution policy for non-export DSR types | Yes | Done |
 | 2 | Accept requester details on DSR submissions | Yes | Done |
 | 3 | Separate URL issuance from delivery evidence | Yes | Done |
-| 4 | Real invite delivery provider / NoOp guard | Yes | Done |
+| 4 | Real invite delivery provider / NoOp guard | Yes | In PR #429 |
 | 5 | Retention runner Taskfile and ops docs | Yes | Not started |
 | 6 | Runtime secrets and Docker hardening | Yes | Not started |
 | 7 | PostgreSQL DSR provider integration tests | Yes | Not started |
@@ -84,7 +84,7 @@ Priority: P2
 Type: `feat(invites)`
 Recommended branch: `feat/invite-delivery-provider-guard`
 Recommended PR title: `✨ feat(invites): add SMTP invite delivery provider guard`
-Status: files prepared locally.
+Status: In PR #429; Codex feedback addressed locally.
 
 ### Goal
 
@@ -108,9 +108,19 @@ provider when invite delivery is enabled.
    SMTP message construction and token URL encoding.
 8. Update `.env.example` and invite delivery documentation.
 
+### PR #429 follow-up
+
+Codex found that `OUTBOX__INVITE_DELIVERY_ENABLED=false` was not honoured before
+SMTP provider selection. The fix short-circuits `get_invite_token_sink()` to the
+NoOp sink before parsing `INVITE_DELIVERY__*` provider settings when invite
+delivery is disabled. This prevents disabled workers from sending SMTP invites
+or failing on stale SMTP configuration.
+
 ### Failure cases to cover
 
 - Protected environment + enabled invite delivery + NoOp provider is rejected.
+- Disabled invite delivery + stale SMTP provider settings returns NoOp before
+  SMTP configuration is parsed.
 - SMTP provider cannot start without host, sender and `{token}` URL template.
 - SMTP username/password must be configured together.
 - Staging/prod accept URL templates must use HTTPS.

@@ -60,6 +60,21 @@ def test_protected_invite_delivery_rejects_noop_provider(monkeypatch) -> None:
         get_invite_token_sink()
 
 
+def test_disabled_invite_delivery_uses_noop_before_provider_config(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP__ENVIRONMENT", "dev")
+    monkeypatch.setenv("OUTBOX__INVITE_DELIVERY_ENABLED", "false")
+    monkeypatch.setenv("INVITE_DELIVERY__PROVIDER", "smtp")
+    monkeypatch.delenv("INVITE_DELIVERY__FROM_EMAIL", raising=False)
+    monkeypatch.delenv("INVITE_DELIVERY__ACCEPT_URL_TEMPLATE", raising=False)
+    monkeypatch.delenv("INVITE_DELIVERY__SMTP_HOST", raising=False)
+
+    sink = get_invite_token_sink()
+
+    assert isinstance(sink, NoOpInviteTokenSink)
+
+
 def test_protected_invite_delivery_uses_smtp_provider(monkeypatch) -> None:
     _set_dev_invite_delivery_baseline(monkeypatch)
     _set_smtp_invite_delivery(monkeypatch)
