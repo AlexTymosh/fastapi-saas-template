@@ -26,16 +26,53 @@ SET
 WHERE downloaded_at IS NOT NULL OR download_count > 0
 """
 
-_RESET_LEGACY_DELIVERED_EXPORTS = """
+_RESET_READY_LEGACY_URL_DELIVERIES = """
 UPDATE data_subject_requests
-SET execution_status = 'ready'
-WHERE request_type = 'export'
-  AND execution_status = 'delivered'
-  AND EXISTS (
+SET
+    execution_status = 'ready',
+    execution_completed_at = latest.completed_at,
+    execution_failed_at = NULL,
+    execution_failure_reason_code = NULL,
+    execution_failure_detail = NULL
+FROM export_artifacts AS latest
+WHERE data_subject_requests.request_type = 'export'
+  AND data_subject_requests.execution_status = 'delivered'
+  AND latest.data_subject_request_id = data_subject_requests.id
+  AND latest.status = 'ready'
+  AND (
+      latest.download_url_issued_at IS NOT NULL
+      OR latest.download_url_issue_count > 0
+  )
+  AND NOT EXISTS (
       SELECT 1
-      FROM export_artifacts
-      WHERE export_artifacts.data_subject_request_id = data_subject_requests.id
-        AND export_artifacts.status = 'ready'
+      FROM export_artifacts AS newer
+      WHERE newer.data_subject_request_id = latest.data_subject_request_id
+        AND newer.queued_at > latest.queued_at
+  )
+"""
+
+_RESET_EXPIRED_LEGACY_URL_DELIVERIES = """
+UPDATE data_subject_requests
+SET
+    execution_status = 'failed',
+    execution_completed_at = NULL,
+    execution_failed_at = latest.expires_at,
+    execution_failure_reason_code = 'artifact_expired',
+    execution_failure_detail = 'Export artifact expired before delivery'
+FROM export_artifacts AS latest
+WHERE data_subject_requests.request_type = 'export'
+  AND data_subject_requests.execution_status = 'delivered'
+  AND latest.data_subject_request_id = data_subject_requests.id
+  AND latest.status = 'expired'
+  AND (
+      latest.download_url_issued_at IS NOT NULL
+      OR latest.download_url_issue_count > 0
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM export_artifacts AS newer
+      WHERE newer.data_subject_request_id = latest.data_subject_request_id
+        AND newer.queued_at > latest.queued_at
   )
 """
 
@@ -63,7 +100,8 @@ def upgrade() -> None:
         )
 
     op.execute(sa.text(_OLD_URL_ISSUANCE_BACKFILL))
-    op.execute(sa.text(_RESET_LEGACY_DELIVERED_EXPORTS))
+    op.execute(sa.text(_RESET_READY_LEGACY_URL_DELIVERIES))
+    op.execute(sa.text(_RESET_EXPIRED_LEGACY_URL_DELIVERIES))
 
 
 def downgrade() -> None:

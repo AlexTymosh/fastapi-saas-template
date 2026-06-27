@@ -272,3 +272,8 @@ metadata as URL issuance metadata. The delivery-evidence migration reclassifies
 those values into URL issuance columns and clears confirmed-delivery columns.
 After the migration, `delivered` execution state is reserved for explicit
 confirmation evidence only.
+
+During the PR #428 migration, legacy URL-issued export DSR rows are
+reclassified from their latest export artifact. Ready legacy artifacts remain
+ready for confirmation, while expired legacy artifacts become failed with
+`artifact_expired` evidence.

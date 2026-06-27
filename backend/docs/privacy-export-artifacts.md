@@ -155,3 +155,8 @@ confirmed delivery evidence.
 
 Delivery confirmation is idempotent. Repeated or concurrent confirmations must
 leave `download_count` at `1` and must not create duplicate delivery evidence.
+
+Legacy DSR execution state is reclassified from the latest export artifact after
+that backfill. Latest ready artifacts become `ready`; latest expired artifacts
+become failed with `artifact_expired`, because URL issuance alone is not
+confirmed delivery evidence.

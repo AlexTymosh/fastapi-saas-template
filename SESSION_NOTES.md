@@ -97,6 +97,10 @@ received. Delivery evidence is now explicit.
   evidence is written.
 - Added route source tests to prove confirm-delivery calls the same
   artifact-scoped throttle before `confirm_export_delivery()`.
+- Updated the legacy URL-delivery migration so delivered export DSRs are
+  reclassified from URL issuance based on the latest artifact status: ready
+  artifacts become `ready`, expired artifacts become `failed` with
+  `artifact_expired` evidence.
 
 ## Notes for future agents
 
