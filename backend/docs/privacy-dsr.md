@@ -88,10 +88,34 @@ Endpoints:
 Current user API constraints:
 
 - Submission is self-service only: requester and subject are the same local user.
-- Submitted request types may still require platform review and execution.
+- Request types without an implemented execution policy may be submitted for
+  platform review, but they cannot be approved until a concrete policy exists.
 - Download URLs do not expose storage keys, local paths, processing tokens or raw
   payload internals.
 - Download URL generation is rate-limited at actor and authorised artifact scope.
+
+## Request-type execution policy
+
+The backend currently has executable fulfilment policies for:
+
+- `export`
+- `erase`
+
+The following request types are accepted into the review lifecycle only:
+
+- `access`
+- `rectify`
+- `restrict`
+- `object`
+- `portability`
+
+Review-only request types can be reviewed, rejected or cancelled. They cannot be
+approved or fulfilled until the project defines a concrete execution policy for
+that request type. The approval guard is enforced in the central service
+transition path, so internal callers cannot bypass the policy by calling
+`transition_status(...APPROVED...)` directly. This prevents
+approved-but-unfulfillable DSR rows while still preserving visibility of
+submitted rights requests for platform review.
 
 ## Platform API
 
@@ -188,7 +212,7 @@ Fulfilment rules:
   `fulfilled` for the current executable provider set.
 - Failed erase execution keeps the DSR approved with failed execution state so a
   platform actor can investigate or retry.
-- Non-implemented request execution types stay blocked from fulfilment until a
+- Review-only request types stay blocked from approval and fulfilment until a
   concrete execution pipeline exists.
 
 ## Export workflow
@@ -218,87 +242,3 @@ Current behaviour:
 
 Approved erase DSRs execute through the platform erasure API and the internal
 command-layer boundary.
-
-Current executable/policy behaviour:
-
-- The platform API requires `privacy_requests:execute_erasure`.
-- The service maps execution and orchestration errors to application errors.
-- The command layer locks and authorises the executor before execution.
-- Self-erasure execution is rejected before provider orchestration.
-- Providers run in this safe order:
-  - audit minimisation;
-  - outbox payload scrubbing;
-  - invite anonymisation/minimisation;
-  - membership retain-by-policy evidence;
-  - organisation manual-review policy evidence;
-  - platform staff minimisation;
-  - export-artifact metadata minimisation;
-  - privacy-governance authorisation minimisation;
-  - privacy-governance consent retention-by-policy evidence;
-  - privacy-governance notice acceptance minimisation;
-  - user profile anonymisation;
-  - DSR workflow metadata minimisation.
-- Provider results preserve decisions such as `minimised`, `already_minimised`,
-  `retained_by_policy` and `manual_review_policy`.
-- Successful erasure writes execution audit evidence and automatically fulfils
-  the DSR.
-- Failed provider execution records failed execution state and does not fulfil
-  the DSR.
-
-Current erasure coverage:
-
-- Membership subject links are retained by explicit policy while the linked user
-  profile is anonymised.
-- Organisation subject references are handled through explicit tenant-owned
-  manual-review policy.
-- Platform staff creator links and free-text suspension context are minimised
-  where nullable.
-- DSR workflow links, notes and idempotency metadata are minimised after the
-  execution result has snapshotted the subject id.
-- Export-artifact subject/actor links, worker lease metadata and failure details
-  are minimised; binary object deletion remains governed by export-artifact
-  retention.
-- Privacy-governance source fields are minimised while lawful-basis, consent and
-  notice evidence is retained.
-
-## Retention
-
-The privacy export retention runner processes expired ready export artifacts.
-
-Command:
-
-```text
-python -m app.privacy.retention_cli
-```
-
-The runner:
-
-- supports `--dry-run`;
-- supports `--batch-size`;
-- deletes the stored local/S3-compatible archive object;
-- clears storage metadata on the artifact row;
-- marks the artifact as `expired`;
-- preserves delivered DSR execution state;
-- marks undelivered expired export execution as failed with `artifact_expired`.
-
-## Issue #328 closure posture
-
-The backend now satisfies the current #328 backend scope through implemented DSR
-models, self-service and platform APIs, export artifact generation/delivery,
-retention, S3-compatible storage, inventory-aligned export coverage and
-erasure coverage through executable providers plus explicit policy decisions.
-
-Issue #328 may be closed after this documentation reconciliation PR is merged
-and the broad CI gate passes.
-
-## Follow-up work
-
-The following items remain intentionally separate from #328 closure:
-
-- streaming archive generation for very large exports;
-- PostgreSQL-specific JSON predicate export-provider tests;
-- explicit export delivery evidence semantics;
-- authorised representative workflows;
-- frontend/UI;
-- execution pipelines for rectify/restrict/object/access/portability request
-  types.
