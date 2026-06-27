@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.audit.reasons import OperationalReasonCode, normalise_legacy_reason_payload
 from app.privacy.models.data_subject_request import (
@@ -12,10 +12,27 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestType,
 )
 
+REQUESTER_NOTE_MAX_LENGTH = 2000
+
 
 class CreateDataSubjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_type: DataSubjectRequestType
+    requester_note: str | None = Field(
+        default=None,
+        max_length=REQUESTER_NOTE_MAX_LENGTH,
+        description="Optional requester-provided details for platform review.",
+    )
+
+    @field_validator("requester_note", mode="before")
+    @classmethod
+    def normalise_requester_note(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalised = value.strip()
+            return normalised or None
+        return value
 
 
 class DataSubjectRequestResponse(BaseModel):
@@ -70,6 +87,7 @@ class PlatformDataSubjectRequestResponse(BaseModel):
     requester_user_id: UUID | None
     subject_user_id: UUID | None
     reviewer_user_id: UUID | None
+    requester_note: str | None
     submitted_at: datetime
     acknowledged_at: datetime | None
     reviewed_at: datetime | None

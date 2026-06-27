@@ -39,6 +39,7 @@ should still be verified against code before extension:
   - idempotent submission controls;
   - execution state separated from administrative review status;
   - self-service submission for all modelled request types;
+  - optional requester details captured for platform DSR review;
   - approval restricted to request types with concrete execution policies;
   - cross-table subject export providers;
   - export artifact worker flow and ops integration;

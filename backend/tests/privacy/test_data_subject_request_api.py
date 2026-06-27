@@ -64,6 +64,20 @@ def _count_requests(session_factory) -> int:
     return run_async(_run())
 
 
+def _get_request(session_factory, request_id: str) -> DataSubjectRequest:
+    async def _run():
+        async with session_factory() as session:
+            return (
+                await session.execute(
+                    select(DataSubjectRequest).where(
+                        DataSubjectRequest.id == UUID(request_id)
+                    )
+                )
+            ).scalar_one()
+
+    return run_async(_run())
+
+
 def _create_ready_export_artifact_for_dsr(
     session_factory, *, request_id, user_id
 ) -> None:
@@ -149,6 +163,115 @@ def test_user_submit_and_idempotency_behaviour(
         "idempotency_key_expires_at",
     ):
         assert forbidden not in r1.json()
+
+
+def test_user_submit_accepts_requester_note_for_platform_review(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+) -> None:
+    requester = _provision_user(
+        migrated_session_factory,
+        "kc-dsr-note-user",
+        "dsr-note-user@example.com",
+    )
+    reviewer = _provision_platform_actor(
+        migrated_session_factory,
+        "kc-dsr-note-reviewer",
+        "dsr-note-reviewer@example.com",
+        PlatformRole.COMPLIANCE_OFFICER,
+    )
+    requester_client = authenticated_client_factory(
+        identity=identity_for(requester.external_auth_id, requester.email),
+        database_url=migrated_database_url,
+    )
+    reviewer_client = authenticated_client_factory(
+        identity=identity_for(reviewer.external_auth_id, reviewer.email),
+        database_url=migrated_database_url,
+    )
+
+    response = requester_client.client.post(
+        "/api/v1/privacy/data-subject-requests",
+        json={
+            "request_type": "access",
+            "requester_note": "  Please review my stored profile data.  ",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "requester_note" not in body
+
+    persisted = _get_request(migrated_session_factory, body["id"])
+    assert persisted.requester_note == "Please review my stored profile data."
+
+    platform_response = reviewer_client.client.get(
+        f"/api/v1/platform/privacy/data-subject-requests/{body['id']}"
+    )
+    assert platform_response.status_code == 200
+    assert (
+        platform_response.json()["requester_note"]
+        == "Please review my stored profile data."
+    )
+
+
+def test_user_submit_idempotency_fingerprint_includes_requester_note(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    user = _provision_user(
+        migrated_session_factory,
+        "kc-dsr-note-idempotency",
+        "dsr-note-idempotency@example.com",
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(user.external_auth_id, user.email),
+        database_url=migrated_database_url,
+    )
+    headers = {"Idempotency-Key": "note-key"}
+
+    first = bundle.client.post(
+        "/api/v1/privacy/data-subject-requests",
+        json={"request_type": "export", "requester_note": "note-a"},
+        headers=headers,
+    )
+    second = bundle.client.post(
+        "/api/v1/privacy/data-subject-requests",
+        json={"request_type": "export", "requester_note": "note-a"},
+        headers=headers,
+    )
+    conflict = bundle.client.post(
+        "/api/v1/privacy/data-subject-requests",
+        json={"request_type": "export", "requester_note": "note-b"},
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    assert conflict.status_code == 409
+    assert _count_requests(migrated_session_factory) == 1
+
+
+def test_user_submit_rejects_overlong_requester_note(
+    authenticated_client_factory, migrated_database_url, migrated_session_factory
+) -> None:
+    user = _provision_user(
+        migrated_session_factory,
+        "kc-dsr-long-note",
+        "dsr-long-note@example.com",
+    )
+    bundle = authenticated_client_factory(
+        identity=identity_for(user.external_auth_id, user.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.post(
+        "/api/v1/privacy/data-subject-requests",
+        json={"request_type": "export", "requester_note": "x" * 2001},
+    )
+
+    assert response.status_code == 422
+    assert _count_requests(migrated_session_factory) == 0
 
 
 def test_user_bola_read_and_cancel_protection(

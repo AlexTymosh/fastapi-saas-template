@@ -15,6 +15,8 @@ Implemented areas:
   API.
 - Separate administrative lifecycle status and operational execution status.
 - Idempotent DSR submission with hashed idempotency keys and safety validation.
+- Optional requester details for self-service submissions, stored for platform
+  review without echoing the note in user-facing DSR responses.
 - Platform permission boundaries for DSR read, review, export artifact metadata,
   export generation, export download URL generation and erase execution.
 - Export artifact model, service, repository, user API, platform API and worker
@@ -72,6 +74,12 @@ Endpoints:
 - `GET /{request_id}` read own DSR by id.
 - `POST /{request_id}/cancel` cancel own request when lifecycle permits.
 
+Submission payload:
+
+- `request_type` is required.
+- `requester_note` is optional, trimmed at the API boundary and limited to 2000
+  characters. Blank notes are stored as `null`.
+
 Export artifact endpoints:
 
 ```text
@@ -90,6 +98,8 @@ Current user API constraints:
 - Submission is self-service only: requester and subject are the same local user.
 - Request types without an implemented execution policy may be submitted for
   platform review, but they cannot be approved until a concrete policy exists.
+- Requester notes are stored for platform review but are not returned in
+  user-facing DSR responses.
 - Download URLs do not expose storage keys, local paths, processing tokens or raw
   payload internals.
 - Download URL generation is rate-limited at actor and authorised artifact scope.
@@ -136,6 +146,10 @@ Endpoints:
 - `POST /{request_id}/execute-erasure` execute an approved erase DSR.
 - `POST /{request_id}/fulfil` fulfil an approved request when execution evidence
   exists.
+
+Platform DSR responses include `requester_note` so authorised reviewers can see
+requester-provided details. Audit metadata must stay minimal and must not copy
+full requester notes.
 
 Export artifact endpoints:
 
