@@ -76,6 +76,17 @@ received. Delivery evidence is now explicit.
   confirmation endpoints.
 
 
+
+### PR #428 local test-failure follow-up
+
+- Updated `tests/privacy/test_export_artifact_repository.py` so the statement
+  capture result exposes `rowcount`, matching the repository's atomic delivery
+  confirmation path.
+- Updated the repository SQL-shape assertion to expect the idempotent conditional
+  update instead of the old increment-only download counter shape.
+- Added the platform `confirm-delivery` endpoint to the OpenAPI platform route
+  contract and expected operation-id map.
+
 ### PR #428 Codex feedback addressed locally
 
 - Added `download_url_issued_at` and `download_url_issue_count` to
@@ -97,3 +108,17 @@ received. Delivery evidence is now explicit.
 - Keep code lines within 88 characters.
 - Do not close #328 until every roadmap item is done or explicitly removed from
   #328 scope by a documented decision.
+
+
+### PR #428 follow-up — Codex second review
+
+Status: files prepared locally.
+
+Fixes:
+
+- Include `download_url_issued_at` and `download_url_issue_count` in subject and
+  actor-reference DSR export payloads.
+- Backfill legacy URL issuance metadata out of `downloaded_at` and
+  `download_count` during migration.
+- Make delivery confirmation atomic and idempotent so repeated/concurrent calls
+  do not increment `download_count` or duplicate delivery audit evidence.

@@ -233,28 +233,24 @@ class ExportArtifactRepository:
 
     async def confirm_delivery(
         self, artifact: ExportArtifact, *, delivered_at: datetime | None = None
-    ) -> ExportArtifact:
+    ) -> tuple[ExportArtifact, bool]:
         reference_time = delivered_at or datetime.now(UTC)
-        if artifact.downloaded_at is not None or artifact.download_count > 0:
-            await self.session.refresh(artifact)
-            return artifact
-
-        await self.session.execute(
+        result = await self.session.execute(
             update(ExportArtifact)
             .where(ExportArtifact.id == artifact.id)
-            .values(
-                download_count=ExportArtifact.download_count + 1,
-                downloaded_at=reference_time,
-            )
+            .where(ExportArtifact.downloaded_at.is_(None))
+            .where(ExportArtifact.download_count == 0)
+            .values(download_count=1, downloaded_at=reference_time)
         )
         await self.session.flush()
         await self.session.refresh(artifact)
-        return artifact
+        return artifact, result.rowcount == 1
 
     async def increment_download_count(
         self, artifact: ExportArtifact
     ) -> ExportArtifact:
-        return await self.confirm_delivery(artifact)
+        artifact, _ = await self.confirm_delivery(artifact)
+        return artifact
 
     async def save(self, artifact: ExportArtifact) -> ExportArtifact:
         self.session.add(artifact)

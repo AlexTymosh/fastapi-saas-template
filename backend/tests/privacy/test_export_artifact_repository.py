@@ -27,6 +27,8 @@ class _StatementCaptureSession:
         self.statement = statement
 
         class _Result:
+            rowcount = 1
+
             def scalars(self):
                 return self
 
@@ -57,7 +59,7 @@ def test_claim_queued_batch_uses_skip_locked_for_non_sqlite() -> None:
     run_async(_run())
 
 
-def test_increment_download_count_uses_atomic_update_statement() -> None:
+def test_increment_download_count_uses_atomic_delivery_update_statement() -> None:
     async def _run() -> None:
         session = _StatementCaptureSession("postgresql")
         repository = ExportArtifactRepository(session)  # type: ignore[arg-type]
@@ -70,8 +72,10 @@ def test_increment_download_count_uses_atomic_update_statement() -> None:
         compact_sql = " ".join(compiled.split())
         compact_no_spaces = compiled.replace(" ", "")
         assert compact_sql.startswith("UPDATE export_artifacts SET")
-        assert "download_count=(export_artifacts.download_count+" in compact_no_spaces
+        assert "download_count=" in compact_no_spaces
         assert "downloaded_at=" in compact_no_spaces
+        assert "export_artifacts.downloaded_atISNULL" in compact_no_spaces
+        assert "export_artifacts.download_count=" in compact_no_spaces
         assert session.refreshed is artifact
 
     run_async(_run())

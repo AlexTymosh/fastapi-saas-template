@@ -264,3 +264,11 @@ Current behaviour:
 
 Approved erase DSRs execute through the platform erasure API and the internal
 command-layer boundary.
+
+### Export URL issuance migration
+
+Legacy export rows created before explicit delivery confirmation used download
+metadata as URL issuance metadata. The delivery-evidence migration reclassifies
+those values into URL issuance columns and clears confirmed-delivery columns.
+After the migration, `delivered` execution state is reserved for explicit
+confirmation evidence only.

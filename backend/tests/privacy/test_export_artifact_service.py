@@ -7,8 +7,10 @@ from io import BytesIO
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.audit.context import AuditContext
+from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.core.config.settings import get_settings
 from app.core.errors import ConflictError
 from app.privacy.models.data_subject_request import (
@@ -899,6 +901,59 @@ def test_confirm_export_delivery_marks_dsr_execution_delivered(
             )
             assert persisted.execution_completed_at is not None
             assert persisted.execution_failed_at is None
+
+    run_async(_run())
+
+
+def test_confirm_export_delivery_is_idempotent_for_repeated_calls(
+    migrated_session_factory,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            await service.repo.save(artifact)
+
+            await service.confirm_export_delivery(
+                artifact=artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            await service.confirm_export_delivery(
+                artifact=artifact,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+
+            persisted_artifact = await service.repo.get_by_id(artifact.id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.download_count == 1
+            assert persisted_artifact.downloaded_at is not None
+
+            events = (
+                (
+                    await session.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.action
+                            == AuditAction.EXPORT_ARTIFACT_DELIVERY_CONFIRMED.value,
+                            AuditEvent.target_id == artifact.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(events) == 1
 
     run_async(_run())
 

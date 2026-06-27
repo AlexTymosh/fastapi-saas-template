@@ -453,17 +453,20 @@ class ExportArtifactService:
         if artifact.storage_key is None:
             raise ConflictError(detail="Export artifact is missing storage key")
 
-        delivered = await self.repo.confirm_delivery(artifact, delivered_at=now)
-        await self._sync_export_dsr_execution_state(
-            delivered,
-            execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
-            event_at=delivered.downloaded_at,
+        delivered, newly_confirmed = await self.repo.confirm_delivery(
+            artifact, delivered_at=now
         )
-        await self._record_event(
-            audit_context,
-            AuditAction.EXPORT_ARTIFACT_DELIVERY_CONFIRMED,
-            delivered,
-        )
+        if newly_confirmed:
+            await self._sync_export_dsr_execution_state(
+                delivered,
+                execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
+                event_at=delivered.downloaded_at,
+            )
+            await self._record_event(
+                audit_context,
+                AuditAction.EXPORT_ARTIFACT_DELIVERY_CONFIRMED,
+                delivered,
+            )
         return delivered
 
     async def count_queued_artifacts(self, *, limit: int) -> int:
