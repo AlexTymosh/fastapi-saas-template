@@ -111,8 +111,11 @@ The following request types are accepted into the review lifecycle only:
 
 Review-only request types can be reviewed, rejected or cancelled. They cannot be
 approved or fulfilled until the project defines a concrete execution policy for
-that request type. This prevents approved-but-unfulfillable DSR rows while still
-preserving visibility of submitted rights requests for platform review.
+that request type. The approval guard is enforced in the central service
+transition path, so internal callers cannot bypass the policy by calling
+`transition_status(...APPROVED...)` directly. This prevents
+approved-but-unfulfillable DSR rows while still preserving visibility of
+submitted rights requests for platform review.
 
 ## Platform API
 

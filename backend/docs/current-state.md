@@ -92,7 +92,8 @@ should still be verified against code before extension:
   - authorised representative workflows;
   - frontend/UI;
   - concrete execution pipelines for access, rectify, restrict, object and
-    portability request types.
+    portability request types. These review-only types are blocked from approval
+    by the central DSR service transition policy until execution policies exist.
 
 ## Not Implemented / Planned
 

@@ -56,7 +56,8 @@ Recommended order:
 
 Priority: P2
 Type: `feat(privacy)` or `fix(privacy)` depending on chosen contract
-Status: Not started
+Status: In PR #426; Codex P2 central-policy review addressed; focused service
+test failures require stale generic approval tests to use executable request types.
 
 ### Problem
 
@@ -98,6 +99,31 @@ Preferred implementation path:
 4. Update submission/service validation to enforce the selected policy.
 5. Add tests for every request type.
 6. Update docs and OpenAPI contract expectations.
+
+
+### PR #426 follow-up note
+
+Codex found that checking unsupported request-type approval only in
+`approve_request()` left `transition_status(...APPROVED...)` as a service-level
+bypass. The fix moves the request-type approval policy into the central
+`_transition_status()` path before the atomic repository update, while keeping
+`approve_request()` as a thin wrapper over the same central transition logic.
+
+Regression coverage must prove both paths fail for unsupported request types:
+
+- `transition_status(...APPROVED...)`;
+- `approve_request(...)`.
+
+### PR #426 service-test failure note
+
+After moving approval enforcement into `_transition_status()`, three legacy
+service state-machine tests still used `access` as a generic approvable request
+type. That is no longer valid because `access` is intentionally review-only.
+
+Fix the tests by using `export` where the test is validating generic approval,
+stale-write conflict or terminal-state mechanics. Keep the dedicated
+`test_dsr_execution_policy.py` coverage responsible for asserting that
+`access`, `rectify`, `restrict`, `object` and `portability` cannot be approved.
 
 ### Failure cases to cover
 
@@ -666,3 +692,19 @@ Final verification passed with task ci.
 - Use backend-relative test paths when running pytest from the backend directory.
 - Do not claim #328 closure until all rows in the roadmap table are done or
   explicitly removed from #328 scope by a documented decision.
+
+
+## PR #426 test patch application note
+
+The first patch for `tests/privacy/test_data_subject_request_service.py` may fail
+when local context has already diverged. In that case, apply the direct helper
+script or make the same targeted edits manually:
+
+- use `request_type="export"` in generic approval state-machine tests;
+- keep `access` and the other unsupported request types only in dedicated
+  review-only policy tests;
+- assert export fulfilment readiness with `match="ready"` rather than the old
+  unsupported-pipeline error.
+
+Production behaviour is unchanged. This is a test-alignment fix after central
+DSR approval policy enforcement.

@@ -241,6 +241,9 @@ class DataSubjectRequestService:
                 detail=f"Invalid transition from '{current_status}' to '{next_status}'"
             )
 
+        if target_status is DataSubjectRequestStatus.APPROVED:
+            self._ensure_request_type_can_be_approved(request)
+
         updated = await self.repository.transition_status_if_current(
             request_id=request_id,
             expected_status=current_status,
@@ -391,8 +394,6 @@ class DataSubjectRequestService:
         reason_code: str | None,
         audit_context: AuditContext,
     ) -> DataSubjectRequest:
-        request = await self.get_request(request_id=request_id)
-        self._ensure_request_type_can_be_approved(request)
         return await self.transition_status(
             request_id=request_id,
             target_status=DataSubjectRequestStatus.APPROVED,

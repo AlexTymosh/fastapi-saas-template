@@ -65,8 +65,9 @@ def test_request_types_without_execution_policy_cannot_be_approved(
             assert reviewed.status == DataSubjectRequestStatus.UNDER_REVIEW.value
 
             with pytest.raises(ConflictError, match="no execution policy"):
-                await service.approve_request(
+                await service.transition_status(
                     request_id=request.id,
+                    target_status=DataSubjectRequestStatus.APPROVED,
                     reviewer_user_id=user.id,
                     reason_code="compliance_review",
                     audit_context=audit_context,
@@ -76,6 +77,14 @@ def test_request_types_without_execution_policy_cannot_be_approved(
             assert persisted.status == DataSubjectRequestStatus.UNDER_REVIEW.value
             assert persisted.decided_at is None
             assert persisted.decision_reason_code is None
+
+            with pytest.raises(ConflictError, match="no execution policy"):
+                await service.approve_request(
+                    request_id=request.id,
+                    reviewer_user_id=user.id,
+                    reason_code="compliance_review",
+                    audit_context=audit_context,
+                )
 
             rejected = await service.reject_request(
                 request_id=request.id,

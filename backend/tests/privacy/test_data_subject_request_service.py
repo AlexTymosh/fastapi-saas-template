@@ -370,7 +370,7 @@ def test_transition_status_stale_write_conflicts_without_audit(
             audit_context = AuditContext(actor_user_id=user.id)
             request = await service.submit_request(
                 requester_user_id=user.id,
-                request_type="access",
+                request_type="export",
                 audit_context=audit_context,
             )
 
@@ -423,7 +423,7 @@ def test_state_machine_and_terminal_protection(migrated_session_factory) -> None
             audit_context = AuditContext(actor_user_id=user.id)
             request = await service.submit_request(
                 requester_user_id=user.id,
-                request_type="access",
+                request_type="export",
                 audit_context=audit_context,
             )
             request = await service.transition_status(
@@ -448,7 +448,7 @@ def test_state_machine_and_terminal_protection(migrated_session_factory) -> None
                 )
             with pytest.raises(
                 ConflictError,
-                match="Execution pipeline is not implemented",
+                match="ready",
             ):
                 await service.fulfil_request(
                     request_id=request.id,
@@ -483,7 +483,7 @@ def test_state_machine_submitted_to_approved(migrated_session_factory) -> None:
 
             request = await service.submit_request(
                 requester_user_id=user.id,
-                request_type="access",
+                request_type="export",
                 audit_context=audit_context,
             )
             request = await service.transition_status(
