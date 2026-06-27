@@ -7,7 +7,11 @@ import pytest
 from sqlalchemy import select
 
 from app.audit.models.audit_event import AuditAction, AuditEvent
-from app.core.platform.permissions import PlatformRole
+from app.core.platform.permissions import (
+    ROLE_PERMISSIONS,
+    PlatformPermission,
+    PlatformRole,
+)
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
 from app.platform.repositories.platform_staff import PlatformStaffRepository
 from app.privacy.models.data_subject_request import (
@@ -296,6 +300,60 @@ def test_support_agent_cannot_execute_erasure_via_platform_api(
     )
 
     assert response.status_code == 403
+
+
+def test_review_permission_alone_cannot_execute_erasure_via_platform_api(
+    authenticated_client_factory,
+    migrated_database_url,
+    migrated_session_factory,
+    monkeypatch,
+) -> None:
+    review_only_permissions = ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER] - {
+        PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE,
+    }
+    assert PlatformPermission.PRIVACY_REQUESTS_REVIEW in review_only_permissions
+    assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE not in (
+        review_only_permissions
+    )
+    monkeypatch.setitem(
+        ROLE_PERMISSIONS,
+        PlatformRole.COMPLIANCE_OFFICER,
+        review_only_permissions,
+    )
+    subject = _provision_user(
+        migrated_session_factory,
+        "kc-erasure-api-review-only-subject",
+        "erasure-api-review-only-subject@example.com",
+    )
+    reviewer = _provision_platform_actor(
+        migrated_session_factory,
+        external_auth_id="kc-erasure-api-review-only",
+        email="erasure-api-review-only@example.com",
+        role=PlatformRole.COMPLIANCE_OFFICER,
+    )
+    dsr_id = _create_approved_erase_dsr(migrated_session_factory, subject)
+    bundle = authenticated_client_factory(
+        identity=identity_for(reviewer.external_auth_id, reviewer.email),
+        database_url=migrated_database_url,
+    )
+
+    response = bundle.client.post(
+        f"/api/v1/platform/privacy/data-subject-requests/{dsr_id}/execute-erasure",
+        json={},
+    )
+
+    assert response.status_code == 403
+
+    async def _assert_persisted_state() -> None:
+        async with migrated_session_factory() as session:
+            saved_dsr = await session.get(DataSubjectRequest, dsr_id)
+            assert saved_dsr is not None
+            assert saved_dsr.status == DataSubjectRequestStatus.APPROVED.value
+            assert saved_dsr.execution_status == (
+                DataSubjectRequestExecutionStatus.NOT_STARTED.value
+            )
+
+    run_async(_assert_persisted_state())
 
 
 def test_erasure_execution_api_rejects_missing_request(

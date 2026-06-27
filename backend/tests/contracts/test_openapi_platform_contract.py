@@ -62,6 +62,9 @@ PLATFORM_PATHS = {
     "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel": {
         "post": "platform-privacy"
     },
+    "/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure": {
+        "post": "platform-privacy"
+    },
     "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil": {
         "post": "platform-privacy"
     },
@@ -142,6 +145,10 @@ EXPECTED_PLATFORM_OPERATION_IDS = {
     ): "cancel_platform_data_subject_request",
     (
         "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure",
+    ): "execute_platform_data_subject_request_erasure",
+    (
+        "post",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
     ): "fulfil_platform_data_subject_request",
     (
@@ -215,6 +222,10 @@ WRITE_POLICIES = {
     ): "platform_write",
     (
         "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure",
+    ): "platform_write",
+    (
+        "POST",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
     ): "platform_write",
 }
@@ -239,6 +250,28 @@ def _schema_routes(app) -> list[APIRoute]:
         for route in app.routes
         if isinstance(route, APIRoute) and route.include_in_schema
     ]
+
+
+def _expected_platform_contract_routes() -> set[tuple[str, str]]:
+    return {
+        (method.upper(), path)
+        for path, methods in PLATFORM_PATHS.items()
+        for method in methods
+    }
+
+
+def _actual_platform_schema_routes(app) -> set[tuple[str, str]]:
+    routes: set[tuple[str, str]] = set()
+
+    for route in _schema_routes(app):
+        if not route.path.startswith("/api/v1/platform/"):
+            continue
+        for method in route.methods or set():
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            routes.add((method, route.path))
+
+    return routes
 
 
 def _openapi_operations(spec):
@@ -608,6 +641,7 @@ def test_platform_dsr_mutation_routes_use_function_scoped_write_context(
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",
     }
     for path in dsr_mutation_paths:
@@ -624,20 +658,13 @@ def test_platform_dsr_mutation_routes_use_function_scoped_write_context(
 
 def test_no_platform_route_is_undocumented_by_accident(monkeypatch) -> None:
     app = _build_app(monkeypatch)
-    spec = _openapi(monkeypatch)
-    documented = {
-        (method.upper(), path)
-        for path, methods in spec["paths"].items()
-        if path.startswith("/api/v1/platform/")
-        for method in methods
-    }
+    expected = _expected_platform_contract_routes()
+    actual = _actual_platform_schema_routes(app)
 
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path.startswith("/api/v1/platform/"):
-            for method in route.methods or set():
-                if method in {"HEAD", "OPTIONS"}:
-                    continue
-                assert (method, route.path) in documented
+    assert actual == expected, {
+        "missing_from_contract": sorted(actual - expected),
+        "stale_contract_entries": sorted(expected - actual),
+    }
 
 
 def test_platform_list_query_parameters_are_documented(monkeypatch) -> None:
