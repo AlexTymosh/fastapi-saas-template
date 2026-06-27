@@ -60,6 +60,7 @@ async def submit_data_subject_request(
         dsr = await DataSubjectRequestService(db_session).submit_request(
             requester_user_id=user.id,
             request_type=payload.request_type.value,
+            requester_note=payload.requester_note,
             idempotency_key=idempotency_key,
             audit_context=build_audit_context_from_request(
                 actor_user_id=user.id, request=request
