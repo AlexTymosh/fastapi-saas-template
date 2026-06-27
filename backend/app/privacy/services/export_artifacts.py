@@ -456,17 +456,23 @@ class ExportArtifactService:
         delivered, newly_confirmed = await self.repo.confirm_delivery(
             artifact, delivered_at=now
         )
-        if newly_confirmed:
-            await self._sync_export_dsr_execution_state(
-                delivered,
-                execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
-                event_at=delivered.downloaded_at,
-            )
-            await self._record_event(
-                audit_context,
-                AuditAction.EXPORT_ARTIFACT_DELIVERY_CONFIRMED,
-                delivered,
-            )
+        if not newly_confirmed:
+            if delivered.downloaded_at is None and delivered.download_count == 0:
+                raise ConflictError(
+                    detail="Export artifact is no longer available for delivery"
+                )
+            return delivered
+
+        await self._sync_export_dsr_execution_state(
+            delivered,
+            execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
+            event_at=delivered.downloaded_at,
+        )
+        await self._record_event(
+            audit_context,
+            AuditAction.EXPORT_ARTIFACT_DELIVERY_CONFIRMED,
+            delivered,
+        )
         return delivered
 
     async def count_queued_artifacts(self, *, limit: int) -> int:

@@ -76,6 +76,41 @@ WHERE data_subject_requests.request_type = 'export'
   )
 """
 
+_RESET_CANCELLED_LEGACY_URL_DELIVERIES = """
+UPDATE data_subject_requests
+SET
+    execution_status = 'failed',
+    execution_completed_at = NULL,
+    execution_failed_at = COALESCE(
+        latest.failed_at,
+        latest.updated_at,
+        latest.expires_at
+    ),
+    execution_failure_reason_code = COALESCE(
+        latest.failure_reason_code,
+        'subject_erasure_requested'
+    ),
+    execution_failure_detail = COALESCE(
+        latest.failure_detail,
+        'Export artifact cancelled before delivery'
+    )
+FROM export_artifacts AS latest
+WHERE data_subject_requests.request_type = 'export'
+  AND data_subject_requests.execution_status = 'delivered'
+  AND latest.data_subject_request_id = data_subject_requests.id
+  AND latest.status = 'cancelled'
+  AND (
+      latest.download_url_issued_at IS NOT NULL
+      OR latest.download_url_issue_count > 0
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM export_artifacts AS newer
+      WHERE newer.data_subject_request_id = latest.data_subject_request_id
+        AND newer.queued_at > latest.queued_at
+  )
+"""
+
 _DOWNGRADE_URL_ISSUANCE_TO_LEGACY_DOWNLOADS = """
 UPDATE export_artifacts
 SET
@@ -102,6 +137,7 @@ def upgrade() -> None:
     op.execute(sa.text(_OLD_URL_ISSUANCE_BACKFILL))
     op.execute(sa.text(_RESET_READY_LEGACY_URL_DELIVERIES))
     op.execute(sa.text(_RESET_EXPIRED_LEGACY_URL_DELIVERIES))
+    op.execute(sa.text(_RESET_CANCELLED_LEGACY_URL_DELIVERIES))
 
 
 def downgrade() -> None:

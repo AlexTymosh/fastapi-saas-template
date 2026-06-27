@@ -1223,3 +1223,54 @@ def test_mark_expired_artifacts_preserves_cancelled_erasure_retry_on_failure(
             assert storage.exists(storage_key)
 
     run_async(_run())
+
+
+def test_confirm_export_delivery_rejects_stale_unavailable_artifact(
+    migrated_session_factory,
+    monkeypatch,
+):
+    async def _run():
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(
+                session,
+                request_type="export",
+                status=DataSubjectRequestStatus.APPROVED.value,
+            )
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact.status = ExportArtifactStatus.READY.value
+            artifact.storage_key = f"exports/{artifact.id}/artifact.zip"
+            artifact.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+            await service.repo.save(artifact)
+
+            async def _stale_confirmation(
+                artifact_arg,
+                *,
+                delivered_at=None,
+            ):
+                del delivered_at
+                artifact_arg.status = ExportArtifactStatus.CANCELLED.value
+                artifact_arg.storage_key = None
+                artifact_arg.downloaded_at = None
+                artifact_arg.download_count = 0
+                return artifact_arg, False
+
+            monkeypatch.setattr(service.repo, "confirm_delivery", _stale_confirmation)
+
+            with pytest.raises(ConflictError, match="no longer available"):
+                await service.confirm_export_delivery(
+                    artifact=artifact,
+                    audit_context=AuditContext(actor_user_id=user.id),
+                )
+
+            persisted = await service.dsr_repo.get_by_id(dsr.id)
+            assert persisted is not None
+            assert persisted.execution_status != (
+                DataSubjectRequestExecutionStatus.DELIVERED.value
+            )
+
+    run_async(_run())

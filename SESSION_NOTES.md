@@ -126,3 +126,12 @@ Fixes:
   `download_count` during migration.
 - Make delivery confirmation atomic and idempotent so repeated/concurrent calls
   do not increment `download_count` or duplicate delivery audit evidence.
+
+### PR #428 follow-up: cancelled legacy URL deliveries and availability guard
+
+- Reclassify latest cancelled legacy URL-issued export DSRs from `delivered` to
+  failed delivery evidence using the cancellation reason, usually
+  `subject_erasure_requested`.
+- Guard the atomic delivery-confirmation update with READY, non-expired and
+  non-null storage predicates so retention or subject-erasure races cannot mark
+  unavailable artifacts as delivered.

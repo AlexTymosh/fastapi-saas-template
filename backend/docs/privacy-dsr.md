@@ -277,3 +277,11 @@ During the PR #428 migration, legacy URL-issued export DSR rows are
 reclassified from their latest export artifact. Ready legacy artifacts remain
 ready for confirmation, while expired legacy artifacts become failed with
 `artifact_expired` evidence.
+
+### Export delivery evidence migration guardrails
+
+The export delivery evidence migration reclassifies legacy URL-issued export DSRs
+from the latest artifact state. Latest ready artifacts return to `ready`, latest
+expired artifacts become `artifact_expired` failures, and latest cancelled
+artifacts become failed delivery evidence using the cancellation reason. This
+prevents legacy URL issuance from remaining visible as confirmed delivery.

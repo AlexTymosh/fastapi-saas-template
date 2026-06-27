@@ -160,3 +160,11 @@ Legacy DSR execution state is reclassified from the latest export artifact after
 that backfill. Latest ready artifacts become `ready`; latest expired artifacts
 become failed with `artifact_expired`, because URL issuance alone is not
 confirmed delivery evidence.
+
+### Delivery confirmation availability guard
+
+Delivery confirmation uses an atomic conditional update that only succeeds while
+the artifact is still ready, non-expired, has storage metadata, and has not
+already been confirmed. If retention or subject-erasure cancellation wins the
+race before the confirmation update, the request is rejected instead of writing
+confirmed delivery evidence onto an unavailable artifact.

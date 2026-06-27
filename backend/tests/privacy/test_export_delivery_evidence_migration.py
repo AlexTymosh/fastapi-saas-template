@@ -23,8 +23,11 @@ def test_legacy_url_delivery_migration_reclassifies_expired_latest_artifacts():
 
     assert "_RESET_READY_LEGACY_URL_DELIVERIES" in source
     assert "_RESET_EXPIRED_LEGACY_URL_DELIVERIES" in source
+    assert "_RESET_CANCELLED_LEGACY_URL_DELIVERIES" in source
     assert "latest.status = 'ready'" in source
     assert "latest.status = 'expired'" in source
+    assert "latest.status = 'cancelled'" in source
     assert "execution_status = 'failed'" in source
     assert "execution_failure_reason_code = 'artifact_expired'" in source
+    assert "subject_erasure_requested" in source
     assert "newer.queued_at > latest.queued_at" in source
