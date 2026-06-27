@@ -355,6 +355,22 @@ def test_user_download_url_route_uses_export_download_rate_limit_policy() -> Non
     )
 
 
+def test_user_confirm_delivery_route_uses_artifact_rate_limit_policy() -> None:
+    source = inspect.getsource(
+        export_artifacts_api.confirm_own_export_artifact_delivery
+    )
+
+    assert "PRIVACY_EXPORT_DOWNLOAD_URL_POLICY" in source
+    assert "TENANT_WRITE_POLICY" not in source
+    assert "TENANT_READ_POLICY" not in source
+    assert source.index("get_own_export_artifact") < source.index(
+        "check_export_artifact_download_url_rate_limit"
+    )
+    assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
+        "confirm_export_delivery"
+    )
+
+
 def test_user_can_confirm_export_artifact_delivery(
     authenticated_client_factory,
     migrated_database_url,
@@ -437,6 +453,21 @@ def test_platform_download_url_route_uses_export_download_rate_limit_policy() ->
     )
     assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
         "generate_download_url"
+    )
+
+
+def test_platform_confirm_delivery_route_uses_artifact_rate_limit_policy() -> None:
+    source = inspect.getsource(
+        platform_export_artifacts_api.confirm_platform_export_artifact_delivery
+    )
+
+    assert "PRIVACY_EXPORT_DOWNLOAD_URL_POLICY" in source
+    assert "PLATFORM_WRITE_POLICY" not in source
+    assert source.index("get_platform_export_artifact") < source.index(
+        "check_export_artifact_download_url_rate_limit"
+    )
+    assert source.index("check_export_artifact_download_url_rate_limit") < source.index(
+        "confirm_export_delivery"
     )
 
 

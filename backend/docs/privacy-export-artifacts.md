@@ -140,5 +140,7 @@ without mutating the database or deleting storage objects.
 Download URL creation records that a URL was issued. It does not prove
 that the artifact was received, especially for S3-compatible presigned
 URLs. Confirmed delivery is recorded through the explicit delivery
-confirmation endpoints, which update `downloaded_at`, `download_count`
-and the export DSR execution state.
+confirmation endpoints. Those endpoints reuse the export download URL
+rate-limit policy and authorised artifact-scoped bucket before they
+update `downloaded_at`, increment `download_count`, and sync the export
+DSR execution state.

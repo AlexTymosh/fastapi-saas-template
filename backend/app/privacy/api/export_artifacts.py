@@ -153,6 +153,10 @@ async def confirm_own_export_artifact_delivery(
         artifact = await service.get_own_export_artifact(
             artifact_id=artifact_id, requester_user_id=user.id
         )
+        await check_export_artifact_download_url_rate_limit(
+            request=request,
+            artifact_id=artifact.id,
+        )
         delivered = await service.confirm_export_delivery(
             artifact=artifact,
             audit_context=build_audit_context_from_request(

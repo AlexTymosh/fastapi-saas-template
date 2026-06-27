@@ -29,7 +29,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 |---:|---|---:|---|
 | 1 | Define execution policy for non-export DSR types | Yes | Done |
 | 2 | Accept requester details on DSR submissions | Yes | Done |
-| 3 | Separate URL issuance from delivery evidence | Yes | Files prepared |
+| 3 | Separate URL issuance from delivery evidence | Yes | In PR #428; Codex feedback addressed locally |
 | 4 | Real invite delivery provider / NoOp guard | Yes | Not started |
 | 5 | Retention runner Taskfile and ops docs | Yes | Not started |
 | 6 | Runtime secrets and Docker hardening | Yes | Not started |
@@ -74,6 +74,18 @@ received. Delivery evidence is now explicit.
   count.
 - Existing download URL rate limits still apply to URL issuance and delivery
   confirmation endpoints.
+
+
+### PR #428 Codex feedback addressed locally
+
+- Added `download_url_issued_at` and `download_url_issue_count` to
+  `backend/app/privacy/column_inventory.py` so the column inventory covers the
+  new export-artifact ORM fields with explicit export/erasure classifications.
+- Added the existing authorised artifact-scoped throttle to both
+  confirm-delivery routes after artifact authorisation and before delivery
+  evidence is written.
+- Added route source tests to prove confirm-delivery calls the same
+  artifact-scoped throttle before `confirm_export_delivery()`.
 
 ## Notes for future agents
 

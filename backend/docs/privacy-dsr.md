@@ -104,7 +104,7 @@ Current user API constraints:
   payload internals.
 - Download URL creation records URL issuance only. It does not mark the export
   DSR as delivered until delivery is explicitly confirmed.
-- Download URL generation is rate-limited at actor and authorised artifact scope.
+- Download URL generation and delivery confirmation are rate-limited at actor and authorised artifact scope.
 
 ## Request-type execution policy
 
@@ -255,7 +255,7 @@ Current behaviour:
   delivery is recorded only through the delivery confirmation endpoint.
 - Local download references use signed `local://privacy-export/...` values and
   must not be treated as production HTTP download URLs.
-- Download URL generation uses a dedicated privacy export download URL policy
+- Download URL generation and delivery confirmation use a dedicated privacy export download URL policy
   and an authorised artifact-scoped bucket.
 - Audit metadata is minimised and does not include export payloads, signed URLs,
   storage keys, local paths or processing tokens.
