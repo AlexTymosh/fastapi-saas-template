@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from hashlib import sha256
 from secrets import token_urlsafe
 from uuid import UUID
@@ -13,6 +14,7 @@ from app.core.db import get_session_factory
 from app.core.logging import get_logger
 from app.core.tasks import configure_broker
 from app.invites.models.invite import Invite, InviteStatus
+from app.invites.repositories.invites import InviteRepository
 from app.invites.services.delivery import get_invite_token_sink
 from app.outbox.models.outbox_event import OutboxEventType, OutboxStatus
 from app.outbox.repositories.outbox_events import OutboxEventRepository
@@ -67,7 +69,19 @@ async def _get_claimed_event_context(
                 return "invite_not_found", context, None
             if invite.status != InviteStatus.PENDING:
                 return "mark_processed", context, None
-            crypto = OutboxPayloadCrypto.from_settings(settings=get_settings())
+            expired_invite = await InviteRepository(
+                session
+            ).mark_pending_invite_expired_by_id(
+                invite_id=invite.id,
+                organisation_id=invite.organisation_id,
+                now=datetime.now(UTC),
+            )
+            if expired_invite is not None:
+                return "mark_processed", context, None
+            app_settings = get_settings()
+            if not app_settings.outbox.invite_delivery_enabled:
+                return "mark_processed", context, None
+            crypto = OutboxPayloadCrypto.from_settings(settings=app_settings)
             try:
                 raw_token = crypto.decrypt_token(payload.encrypted_raw_token)
             except ValueError:

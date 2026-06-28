@@ -20,8 +20,10 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR-328-2 is done: self-service DSR submissions accept `requester_note`,
   normalise blank notes, keep user responses minimal and expose notes only to
   authorised platform reviewers.
-- PR-328-3 files prepared: URL issuance is separated from delivery evidence
-  through dedicated URL-issue metadata and explicit delivery confirmation.
+- PR #428 is merged into `main`.
+- PR-328-3 is done: URL issuance is separated from confirmed delivery evidence;
+  delivery confirmation is explicit, rate-limited, atomic, idempotent and guarded
+  by artifact availability plus linked DSR eligibility.
 
 ## Roadmap status
 
@@ -29,8 +31,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 |---:|---|---:|---|
 | 1 | Define execution policy for non-export DSR types | Yes | Done |
 | 2 | Accept requester details on DSR submissions | Yes | Done |
-| 3 | Separate URL issuance from delivery evidence | Yes | In PR #428; Codex feedback addressed locally |
-| 4 | Real invite delivery provider / NoOp guard | Yes | Not started |
+| 3 | Separate URL issuance from delivery evidence | Yes | Done |
+| 4 | Real invite delivery provider / NoOp guard | Yes | In PR #429 |
 | 5 | Retention runner Taskfile and ops docs | Yes | Not started |
 | 6 | Runtime secrets and Docker hardening | Yes | Not started |
 | 7 | PostgreSQL DSR provider integration tests | Yes | Not started |
@@ -42,29 +44,27 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 
 Priority: P2
 Type: `feat(privacy)`
-Recommended branch: `feat/privacy-export-delivery-evidence`
-Recommended PR title: `✨ feat(privacy): separate export URL issuance from delivery evidence`
+Branch: `feat/privacy-export-delivery-evidence`
+PR title: `✨ feat(privacy): separate export URL issuance from delivery evidence`
+Status: Done in merged PR #428.
 
-### Goal
+### Delivered scope
 
-A generated download URL proves only that the application issued a short-lived
-access URL. It must not be treated as proof that the export artifact was
-received. Delivery evidence is now explicit.
-
-### Implementation plan
-
-1. Add export artifact URL-issuance metadata:
+1. Added export artifact URL-issuance metadata:
    - `download_url_issued_at`;
    - `download_url_issue_count`.
-2. Keep `downloaded_at` and `download_count` for confirmed delivery only.
-3. Generate download URLs without marking DSR execution as `delivered`.
-4. Add self-service and platform `confirm-delivery` endpoints.
-5. Mark the export DSR execution as `delivered` only after delivery
-   confirmation.
-6. Add an audit action for confirmed export delivery.
-7. Update API/service tests and docs.
+2. Kept `downloaded_at` and `download_count` for confirmed delivery only.
+3. Stopped marking export DSR execution as `delivered` during URL creation.
+4. Added self-service and platform `confirm-delivery` endpoints.
+5. Marked export DSR execution as `delivered` only after delivery confirmation.
+6. Added delivery confirmation audit evidence.
+7. Backfilled legacy URL issuance data out of delivery columns.
+8. Reclassified legacy ready, expired and cancelled URL-issued DSR states.
+9. Guarded delivery confirmation with artifact availability and linked DSR
+   eligibility inside the atomic update.
+10. Updated API/service/repository/exporter/migration tests and docs.
 
-### Failure cases to cover
+### Failure cases covered
 
 - URL issued but delivery not confirmed keeps DSR execution state non-delivered.
 - Delivery confirmation marks DSR execution as delivered.
@@ -72,34 +72,93 @@ received. Delivery evidence is now explicit.
 - Another user cannot confirm delivery for someone else's export artifact.
 - Multiple URL issuances increase URL issue metadata without increasing delivery
   count.
-- Existing download URL rate limits still apply to URL issuance and delivery
+- Existing download URL rate limits apply to URL issuance and delivery
   confirmation endpoints.
+- Repeated/concurrent delivery confirmation remains idempotent.
+- Retention, subject-erasure cancellation and platform DSR cancellation races
+  cannot write confirmed delivery evidence.
 
+## PR-328-4 — Real invite delivery provider / NoOp guard
 
-### PR #428 local test-failure follow-up
+Priority: P2
+Type: `feat(invites)`
+Recommended branch: `feat/invite-delivery-provider-guard`
+Recommended PR title: `✨ feat(invites): add SMTP invite delivery provider guard`
+Status: In PR #429; Codex feedback addressed locally.
 
-- Updated `tests/privacy/test_export_artifact_repository.py` so the statement
-  capture result exposes `rowcount`, matching the repository's atomic delivery
-  confirmation path.
-- Updated the repository SQL-shape assertion to expect the idempotent conditional
-  update instead of the old increment-only download counter shape.
-- Added the platform `confirm-delivery` endpoint to the OpenAPI platform route
-  contract and expected operation-id map.
+### Goal
 
-### PR #428 Codex feedback addressed locally
+The invite outbox worker must not silently mark invite events processed through a
+NoOp sink in protected environments. Local/test can still use NoOp for developer
+and test workflows, but `dev`, `staging` and `prod` must use a real delivery
+provider when invite delivery is enabled.
 
-- Added `download_url_issued_at` and `download_url_issue_count` to
-  `backend/app/privacy/column_inventory.py` so the column inventory covers the
-  new export-artifact ORM fields with explicit export/erasure classifications.
-- Added the existing authorised artifact-scoped throttle to both
-  confirm-delivery routes after artifact authorisation and before delivery
-  evidence is written.
-- Added route source tests to prove confirm-delivery calls the same
-  artifact-scoped throttle before `confirm_export_delivery()`.
-- Updated the legacy URL-delivery migration so delivered export DSRs are
-  reclassified from URL issuance based on the latest artifact status: ready
-  artifacts become `ready`, expired artifacts become `failed` with
-  `artifact_expired` evidence.
+### Planned implementation
+
+1. Add an SMTP-backed `InviteTokenSink` using Python stdlib email/SMTP support.
+2. Keep `NoOpInviteTokenSink` only for local/test or disabled invite delivery.
+3. Add `INVITE_DELIVERY__*` settings for provider, sender, accept URL template
+   and SMTP connection/auth/TLS controls.
+4. Reject NoOp invite delivery in `dev`, `staging` and `prod` when
+   `OUTBOX__INVITE_DELIVERY_ENABLED=true`.
+5. Require HTTPS invitation accept URLs in `staging` and `prod`.
+6. Keep raw invite tokens in memory only and deliver them through the outbox
+   worker sink boundary.
+7. Add unit/regression tests for provider selection, protected-environment guard,
+   SMTP message construction and token URL encoding.
+8. Update `.env.example` and invite delivery documentation.
+
+### PR #429 follow-up
+
+Codex found that `OUTBOX__INVITE_DELIVERY_ENABLED=false` was not honoured before
+SMTP provider selection. The fix short-circuits `get_invite_token_sink()` to the
+NoOp sink before parsing `INVITE_DELIVERY__*` provider settings when invite
+delivery is disabled. This prevents disabled workers from sending SMTP invites
+or failing on stale SMTP configuration.
+
+Codex also found that blank `INVITE_DELIVERY__FROM_EMAIL=` values from copied
+local/test env templates failed `EmailStr` validation before NoOp delivery could
+be selected. The fix normalises blank sender values to `None` before validation,
+while preserving `FROM_EMAIL` as required for SMTP delivery.
+
+Codex also found that `staging`/`prod` SMTP delivery could be configured with
+both direct TLS and STARTTLS disabled. The fix rejects plaintext SMTP transport
+in those environments before returning an SMTP sink.
+
+Codex also found that a recovered outbox worker could still send SMTP delivery
+for a pending invite after `expires_at` had passed. The fix terminalizes expired
+pending invites before token decryption and SMTP delivery, then marks the outbox
+event processed without sending a dead invite link.
+
+Local regression tests found SQLAlchemy's default ORM session evaluation could
+compare SQLite naive datetimes with UTC-aware decision timestamps in invite
+expiry bulk updates. The fix sets `synchronize_session="fetch"` on invite update
+statements that compare `expires_at` with runtime timestamps, so the database
+performs the comparison and the session is synchronized through returned rows.
+
+Codex also found that disabled invite delivery still happened after token
+decryption in the worker. The fix now short-circuits disabled delivery after the
+invite status/expiry gates and before `OutboxPayloadCrypto` is constructed, so
+disabled workers can drain events without SMTP, without token decryption and
+without requiring a configured outbox token encryption key for stale payloads.
+
+### Failure cases to cover
+
+- Protected environment + enabled invite delivery + NoOp provider is rejected.
+- Disabled invite delivery + stale SMTP provider settings returns NoOp before
+  SMTP configuration is parsed.
+- Disabled invite delivery drains pending invite outbox events before token
+  decryption and without requiring `SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY`.
+- NoOp invite delivery tolerates blank optional SMTP env values copied from the
+  local `.env.example` template.
+- Expired pending invites are marked expired before token decryption or SMTP
+  delivery, and their outbox events are terminally processed without sending.
+- SMTP provider cannot start without host, sender and `{token}` URL template.
+- SMTP username/password must be configured together.
+- Staging/prod accept URL templates must use HTTPS.
+- Staging/prod SMTP delivery must use direct TLS or STARTTLS.
+- SMTP delivery exceptions continue to bubble to the outbox worker so the outbox
+  event is retried/failed instead of marked processed.
 
 ## Notes for future agents
 
@@ -111,35 +170,3 @@ received. Delivery evidence is now explicit.
 - Keep code lines within 88 characters.
 - Do not close #328 until every roadmap item is done or explicitly removed from
   #328 scope by a documented decision.
-
-
-### PR #428 follow-up — Codex second review
-
-Status: files prepared locally.
-
-Fixes:
-
-- Include `download_url_issued_at` and `download_url_issue_count` in subject and
-  actor-reference DSR export payloads.
-- Backfill legacy URL issuance metadata out of `downloaded_at` and
-  `download_count` during migration.
-- Make delivery confirmation atomic and idempotent so repeated/concurrent calls
-  do not increment `download_count` or duplicate delivery audit evidence.
-
-### PR #428 follow-up: cancelled legacy URL deliveries and availability guard
-
-- Reclassify latest cancelled legacy URL-issued export DSRs from `delivered` to
-  failed delivery evidence using the cancellation reason, usually
-  `subject_erasure_requested`.
-- Guard the atomic delivery-confirmation update with READY, non-expired and
-  non-null storage predicates so retention or subject-erasure races cannot mark
-  unavailable artifacts as delivered.
-
-### PR #428 follow-up: DSR eligibility race guard
-
-- Recheck linked DSR eligibility inside the same atomic export artifact delivery
-  confirmation update.
-- Delivery confirmation now requires the linked DSR to remain an export request
-  with status `approved` or `fulfilled` and both requester/subject links present.
-- If platform cancellation or erasure minimisation wins the race before delivery
-  confirmation, no delivery evidence is written and the request is rejected.
