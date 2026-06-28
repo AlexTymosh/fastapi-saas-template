@@ -125,6 +125,17 @@ Codex also found that `staging`/`prod` SMTP delivery could be configured with
 both direct TLS and STARTTLS disabled. The fix rejects plaintext SMTP transport
 in those environments before returning an SMTP sink.
 
+Codex also found that a recovered outbox worker could still send SMTP delivery
+for a pending invite after `expires_at` had passed. The fix terminalizes expired
+pending invites before token decryption and SMTP delivery, then marks the outbox
+event processed without sending a dead invite link.
+
+Local regression tests found SQLAlchemy's default ORM session evaluation could
+compare SQLite naive datetimes with UTC-aware decision timestamps in invite
+expiry bulk updates. The fix sets `synchronize_session="fetch"` on invite update
+statements that compare `expires_at` with runtime timestamps, so the database
+performs the comparison and the session is synchronized through returned rows.
+
 ### Failure cases to cover
 
 - Protected environment + enabled invite delivery + NoOp provider is rejected.
@@ -132,6 +143,8 @@ in those environments before returning an SMTP sink.
   SMTP configuration is parsed.
 - NoOp invite delivery tolerates blank optional SMTP env values copied from the
   local `.env.example` template.
+- Expired pending invites are marked expired before token decryption or SMTP
+  delivery, and their outbox events are terminally processed without sending.
 - SMTP provider cannot start without host, sender and `{token}` URL template.
 - SMTP username/password must be configured together.
 - Staging/prod accept URL templates must use HTTPS.

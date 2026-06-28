@@ -61,16 +61,19 @@ Lifecycle is explicitly split:
 2. Dispatcher recovers stale processing events (`processing -> pending/failed`) based on timeout and retry policy.
 3. Dispatcher claims due events (`pending -> processing`, sets `locked_at`) and commits.
 4. Dispatcher enqueues claimed IDs to Dramatiq.
-5. Worker loads claimed event, performs external delivery **outside** DB transaction, then commits result transition.
+5. Worker loads claimed event, skips non-pending or expired invites, performs external delivery **outside** DB transaction, then commits result transition.
 
 Status transitions:
 
 - Success: `pending -> processing -> processed`
 - Failure with retries remaining: `pending -> processing -> pending`
 - Failure with max attempts reached: `pending -> processing -> failed`
+- Expired pending invite: invite `pending -> expired`, outbox event `processing -> processed` without delivery
 
 If enqueue fails after claim commit, dispatcher immediately re-opens a DB transaction and releases that event with retry semantics (`enqueue_failed:*`), so it does not remain stuck in `processing`.
 At-least-once delivery remains the contract: duplicate delivery is still possible (for example, worker crash after external delivery but before `mark_processed`). Idempotent downstream delivery is a follow-up hardening task (P1/P2).
+
+Expired pending invites are terminalized before token decryption and SMTP delivery. This prevents a recovered worker from sending dead invite links after a worker outage or SMTP misconfiguration lasts beyond the invite TTL.
 
 
 ## Encryption key requirements
@@ -121,4 +124,7 @@ The SMTP sink builds the accept link by URL-encoding the raw token into the conf
 
 - Production-safe path remains PostgreSQL.
 - Invite repository update flows use SQL `RETURNING` through SQLAlchemy.
+- Invite update statements that compare `expires_at` with runtime timestamps use
+  `synchronize_session="fetch"`, so SQLite test runs do not evaluate
+  naive/aware datetime comparisons in Python.
 - SQLite compatibility for these flows requires SQLite **3.35+** (first version with `RETURNING` support).
