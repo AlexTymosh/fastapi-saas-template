@@ -32,7 +32,7 @@ The following capabilities are intentionally out of scope for this foundation an
 Raw invite tokens are generated for out-of-band delivery but are not part of the normal public invite creation API response contract. Invite delivery now uses a transactional outbox: invite/audit/outbox rows are committed together, while delivery runs asynchronously and at-least-once from background workers.
 
 `invites.token_hash` stores `sha256(raw_token)`. The outbox payload stores only `encrypted_raw_token`; plain `raw_token` is never persisted in payload JSON.
-Workers decrypt token material in memory, verify `sha256(raw_token) == invites.token_hash`, and then deliver. Wrong key/material mismatch is handled as a safe failed attempt.
+Workers decrypt token material in memory only when invite delivery is enabled, verify `sha256(raw_token) == invites.token_hash`, and then deliver. Wrong key/material mismatch is handled as a safe failed attempt.
 Outbox workers now use DB-backed status/attempt tracking as the source of truth and do not rely on Dramatiq retries for business delivery retries. A dispatcher actor (`enqueue_pending_outbox_events`) enqueues due pending events for processing.
 
 ## Authorisation semantics and invite token test seam
@@ -69,11 +69,14 @@ Status transitions:
 - Failure with retries remaining: `pending -> processing -> pending`
 - Failure with max attempts reached: `pending -> processing -> failed`
 - Expired pending invite: invite `pending -> expired`, outbox event `processing -> processed` without delivery
+- Disabled delivery: outbox event `processing -> processed` without token decryption or delivery
 
 If enqueue fails after claim commit, dispatcher immediately re-opens a DB transaction and releases that event with retry semantics (`enqueue_failed:*`), so it does not remain stuck in `processing`.
 At-least-once delivery remains the contract: duplicate delivery is still possible (for example, worker crash after external delivery but before `mark_processed`). Idempotent downstream delivery is a follow-up hardening task (P1/P2).
 
 Expired pending invites are terminalized before token decryption and SMTP delivery. This prevents a recovered worker from sending dead invite links after a worker outage or SMTP misconfiguration lasts beyond the invite TTL.
+
+When invite delivery is disabled, claimed invite events are marked processed after the invite status/expiry gates and before token decryption. This allows operators to drain pending outbox events without requiring SMTP settings or a valid `SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY` for old encrypted payloads.
 
 
 ## Encryption key requirements
@@ -81,6 +84,7 @@ Expired pending invites are terminalized before token decryption and SMTP delive
 - Invite outbox payload encryption uses Fernet (`SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY`).
 - `local` and `test` may use deterministic fallback key when env var is omitted.
 - `dev`, `staging`, and `prod` require explicit key when `OUTBOX__INVITE_DELIVERY_ENABLED=true`.
+- Disabled invite delivery does not decrypt invite outbox tokens, so workers can drain already-claimed invite events without requiring this key.
 - Worker decryption/key mismatch is handled safely: event is failed/retried without exposing raw token or encrypted payload.
 - Key rotation and KMS integration are not part of this task.
 - Processed-outbox retention/cleanup remains a separate follow-up task.
@@ -94,7 +98,7 @@ Supported providers:
 - `noop`: local/test placeholder only.
 - `smtp`: real SMTP delivery provider used by protected environments.
 
-When `OUTBOX__INVITE_DELIVERY_ENABLED=false`, workers always use the NoOp sink before reading provider-specific invite delivery settings. This lets operators disable invite delivery without clearing stale SMTP environment variables and prevents disabled workers from sending invite emails.
+When `OUTBOX__INVITE_DELIVERY_ENABLED=false`, workers process invite outbox events without decrypting invite tokens or creating a delivery sink. This lets operators disable invite delivery without clearing stale SMTP environment variables, without requiring an invite token encryption key for stale payloads, and without sending invite emails.
 
 When `OUTBOX__INVITE_DELIVERY_ENABLED=true`, `dev`, `staging`, and `prod` must not use `INVITE_DELIVERY__PROVIDER=noop`. The worker refuses to create a NoOp sink in those environments, so an unsafe configuration fails the outbox delivery attempt instead of silently marking invite events as delivered.
 

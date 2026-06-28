@@ -136,11 +136,19 @@ expiry bulk updates. The fix sets `synchronize_session="fetch"` on invite update
 statements that compare `expires_at` with runtime timestamps, so the database
 performs the comparison and the session is synchronized through returned rows.
 
+Codex also found that disabled invite delivery still happened after token
+decryption in the worker. The fix now short-circuits disabled delivery after the
+invite status/expiry gates and before `OutboxPayloadCrypto` is constructed, so
+disabled workers can drain events without SMTP, without token decryption and
+without requiring a configured outbox token encryption key for stale payloads.
+
 ### Failure cases to cover
 
 - Protected environment + enabled invite delivery + NoOp provider is rejected.
 - Disabled invite delivery + stale SMTP provider settings returns NoOp before
   SMTP configuration is parsed.
+- Disabled invite delivery drains pending invite outbox events before token
+  decryption and without requiring `SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY`.
 - NoOp invite delivery tolerates blank optional SMTP env values copied from the
   local `.env.example` template.
 - Expired pending invites are marked expired before token decryption or SMTP

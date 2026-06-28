@@ -78,7 +78,10 @@ async def _get_claimed_event_context(
             )
             if expired_invite is not None:
                 return "mark_processed", context, None
-            crypto = OutboxPayloadCrypto.from_settings(settings=get_settings())
+            app_settings = get_settings()
+            if not app_settings.outbox.invite_delivery_enabled:
+                return "mark_processed", context, None
+            crypto = OutboxPayloadCrypto.from_settings(settings=app_settings)
             try:
                 raw_token = crypto.decrypt_token(payload.encrypted_raw_token)
             except ValueError:
