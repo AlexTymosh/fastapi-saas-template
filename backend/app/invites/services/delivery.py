@@ -21,6 +21,7 @@ from app.core.config.settings import get_settings
 from app.invites.models.invite import Invite
 
 _PROTECTED_INVITE_DELIVERY_ENVIRONMENTS = frozenset({"dev", "staging", "prod"})
+_PROTECTED_SMTP_TRANSPORT_ENVIRONMENTS = frozenset({"staging", "prod"})
 
 
 class InviteDeliveryConfigurationError(RuntimeError):
@@ -288,7 +289,7 @@ def _ensure_protected_smtp_url_policy(
     *,
     environment: str,
 ) -> None:
-    if environment not in {"staging", "prod"}:
+    if environment not in _PROTECTED_SMTP_TRANSPORT_ENVIRONMENTS:
         return
     if settings.accept_url_template is None:
         raise InviteDeliveryConfigurationError("SMTP invite accept URL is missing")
@@ -296,4 +297,10 @@ def _ensure_protected_smtp_url_policy(
     if scheme != "https":
         raise InviteDeliveryConfigurationError(
             f"INVITE_DELIVERY__ACCEPT_URL_TEMPLATE must use https:// in {environment}"
+        )
+    if not (settings.smtp_use_tls or settings.smtp_start_tls):
+        raise InviteDeliveryConfigurationError(
+            "INVITE_DELIVERY__SMTP_USE_TLS=true or "
+            "INVITE_DELIVERY__SMTP_START_TLS=true is required in "
+            f"{environment}"
         )

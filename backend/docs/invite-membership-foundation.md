@@ -93,8 +93,6 @@ Supported providers:
 
 When `OUTBOX__INVITE_DELIVERY_ENABLED=false`, workers always use the NoOp sink before reading provider-specific invite delivery settings. This lets operators disable invite delivery without clearing stale SMTP environment variables and prevents disabled workers from sending invite emails.
 
-Blank optional SMTP settings are normalised as unset. This includes `INVITE_DELIVERY__FROM_EMAIL=`, so a copied local `.env.example` using `INVITE_DELIVERY__PROVIDER=noop` does not fail on unused SMTP sender validation.
-
 When `OUTBOX__INVITE_DELIVERY_ENABLED=true`, `dev`, `staging`, and `prod` must not use `INVITE_DELIVERY__PROVIDER=noop`. The worker refuses to create a NoOp sink in those environments, so an unsafe configuration fails the outbox delivery attempt instead of silently marking invite events as delivered.
 
 Required SMTP settings:
@@ -113,7 +111,9 @@ Optional SMTP settings:
 - `INVITE_DELIVERY__SMTP_USE_TLS`, for direct TLS/SMTPS
 - `INVITE_DELIVERY__SMTP_START_TLS`, for STARTTLS on plain SMTP
 
-`SMTP_USERNAME` and `SMTP_PASSWORD` must be configured together. Direct TLS and STARTTLS are mutually exclusive. `staging` and `prod` invitation accept URL templates must use `https://`.
+Blank optional SMTP values from copied local env templates are treated as unset. `SMTP_USERNAME` and `SMTP_PASSWORD` must be configured together. Direct TLS and STARTTLS are mutually exclusive.
+
+`staging` and `prod` invitation accept URL templates must use `https://`, and SMTP transport must use either direct TLS (`SMTP_USE_TLS=true`) or STARTTLS (`SMTP_START_TLS=true`). Plain SMTP is rejected in those environments before the worker creates an SMTP sink.
 
 The SMTP sink builds the accept link by URL-encoding the raw token into the configured `{token}` placeholder. Raw tokens remain in memory only: they are decrypted by the worker, validated against `invites.token_hash`, inserted into the outbound email link, and not logged or persisted by the delivery provider.
 

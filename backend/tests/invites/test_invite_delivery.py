@@ -53,17 +53,6 @@ def test_local_invite_delivery_uses_noop_sink_by_default() -> None:
     assert isinstance(sink, NoOpInviteTokenSink)
 
 
-def test_noop_invite_delivery_treats_blank_sender_as_unset(monkeypatch) -> None:
-    monkeypatch.setenv("INVITE_DELIVERY__PROVIDER", "noop")
-    monkeypatch.setenv("INVITE_DELIVERY__FROM_EMAIL", "   ")
-
-    settings = get_invite_delivery_settings()
-    sink = get_invite_token_sink()
-
-    assert settings.from_email is None
-    assert isinstance(sink, NoOpInviteTokenSink)
-
-
 def test_protected_invite_delivery_rejects_noop_provider(monkeypatch) -> None:
     _set_dev_invite_delivery_baseline(monkeypatch)
 
@@ -86,6 +75,22 @@ def test_disabled_invite_delivery_uses_noop_before_provider_config(
     assert isinstance(sink, NoOpInviteTokenSink)
 
 
+def test_noop_invite_delivery_treats_blank_sender_as_unset() -> None:
+    settings = InviteDeliverySettings(provider="noop", from_email="   ")
+
+    assert settings.from_email is None
+
+
+def test_smtp_invite_delivery_requires_sender_when_blank() -> None:
+    with pytest.raises(ValueError, match="INVITE_DELIVERY__FROM_EMAIL"):
+        InviteDeliverySettings(
+            provider="smtp",
+            from_email="   ",
+            accept_url_template="https://app.example.test/invites/{token}",
+            smtp_host="smtp.example.test",
+        )
+
+
 def test_protected_invite_delivery_uses_smtp_provider(monkeypatch) -> None:
     _set_dev_invite_delivery_baseline(monkeypatch)
     _set_smtp_invite_delivery(monkeypatch)
@@ -105,13 +110,20 @@ def test_smtp_invite_delivery_requires_token_url_template() -> None:
         )
 
 
-def test_smtp_invite_delivery_requires_sender_after_blank_normalisation() -> None:
-    with pytest.raises(ValueError, match="INVITE_DELIVERY__FROM_EMAIL"):
-        InviteDeliverySettings(
-            provider="smtp",
-            from_email="  ",
-            accept_url_template="https://app.example.test/invites/{token}",
-            smtp_host="smtp.example.test",
+def test_staging_smtp_invite_delivery_rejects_plaintext_transport() -> None:
+    settings = InviteDeliverySettings(
+        provider="smtp",
+        from_email="invites@example.com",
+        accept_url_template="https://app.example.test/invites/{token}",
+        smtp_host="smtp.example.test",
+        smtp_use_tls=False,
+        smtp_start_tls=False,
+    )
+
+    with pytest.raises(InviteDeliveryConfigurationError, match="SMTP_START_TLS"):
+        delivery._ensure_protected_smtp_url_policy(  # noqa: SLF001
+            settings,
+            environment="staging",
         )
 
 

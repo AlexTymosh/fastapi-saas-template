@@ -116,21 +116,26 @@ NoOp sink before parsing `INVITE_DELIVERY__*` provider settings when invite
 delivery is disabled. This prevents disabled workers from sending SMTP invites
 or failing on stale SMTP configuration.
 
-Codex also found that a copied `.env.example` with `INVITE_DELIVERY__PROVIDER=noop`
-and a blank `INVITE_DELIVERY__FROM_EMAIL=` could still fail settings validation
-before NoOp delivery was selected. The fix normalises a blank sender to `None`,
-so NoOp delivery ignores the unused SMTP sender while SMTP delivery still reports
-`INVITE_DELIVERY__FROM_EMAIL` as a required setting.
+Codex also found that blank `INVITE_DELIVERY__FROM_EMAIL=` values from copied
+local/test env templates failed `EmailStr` validation before NoOp delivery could
+be selected. The fix normalises blank sender values to `None` before validation,
+while preserving `FROM_EMAIL` as required for SMTP delivery.
+
+Codex also found that `staging`/`prod` SMTP delivery could be configured with
+both direct TLS and STARTTLS disabled. The fix rejects plaintext SMTP transport
+in those environments before returning an SMTP sink.
 
 ### Failure cases to cover
 
 - Protected environment + enabled invite delivery + NoOp provider is rejected.
 - Disabled invite delivery + stale SMTP provider settings returns NoOp before
   SMTP configuration is parsed.
-- NoOp invite delivery treats blank `INVITE_DELIVERY__FROM_EMAIL` as unset.
+- NoOp invite delivery tolerates blank optional SMTP env values copied from the
+  local `.env.example` template.
 - SMTP provider cannot start without host, sender and `{token}` URL template.
 - SMTP username/password must be configured together.
 - Staging/prod accept URL templates must use HTTPS.
+- Staging/prod SMTP delivery must use direct TLS or STARTTLS.
 - SMTP delivery exceptions continue to bubble to the outbox worker so the outbox
   event is retried/failed instead of marked processed.
 
