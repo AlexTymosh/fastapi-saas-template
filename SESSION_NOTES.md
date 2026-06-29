@@ -24,6 +24,9 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR-328-3 is done: URL issuance is separated from confirmed delivery evidence;
   delivery confirmation is explicit, rate-limited, atomic, idempotent and guarded
   by artifact availability plus linked DSR eligibility.
+- PR #429 is merged into `main`.
+- PR-328-4 is done: invite delivery has an SMTP provider, NoOp guardrails for
+  protected environments, accept URL validation, and SMTP transport guardrails.
 
 ## Roadmap status
 
@@ -32,8 +35,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 1 | Define execution policy for non-export DSR types | Yes | Done |
 | 2 | Accept requester details on DSR submissions | Yes | Done |
 | 3 | Separate URL issuance from delivery evidence | Yes | Done |
-| 4 | Real invite delivery provider / NoOp guard | Yes | In PR #429 |
-| 5 | Retention runner Taskfile and ops docs | Yes | Not started |
+| 4 | Real invite delivery provider / NoOp guard | Yes | Done |
+| 5 | Retention runner Taskfile and ops docs | Yes | Patch prepared |
 | 6 | Runtime secrets and Docker hardening | Yes | Not started |
 | 7 | PostgreSQL DSR provider integration tests | Yes | Not started |
 | 8 | Streaming DSR export archive generation | Yes | Not started |
@@ -84,7 +87,7 @@ Priority: P2
 Type: `feat(invites)`
 Recommended branch: `feat/invite-delivery-provider-guard`
 Recommended PR title: `✨ feat(invites): add SMTP invite delivery provider guard`
-Status: In PR #429; Codex feedback addressed locally.
+Status: Done in merged PR #429; re-verified after merge.
 
 ### Goal
 
@@ -159,6 +162,29 @@ without requiring a configured outbox token encryption key for stale payloads.
 - Staging/prod SMTP delivery must use direct TLS or STARTTLS.
 - SMTP delivery exceptions continue to bubble to the outbox worker so the outbox
   event is retried/failed instead of marked processed.
+
+## PR-328-5 — Retention runner Taskfile and ops docs
+
+Priority: P2
+Type: `chore(privacy)`
+Recommended branch: `chore/privacy-retention-runner-ops`
+Recommended PR title: `🧹 chore(privacy): add export retention runner ops commands`
+Status: Patch prepared; not merged.
+
+### Prepared scope
+
+1. Add Taskfile commands for retention one-shot and dry-run execution.
+2. Add smoke coverage for retention CLI parsing and Taskfile task presence.
+3. Document manual execution and scheduled operation patterns.
+4. Keep runtime retention behaviour unchanged.
+
+### Failure cases to cover
+
+- Dry-run stays non-mutating.
+- Invalid batch size fails clearly.
+- Taskfile exposes the intended retention commands from the repository root.
+- Scheduled-operation docs do not imply multiple active retention runners are
+  safe without a separate distributed lock or row-claiming contract.
 
 ## Notes for future agents
 

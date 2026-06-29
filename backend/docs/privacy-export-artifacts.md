@@ -110,23 +110,92 @@ Compose profile as a production deployment manifest.
 
 ## Maintenance runner
 
-Run the privacy export retention runner with:
+The privacy export retention runner performs one bounded cleanup pass and then
+exits. It is safe for local manual use, scheduled jobs, and external schedulers
+that run the command as a single instance.
+
+First run a non-mutating smoke check from the repository root:
 
 ```text
+task privacy:retention:dry-run
+```
+
+Then run one cleanup pass from the repository root:
+
+```text
+task privacy:retention:once
+```
+
+Direct backend command equivalents:
+
+```text
+python -m app.privacy.retention_cli --dry-run
 python -m app.privacy.retention_cli
+python -m app.privacy.retention_cli --batch-size 500
 ```
 
 The runner:
 
 - finds ready export artifacts whose `expires_at` is in the past;
+- retries storage-object purges for cancelled export artifacts created before a
+  subject erasure request;
 - deletes the stored local/S3-compatible archive object;
 - clears `storage_key`, filename, content type, size, and checksum metadata;
-- marks the artifact as `expired`;
-- records an `export_artifact_expired` audit event;
+- marks expired ready artifacts as `expired`;
+- records an `export_artifact_expired` audit event for expired ready artifacts;
 - synchronises the linked export DSR execution state.
 
 Use `--dry-run` to preview the number of artifacts that would be processed
-without mutating the database or deleting storage objects.
+without mutating the database or deleting storage objects. Use `--batch-size` to
+bound a scheduled pass.
+
+### Production scheduling guidance
+
+Run retention after database migrations and with the same application image,
+settings, database, storage backend, and secret sources as the API. Do not run it
+from a developer workstation against staging or production storage.
+
+Use exactly one active retention runner per environment unless a later change
+adds an explicit distributed lock or row-claiming contract for retention. The
+current runner is intended as a one-shot maintenance command, not a continuously
+polling worker.
+
+Supported scheduling patterns:
+
+- **Manual one-shot:** run `task privacy:retention:dry-run`, inspect logs, then
+  run `task privacy:retention:once`.
+- **systemd timer:** create a oneshot service that runs
+  `python -m app.privacy.retention_cli` from the deployed backend environment,
+  then trigger it from a timer. Keep the service non-overlapping.
+- **Kubernetes CronJob:** run the backend image with command
+  `python -m app.privacy.retention_cli`, set `concurrencyPolicy: Forbid`, and
+  set a bounded `successfulJobsHistoryLimit` / `failedJobsHistoryLimit`.
+- **External scheduler:** call the same one-shot command in the deployment
+  platform, ensuring only one run can be active at a time.
+
+Example Kubernetes CronJob command shape:
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: privacy-export-retention
+spec:
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: retention
+              image: your-backend-image
+              command:
+                - python
+                - -m
+                - app.privacy.retention_cli
+```
 
 ## Out of scope
 
