@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-06-27
+2026-06-28
 
 ## Project Phase
 
@@ -25,6 +25,8 @@ should still be verified against code before extension:
   protection.
 - Local user projection with `external_auth_id`.
 - Organisations, memberships and invites foundation.
+- SMTP invite delivery provider with protected-environment NoOp guardrails when
+  invite delivery is enabled.
 - Platform staff, permissions, current platform identity endpoint foundation,
   platform list filters, limited platform user/organisation/audit views and
   OpenAPI operation ID hardening.
@@ -58,7 +60,7 @@ should still be verified against code before extension:
   - audit minimisation before destructive erasure;
   - self-erasure execution rejection;
   - automatic fulfilment after successful approved erase execution;
-  - export artifact retention runner;
+  - export artifact retention runner with Taskfile ops commands;
   - erasure coverage contract tests that keep inventory, runtime coverage and
     impact preview aligned.
 - Outbox foundation.
@@ -82,7 +84,8 @@ should still be verified against code before extension:
 - Production hardening.
 - Platform workflows beyond the current platform staff/user/organisation/audit
   and privacy DSR scope.
-- Invite delivery pipeline.
+- Additional invite delivery providers and product-specific invite email
+  template customisation beyond the current SMTP sink.
 - Observability integration beyond the current foundation.
 - Full BOLA/BFLA security test matrix outside the currently covered tenant BOLA,
   platform permission-matrix and feature-specific privacy permission tests.
@@ -139,7 +142,7 @@ verification:
   documentation source.
 - `backend/docs/privacy-dsr.md` contains the current DSR workflow summary.
 - `backend/docs/privacy-export-artifacts.md` contains export artifact storage,
-  worker, download URL and retention details.
+  worker, download URL, delivery confirmation and retention operations details.
 - `backend/docs/privacy-dsr-328-closure-checklist.md` tracks closure readiness
   and final verification for issue #328.
 - `SESSION_NOTES.md` contains short live handoff notes for AI-agent sessions.

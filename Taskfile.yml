@@ -41,6 +41,18 @@ tasks:
         uv run --locked python -m app.commands.privacy_export_worker
         --dry-run --once
 
+  privacy:retention:once:
+    desc: Run one expired privacy export artifact retention pass.
+    dir: backend
+    cmds:
+      - uv run --locked python -m app.privacy.retention_cli
+
+  privacy:retention:dry-run:
+    desc: Count expired privacy export artifacts without mutating state.
+    dir: backend
+    cmds:
+      - uv run --locked python -m app.privacy.retention_cli --dry-run
+
   test:lightweight:
     desc: Run lightweight tests without expensive or opt-in execution markers.
     dir: backend
