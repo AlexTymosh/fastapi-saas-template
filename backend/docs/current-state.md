@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-06-28
+2026-06-29
 
 ## Project Phase
 
@@ -77,11 +77,13 @@ should still be verified against code before extension:
   - `Taskfile.yml` wraps common `uv run` checks;
   - `.pre-commit-config.yaml` uses local `uv` hooks;
   - GitHub Actions CI runs the backend quality gate with `uv`;
-  - Docker backend image installs runtime dependencies from `uv.lock`.
+  - Docker backend image installs runtime dependencies from `uv.lock` and
+  runs the backend process as an unprivileged application user.
 
 ## Partially Implemented
 
-- Production hardening.
+- Production hardening beyond the current non-root backend image and
+  documented runtime secret handling baseline.
 - Platform workflows beyond the current platform staff/user/organisation/audit
   and privacy DSR scope.
 - Additional invite delivery providers and product-specific invite email
@@ -122,8 +124,10 @@ verification:
 - Soft-deleted organisations are operational/audit records: platform admin
   workflows may request explicit visibility for support, compliance, audit or
   recovery, but tenant APIs must not accidentally expose them.
-- Production Docker/runtime hardening is not complete beyond current dependency
-  installation.
+- Production Docker/runtime hardening now has a non-root backend image and
+  runtime secret handling baseline, but deployment-specific controls such as
+  read-only filesystems and capability drops still belong in deployment
+  manifests.
 - CORS policy is implemented as an explicit environment-driven allowlist and is
   disabled by default.
 - CI should remain required and green before merging protected branches.
@@ -145,6 +149,8 @@ verification:
   worker, download URL, delivery confirmation and retention operations details.
 - `backend/docs/privacy-dsr-328-closure-checklist.md` tracks closure readiness
   and final verification for issue #328.
+- `backend/docs/runtime-hardening.md` documents runtime secret handling and
+  backend container hardening guidance.
 - `SESSION_NOTES.md` contains short live handoff notes for AI-agent sessions.
 - `README.md`, `AGENTS.md`, and `Taskfile.yml` are the primary developer
   workflow entry points.
