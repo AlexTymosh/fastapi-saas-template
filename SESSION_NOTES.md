@@ -31,13 +31,13 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 ## Roadmap status
 
 | Order | PR | Blocks #328 closure | Status |
-|---:|---|---:|---|
+|---:|---|---:|--|
 | 1 | Define execution policy for non-export DSR types | Yes | Done |
 | 2 | Accept requester details on DSR submissions | Yes | Done |
 | 3 | Separate URL issuance from delivery evidence | Yes | Done |
 | 4 | Real invite delivery provider / NoOp guard | Yes | Done |
-| 5 | Retention runner Taskfile and ops docs | Yes | Patch prepared |
-| 6 | Runtime secrets and Docker hardening | Yes | Not started |
+| 5 | Retention runner Taskfile and ops docs | Yes | Done |
+| 6 | Runtime secrets and Docker hardening | Yes | Done |
 | 7 | PostgreSQL DSR provider integration tests | Yes | Not started |
 | 8 | Streaming DSR export archive generation | Yes | Not started |
 | 9 | Authorised representative DSR workflow | Yes | Not started |
