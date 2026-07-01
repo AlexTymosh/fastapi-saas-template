@@ -63,6 +63,24 @@ Audit rows are exported with allowlisted structured metadata only. Free-text
 reason fields are reported through redaction notices rather than copied into the
 subject export.
 
+## PostgreSQL provider integration coverage
+
+SQLite-backed tests cover the default fast feedback loop. PostgreSQL-specific
+coverage is also required for provider queries that depend on JSON column
+predicates, because PostgreSQL renders JSON element access through dialect
+operators rather than SQLite's JSON helpers.
+
+Current PostgreSQL provider coverage exercises:
+
+- subject export lookup through `outbox_events.payload_json["email"]`;
+- erasure impact counts through the same outbox JSON email predicate;
+- erasure outbox scrubbing through the PostgreSQL JSON predicate plus
+  `SELECT ... FOR UPDATE` locking path.
+
+These tests are marked `privacy`, `integration` and `container`. They use the
+existing Testcontainers PostgreSQL fixture and must remain outside the
+`external_db` marker because they start their own disposable PostgreSQL instance.
+
 ## Contract guardrails
 
 The subject export implementation must stay aligned with the privacy inventory.
@@ -87,6 +105,7 @@ follow-up categories.
 Current implemented scope includes:
 
 - provider-backed subject exports;
+- PostgreSQL provider integration coverage for outbox JSON predicates;
 - S3-compatible export object storage;
 - erasure/anonymisation providers;
 - retention purge for expired export objects.
@@ -94,5 +113,4 @@ Current implemented scope includes:
 Non-blocking follow-up categories include:
 
 - streaming archive generation for very large exports;
-- larger integration tests on PostgreSQL-compatible JSON predicates;
 - a versioned export payload schema contract.
