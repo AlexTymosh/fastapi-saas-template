@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-06-29
+2026-06-30
 
 ## Project Phase
 
@@ -44,6 +44,8 @@ should still be verified against code before extension:
   - optional requester details captured for platform DSR review;
   - approval restricted to request types with concrete execution policies;
   - cross-table subject export providers;
+  - PostgreSQL provider integration coverage for outbox JSON predicates used by
+    subject export, erasure impact preview and outbox erasure scrubbing;
   - export artifact worker flow and ops integration;
   - local and S3-compatible export artifact storage;
   - opt-in MinIO/Testcontainers coverage for S3-compatible export storage;
@@ -78,7 +80,7 @@ should still be verified against code before extension:
   - `.pre-commit-config.yaml` uses local `uv` hooks;
   - GitHub Actions CI runs the backend quality gate with `uv`;
   - Docker backend image installs runtime dependencies from `uv.lock` and
-  runs the backend process as an unprivileged application user.
+    runs the backend process as an unprivileged application user.
 
 ## Partially Implemented
 
@@ -94,7 +96,6 @@ should still be verified against code before extension:
 - DSR hardening items that are intentionally separate from the current #328
   backend closure scope:
   - streaming export archive generation;
-  - PostgreSQL-specific JSON predicate export-provider tests;
   - explicit delivery evidence semantics; done for URL issuance vs user or
     platform delivery confirmation, but future storage-native evidence can
     still extend it;
@@ -149,6 +150,8 @@ verification:
   worker, download URL, delivery confirmation and retention operations details.
 - `backend/docs/privacy-dsr-328-closure-checklist.md` tracks closure readiness
   and final verification for issue #328.
+- `backend/docs/privacy-dsr-export-providers.md` records the historical export
+  provider slice and PostgreSQL provider integration coverage.
 - `backend/docs/runtime-hardening.md` documents runtime secret handling and
   backend container hardening guidance.
 - `SESSION_NOTES.md` contains short live handoff notes for AI-agent sessions.

@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-06-27
+Date: 2026-06-30
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -27,18 +27,24 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR #429 is merged into `main`.
 - PR-328-4 is done: invite delivery has an SMTP provider, NoOp guardrails for
   protected environments, accept URL validation, and SMTP transport guardrails.
+- PR #430 is merged into `main`.
+- PR-328-5 is done: retention runner Taskfile commands, CLI smoke tests,
+  `.env.example` guardrails and scheduler docs are merged.
+- PR #431 is merged into `main`.
+- PR-328-6 is done: backend container runtime uses an unprivileged user, runtime
+  secret handling is documented, and regression tests guard Docker hardening.
 
 ## Roadmap status
 
-| Order | PR | Blocks #328 closure | Status |
-|---:|---|---:|--|
-| 1 | Define execution policy for non-export DSR types | Yes | Done |
-| 2 | Accept requester details on DSR submissions | Yes | Done |
-| 3 | Separate URL issuance from delivery evidence | Yes | Done |
-| 4 | Real invite delivery provider / NoOp guard | Yes | Done |
-| 5 | Retention runner Taskfile and ops docs | Yes | Done |
-| 6 | Runtime secrets and Docker hardening | Yes | Done |
-| 7 | PostgreSQL DSR provider integration tests | Yes | Not started |
+| Order | PR | Blocks #328 closure | Status      |
+|---:|---|---:|-------------|
+| 1 | Define execution policy for non-export DSR types | Yes | Done        |
+| 2 | Accept requester details on DSR submissions | Yes | Done        |
+| 3 | Separate URL issuance from delivery evidence | Yes | Done        |
+| 4 | Real invite delivery provider / NoOp guard | Yes | Done        |
+| 5 | Retention runner Taskfile and ops docs | Yes | Done        |
+| 6 | Runtime secrets and Docker hardening | Yes | Done        |
+| 7 | PostgreSQL DSR provider integration tests | Yes | done        |
 | 8 | Streaming DSR export archive generation | Yes | Not started |
 | 9 | Authorised representative DSR workflow | Yes | Not started |
 | 10 | Final #328 closure reconciliation | Yes | Not started |
@@ -113,39 +119,13 @@ provider when invite delivery is enabled.
 
 ### PR #429 follow-up
 
-Codex found that `OUTBOX__INVITE_DELIVERY_ENABLED=false` was not honoured before
-SMTP provider selection. The fix short-circuits `get_invite_token_sink()` to the
-NoOp sink before parsing `INVITE_DELIVERY__*` provider settings when invite
-delivery is disabled. This prevents disabled workers from sending SMTP invites
-or failing on stale SMTP configuration.
+Codex found several edge cases after the first implementation. The merged PR now
+honours disabled invite delivery before provider selection, tolerates blank local
+NoOp SMTP fields, rejects plaintext SMTP in protected environments, terminalizes
+expired pending invites before delivery, and short-circuits disabled delivery
+before token decryption.
 
-Codex also found that blank `INVITE_DELIVERY__FROM_EMAIL=` values from copied
-local/test env templates failed `EmailStr` validation before NoOp delivery could
-be selected. The fix normalises blank sender values to `None` before validation,
-while preserving `FROM_EMAIL` as required for SMTP delivery.
-
-Codex also found that `staging`/`prod` SMTP delivery could be configured with
-both direct TLS and STARTTLS disabled. The fix rejects plaintext SMTP transport
-in those environments before returning an SMTP sink.
-
-Codex also found that a recovered outbox worker could still send SMTP delivery
-for a pending invite after `expires_at` had passed. The fix terminalizes expired
-pending invites before token decryption and SMTP delivery, then marks the outbox
-event processed without sending a dead invite link.
-
-Local regression tests found SQLAlchemy's default ORM session evaluation could
-compare SQLite naive datetimes with UTC-aware decision timestamps in invite
-expiry bulk updates. The fix sets `synchronize_session="fetch"` on invite update
-statements that compare `expires_at` with runtime timestamps, so the database
-performs the comparison and the session is synchronized through returned rows.
-
-Codex also found that disabled invite delivery still happened after token
-decryption in the worker. The fix now short-circuits disabled delivery after the
-invite status/expiry gates and before `OutboxPayloadCrypto` is constructed, so
-disabled workers can drain events without SMTP, without token decryption and
-without requiring a configured outbox token encryption key for stale payloads.
-
-### Failure cases to cover
+### Failure cases covered
 
 - Protected environment + enabled invite delivery + NoOp provider is rejected.
 - Disabled invite delivery + stale SMTP provider settings returns NoOp before
@@ -169,22 +149,81 @@ Priority: P2
 Type: `chore(privacy)`
 Recommended branch: `chore/privacy-retention-runner-ops`
 Recommended PR title: `🧹 chore(privacy): add export retention runner ops commands`
-Status: Patch prepared; not merged.
+Status: Done in merged PR #430; re-verified after merge.
 
-### Prepared scope
+### Delivered scope
 
-1. Add Taskfile commands for retention one-shot and dry-run execution.
-2. Add smoke coverage for retention CLI parsing and Taskfile task presence.
-3. Document manual execution and scheduled operation patterns.
-4. Keep runtime retention behaviour unchanged.
+1. Added Taskfile commands for retention one-shot and dry-run execution.
+2. Added smoke coverage for retention CLI parsing and Taskfile task presence.
+3. Documented manual execution and scheduled operation patterns.
+4. Documented single-active-runner guidance for scheduled retention jobs.
+5. Kept runtime retention behaviour unchanged.
+6. Restored auth, outbox and invite delivery examples in `.env.example` after
+   Codex found they were accidentally removed.
 
-### Failure cases to cover
+### Failure cases covered
 
 - Dry-run stays non-mutating.
 - Invalid batch size fails clearly.
 - Taskfile exposes the intended retention commands from the repository root.
 - Scheduled-operation docs do not imply multiple active retention runners are
   safe without a separate distributed lock or row-claiming contract.
+- Required runtime auth/outbox/invite env examples are not silently dropped from
+  `.env.example`.
+
+## PR-328-6 — Runtime secrets and Docker hardening
+
+Priority: P2
+Type: `security(runtime)`
+Recommended branch: `security/runtime-secrets-docker-hardening`
+Recommended PR title: `🛡️ security(runtime): harden backend container runtime`
+Status: Done in merged PR #431; re-verified after merge.
+
+### Delivered scope
+
+1. Added an unprivileged `app:app` runtime user to the backend Docker image.
+2. Moved the final backend runtime stage to `USER app:app`.
+3. Copied runtime application files with `app:app` ownership.
+4. Documented runtime secret handling and container hardening guidance.
+5. Updated current-state documentation to avoid overclaiming production readiness.
+6. Added regression tests for Dockerfile runtime hardening guardrails.
+
+### Follow-up outside this PR
+
+Remaining string-based secret-like settings should be converted to `SecretStr` in
+a separate focused PR if stricter redaction of full settings dumps is required.
+Do not combine that refactor with the PostgreSQL DSR provider tests.
+
+## PR-328-7 — PostgreSQL DSR provider integration tests
+
+Priority: P2
+Type: `chore(privacy)`
+Recommended branch: `test/privacy-postgres-provider-coverage`
+Recommended PR title: `🧹 chore(privacy): cover DSR providers on PostgreSQL`
+Status: Patch prepared; not merged.
+
+### Prepared scope
+
+1. Add PostgreSQL/Testcontainers coverage for subject export provider lookup via
+   `outbox_events.payload_json["email"]`.
+2. Add PostgreSQL/Testcontainers coverage for erasure impact preview counts that
+   depend on the same outbox JSON email predicate.
+3. Add PostgreSQL/Testcontainers coverage for outbox erasure scrubbing through
+   the PostgreSQL JSON predicate and `SELECT ... FOR UPDATE` path.
+4. Keep the tests opt-in by infrastructure marker: `privacy`, `integration` and
+   `container`; do not mark them `external_db` because they start a disposable
+   PostgreSQL container.
+5. Update DSR provider/current-state docs to mark PostgreSQL JSON predicate
+   coverage as implemented.
+
+### Failure cases to cover
+
+- PostgreSQL JSON predicate finds the subject-linked outbox event.
+- PostgreSQL JSON predicate does not include unrelated outbox events.
+- Exported outbox references do not expose raw email or encrypted token payloads.
+- Erasure impact counts subject-linked outbox events through PostgreSQL JSON
+  access.
+- Outbox erasure scrubs only the subject-linked JSON payload row.
 
 ## Notes for future agents
 
