@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-06-30
+2026-07-01
 
 ## Project Phase
 
@@ -46,6 +46,7 @@ should still be verified against code before extension:
   - cross-table subject export providers;
   - PostgreSQL provider integration coverage for outbox JSON predicates used by
     subject export, erasure impact preview and outbox erasure scrubbing;
+  - streaming JSON ZIP archive generation for export artifacts;
   - export artifact worker flow and ops integration;
   - local and S3-compatible export artifact storage;
   - opt-in MinIO/Testcontainers coverage for S3-compatible export storage;
@@ -95,7 +96,6 @@ should still be verified against code before extension:
   platform permission-matrix and feature-specific privacy permission tests.
 - DSR hardening items that are intentionally separate from the current #328
   backend closure scope:
-  - streaming export archive generation;
   - explicit delivery evidence semantics; done for URL issuance vs user or
     platform delivery confirmation, but future storage-native evidence can
     still extend it;
@@ -120,8 +120,9 @@ verification:
 
 - Documentation may lag code.
 - Documentation must not claim planned features as implemented.
-- Large DSR exports still need streaming archive generation before production
-  scale is claimed.
+- Very large DSR exports still need deployment-level writable temporary storage
+  capacity planning even though archive generation now streams through a
+  temporary file instead of materialising the ZIP in memory.
 - Soft-deleted organisations are operational/audit records: platform admin
   workflows may request explicit visibility for support, compliance, audit or
   recovery, but tenant APIs must not accidentally expose them.

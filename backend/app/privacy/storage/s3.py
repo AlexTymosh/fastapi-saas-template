@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import boto3
@@ -63,13 +63,29 @@ class S3CompatibleStorageAdapter:
             "ContentType": content_type,
             "Metadata": {"privacy-artifact": "true"},
         }
-        if self.server_side_encryption is not None:
-            params["ServerSideEncryption"] = self.server_side_encryption
-        if self.sse_kms_key_id is not None:
-            params["SSEKMSKeyId"] = self.sse_kms_key_id
-
+        self._add_server_side_encryption(params)
         self.client.put_object(**params)
         return StoredObject(key=key, content_type=content_type, size_bytes=len(data))
+
+    def put_file(self, key: str, path: Path, content_type: str) -> StoredObject:
+        object_key = self._object_key(key)
+        extra_args: dict[str, Any] = {
+            "ContentType": content_type,
+            "Metadata": {"privacy-artifact": "true"},
+        }
+        self._add_server_side_encryption(extra_args)
+        with path.open("rb") as body:
+            self.client.upload_fileobj(
+                body,
+                self.bucket_name,
+                object_key,
+                ExtraArgs=extra_args,
+            )
+        return StoredObject(
+            key=key,
+            content_type=content_type,
+            size_bytes=path.stat().st_size,
+        )
 
     def get_bytes(self, key: str) -> bytes:
         response = self.client.get_object(
@@ -107,6 +123,12 @@ class S3CompatibleStorageAdapter:
         if not self.key_prefix:
             return safe_key
         return f"{self.key_prefix}/{safe_key}"
+
+    def _add_server_side_encryption(self, params: dict[str, Any]) -> None:
+        if self.server_side_encryption is not None:
+            params["ServerSideEncryption"] = self.server_side_encryption
+        if self.sse_kms_key_id is not None:
+            params["SSEKMSKeyId"] = self.sse_kms_key_id
 
     @classmethod
     def _validate_key(cls, key: str) -> str:

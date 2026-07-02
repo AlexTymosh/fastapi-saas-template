@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -59,6 +60,17 @@ class LocalStorageAdapter(StorageAdapter):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         return StoredObject(key=key, content_type=content_type, size_bytes=len(data))
+
+    def put_file(self, key: str, path: Path, content_type: str) -> StoredObject:
+        target = self._resolve(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("rb") as source, target.open("wb") as destination:
+            shutil.copyfileobj(source, destination, length=1024 * 1024)
+        return StoredObject(
+            key=key,
+            content_type=content_type,
+            size_bytes=target.stat().st_size,
+        )
 
     def get_bytes(self, key: str) -> bytes:
         return self._resolve(key).read_bytes()

@@ -18,6 +18,10 @@ Export artifacts are generated asynchronously from approved export DSRs.
 - Export payloads are assembled from the current cross-table subject export
   providers. This is export coverage only and does not imply complete
   executable erasure coverage for the same tables.
+- Export artifact ZIP generation writes `export.json` incrementally into a
+  temporary archive file and uploads the prepared file to the selected storage
+  backend. It must not materialise the full JSON payload string or ZIP archive
+  bytes in memory before storage.
 - Audit metadata is intentionally minimised and does not include payload/storage
   paths/tokens.
 - `--dry-run` worker mode performs one non-mutating count pass and then exits
@@ -25,6 +29,25 @@ Export artifacts are generated asynchronously from approved export DSRs.
 - Expired ready artifacts are processed by the privacy retention runner, which
   deletes the stored archive object, clears storage metadata, marks the artifact
   as `expired`, and synchronises the linked DSR execution state.
+
+## Export archive generation
+
+Export archives use the `json_zip` format and contain a single `export.json`
+member. The generator streams JSON chunks from the subject export providers into
+`ZipFile.open("export.json", mode="w")`, then uploads the completed temporary ZIP
+file with the selected storage adapter.
+
+The generated archive metadata is derived from the completed temporary file:
+
+- `size_bytes` is the archive file size;
+- `checksum_sha256` is calculated by reading the file in bounded chunks;
+- `max_artifact_size_bytes` is checked after the ZIP has been closed and before
+  the file is uploaded to storage;
+- temporary files are removed after upload, and also after generation failures.
+
+Deployment environments must provide writable temporary storage for export
+workers. For large exports, size the writable path for at least the configured
+`PRIVACY_EXPORTS__MAX_ARTIFACT_SIZE_BYTES` plus normal filesystem overhead.
 
 ## Export artifact cardinality
 
@@ -199,7 +222,6 @@ spec:
 
 ## Out of scope
 
-- Streaming archive generation for very large exports.
 - Authorised representative workflows.
 - Frontend/UI.
 

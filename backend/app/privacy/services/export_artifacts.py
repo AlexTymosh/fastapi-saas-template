@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import io
-import json
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
@@ -17,7 +17,7 @@ from app.audit.services.audit_events import AuditEventService
 from app.core.config.settings import get_settings
 from app.core.errors import ConflictError, NotFoundError
 from app.privacy.exporters.base import ExportContext
-from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
+from app.privacy.exporters.subject_data_stream import iter_subject_export_json_chunks
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
@@ -37,6 +37,7 @@ from app.privacy.storage.local import LocalStorageAdapter
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 
 DEFAULT_PROCESSING_LEASE_SECONDS = 3600
+_EXPORT_ARCHIVE_READ_SIZE = 1024 * 1024
 _DOWNLOAD_ELIGIBLE_DSR_STATUSES = frozenset(
     {
         DataSubjectRequestStatus.APPROVED.value,
@@ -65,6 +66,23 @@ def _optional_secret_value(secret: SecretStr | None) -> str | None:
     return value or None
 
 
+def _file_checksum_and_size(path: Path) -> tuple[str, int]:
+    checksum = hashlib.sha256()
+    size_bytes = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(_EXPORT_ARCHIVE_READ_SIZE):
+            size_bytes += len(chunk)
+            checksum.update(chunk)
+    return checksum.hexdigest(), size_bytes
+
+
+def _unlink_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        return
+
+
 @dataclass(frozen=True)
 class ProcessingExportLease:
     artifact_id: UUID
@@ -78,7 +96,7 @@ class PreparedExportArchive:
     storage_key: str
     filename: str
     content_type: str
-    archive_bytes: bytes
+    archive_path: Path
     size_bytes: int
     checksum_sha256: str
 
@@ -628,50 +646,84 @@ class ExportArtifactService:
             raise ValueError("dsr_not_export_eligible")
 
         now = datetime.now(UTC)
-        payload = await CrossTableSubjectDataExporter(self.session).export_subject_data(
-            ExportContext(
-                artifact_id=artifact.id,
-                data_subject_request_id=dsr.id,
-                subject_user_id=dsr.subject_user_id,
-                requester_user_id=dsr.requester_user_id,
-                request_type=dsr.request_type,
-                request_status=dsr.status,
-                generated_at=now,
-                schema_version=artifact.schema_version,
+        archive_path = self._temporary_archive_path()
+        try:
+            await self._write_export_archive_file(
+                archive_path,
+                ExportContext(
+                    artifact_id=artifact.id,
+                    data_subject_request_id=dsr.id,
+                    subject_user_id=dsr.subject_user_id,
+                    requester_user_id=dsr.requester_user_id,
+                    request_type=dsr.request_type,
+                    request_status=dsr.status,
+                    generated_at=now,
+                    schema_version=artifact.schema_version,
+                ),
             )
-        )
-        with io.BytesIO() as stream:
+            checksum_sha256, size_bytes = _file_checksum_and_size(archive_path)
+            if size_bytes > self.settings.privacy_exports.max_artifact_size_bytes:
+                raise ValueError("artifact_too_large")
+
+            storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
+            return PreparedExportArchive(
+                artifact_id=artifact.id,
+                storage_backend=artifact.storage_backend,
+                storage_key=storage_key,
+                filename=f"privacy-export-{artifact.id}.zip",
+                content_type="application/zip",
+                archive_path=archive_path,
+                size_bytes=size_bytes,
+                checksum_sha256=checksum_sha256,
+            )
+        except Exception:
+            _unlink_file(archive_path)
+            raise
+
+    def _temporary_archive_path(self) -> Path:
+        temporary_dir = Path(self.settings.privacy_exports.local_storage_path).resolve()
+        temporary_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=temporary_dir,
+            prefix="privacy-export-",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            return Path(temporary_file.name)
+
+    async def _write_export_archive_file(
+        self,
+        archive_path: Path,
+        context: ExportContext,
+    ) -> None:
+        with archive_path.open("wb") as archive_stream:
             with zipfile.ZipFile(
-                stream, mode="w", compression=zipfile.ZIP_DEFLATED
+                archive_stream,
+                mode="w",
+                compression=zipfile.ZIP_DEFLATED,
+                allowZip64=True,
             ) as archive:
-                archive.writestr(
+                with archive.open(
                     "export.json",
-                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                )
-            archive_bytes = stream.getvalue()
-
-        if len(archive_bytes) > self.settings.privacy_exports.max_artifact_size_bytes:
-            raise ValueError("artifact_too_large")
-
-        storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
-        return PreparedExportArchive(
-            artifact_id=artifact.id,
-            storage_backend=artifact.storage_backend,
-            storage_key=storage_key,
-            filename=f"privacy-export-{artifact.id}.zip",
-            content_type="application/zip",
-            archive_bytes=archive_bytes,
-            size_bytes=len(archive_bytes),
-            checksum_sha256=hashlib.sha256(archive_bytes).hexdigest(),
-        )
+                    mode="w",
+                    force_zip64=True,
+                ) as json_stream:
+                    async for chunk in iter_subject_export_json_chunks(
+                        self.session,
+                        context,
+                    ):
+                        json_stream.write(chunk.encode("utf-8"))
 
     def write_prepared_export_archive(self, prepared: PreparedExportArchive) -> None:
         storage = self._storage_for_backend(prepared.storage_backend)
-        storage.put_bytes(
-            prepared.storage_key,
-            prepared.archive_bytes,
-            prepared.content_type,
-        )
+        try:
+            storage.put_file(
+                prepared.storage_key,
+                prepared.archive_path,
+                prepared.content_type,
+            )
+        finally:
+            _unlink_file(prepared.archive_path)
 
     async def mark_generated_export_artifact_ready(
         self,
