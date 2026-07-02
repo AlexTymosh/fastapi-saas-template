@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 
@@ -13,6 +14,8 @@ class StoredObject:
 
 class StorageAdapter(Protocol):
     def put_bytes(self, key: str, data: bytes, content_type: str) -> StoredObject: ...
+
+    def put_file(self, key: str, path: Path, content_type: str) -> StoredObject: ...
 
     def get_bytes(self, key: str) -> bytes: ...
 

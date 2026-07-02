@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-06-30
+Date: 2026-07-01
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -33,19 +33,23 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR #431 is merged into `main`.
 - PR-328-6 is done: backend container runtime uses an unprivileged user, runtime
   secret handling is documented, and regression tests guard Docker hardening.
+- PR #432 is merged into `main`.
+- PR-328-7 is done: PostgreSQL/Testcontainers coverage verifies DSR provider
+  JSON predicates used by subject export, erasure impact preview and outbox
+  erasure scrubbing.
 
 ## Roadmap status
 
-| Order | PR | Blocks #328 closure | Status      |
-|---:|---|---:|-------------|
-| 1 | Define execution policy for non-export DSR types | Yes | Done        |
-| 2 | Accept requester details on DSR submissions | Yes | Done        |
-| 3 | Separate URL issuance from delivery evidence | Yes | Done        |
-| 4 | Real invite delivery provider / NoOp guard | Yes | Done        |
-| 5 | Retention runner Taskfile and ops docs | Yes | Done        |
-| 6 | Runtime secrets and Docker hardening | Yes | Done        |
-| 7 | PostgreSQL DSR provider integration tests | Yes | done        |
-| 8 | Streaming DSR export archive generation | Yes | Not started |
+| Order | PR | Blocks #328 closure | Status |
+|---:|---|---:|---|
+| 1 | Define execution policy for non-export DSR types | Yes | Done |
+| 2 | Accept requester details on DSR submissions | Yes | Done |
+| 3 | Separate URL issuance from delivery evidence | Yes | Done |
+| 4 | Real invite delivery provider / NoOp guard | Yes | Done |
+| 5 | Retention runner Taskfile and ops docs | Yes | Done |
+| 6 | Runtime secrets and Docker hardening | Yes | Done |
+| 7 | PostgreSQL DSR provider integration tests | Yes | Done |
+| 8 | Streaming DSR export archive generation | Yes | Done |
 | 9 | Authorised representative DSR workflow | Yes | Not started |
 | 10 | Final #328 closure reconciliation | Yes | Not started |
 
@@ -200,23 +204,23 @@ Priority: P2
 Type: `chore(privacy)`
 Recommended branch: `test/privacy-postgres-provider-coverage`
 Recommended PR title: `🧹 chore(privacy): cover DSR providers on PostgreSQL`
-Status: Patch prepared; not merged.
+Status: Done in merged PR #432; re-verified after merge.
 
-### Prepared scope
+### Delivered scope
 
-1. Add PostgreSQL/Testcontainers coverage for subject export provider lookup via
+1. Added PostgreSQL/Testcontainers coverage for subject export provider lookup via
    `outbox_events.payload_json["email"]`.
-2. Add PostgreSQL/Testcontainers coverage for erasure impact preview counts that
+2. Added PostgreSQL/Testcontainers coverage for erasure impact preview counts that
    depend on the same outbox JSON email predicate.
-3. Add PostgreSQL/Testcontainers coverage for outbox erasure scrubbing through
+3. Added PostgreSQL/Testcontainers coverage for outbox erasure scrubbing through
    the PostgreSQL JSON predicate and `SELECT ... FOR UPDATE` path.
-4. Keep the tests opt-in by infrastructure marker: `privacy`, `integration` and
-   `container`; do not mark them `external_db` because they start a disposable
+4. Kept the tests opt-in by infrastructure marker: `privacy`, `integration` and
+   `container`; they are not marked `external_db` because they start a disposable
    PostgreSQL container.
-5. Update DSR provider/current-state docs to mark PostgreSQL JSON predicate
+5. Updated DSR provider/current-state docs to mark PostgreSQL JSON predicate
    coverage as implemented.
 
-### Failure cases to cover
+### Failure cases covered
 
 - PostgreSQL JSON predicate finds the subject-linked outbox event.
 - PostgreSQL JSON predicate does not include unrelated outbox events.
@@ -224,6 +228,40 @@ Status: Patch prepared; not merged.
 - Erasure impact counts subject-linked outbox events through PostgreSQL JSON
   access.
 - Outbox erasure scrubs only the subject-linked JSON payload row.
+
+## PR-328-8 — Streaming DSR export archive generation
+
+Priority: P2
+Type: `perf(privacy)`
+Recommended branch: `perf/privacy-streaming-export-archives`
+Recommended PR title: `⚡️ perf(privacy): stream DSR export archive generation`
+Status: Patch prepared; not merged.
+
+### Prepared scope
+
+1. Add a streaming subject export JSON chunk writer that iterates provider records
+   without materialising the complete export payload as a Python dictionary for
+   archive generation.
+2. Replace in-memory ZIP assembly with a temporary ZIP file written through
+   `ZipFile.open("export.json", mode="w")`.
+3. Add `StorageAdapter.put_file()` and implement file streaming for local and
+   S3-compatible storage backends.
+4. Compute archive size and checksum by reading the temporary file in bounded
+   chunks.
+5. Delete temporary archive files after upload and after generation failures.
+6. Preserve the existing ZIP schema, storage metadata, DSR execution state and
+   public API behaviour.
+7. Update export artifact documentation and current-state notes.
+
+### Failure cases to cover
+
+- Archive generation uses streaming JSON chunks and still produces a valid
+  `export.json` ZIP member.
+- Prepared archive files are deleted after successful storage upload.
+- Oversized generated archives fail with `artifact_too_large` and do not leave
+  temporary files behind.
+- Existing export artifact service behaviour still marks artifacts ready, keeps
+  schema fields intact and preserves failure-state synchronisation.
 
 ## Notes for future agents
 
