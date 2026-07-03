@@ -450,6 +450,8 @@ async def _lock_dsr_rows(
                 DataSubjectRequest.subject_user_id == subject_user_id,
                 DataSubjectRequest.requester_user_id == subject_user_id,
                 DataSubjectRequest.reviewer_user_id == subject_user_id,
+                DataSubjectRequest.representative_verified_by_user_id
+                == subject_user_id,
             )
         )
         .order_by(DataSubjectRequest.created_at.asc(), DataSubjectRequest.id.asc())
@@ -731,12 +733,20 @@ def _minimise_dsr_rows(
             row.requester_user_id == subject_user_id
             or row.subject_user_id == subject_user_id
         )
-        for field_name in ("requester_user_id", "subject_user_id", "reviewer_user_id"):
+        for field_name in (
+            "requester_user_id",
+            "subject_user_id",
+            "reviewer_user_id",
+            "representative_verified_by_user_id",
+        ):
             if getattr(row, field_name) == subject_user_id:
                 _set_if_changed(row, field_name, None, row_changed_fields)
         if is_subject_or_requester_row:
             for field_name in (
                 "requester_note",
+                "representative_relationship",
+                "representative_authority_note",
+                "representative_rejection_reason_code",
                 "internal_note",
                 "execution_failure_detail",
                 "idempotency_key_hash",

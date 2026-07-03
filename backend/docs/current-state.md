@@ -42,6 +42,10 @@ should still be verified against code before extension:
   - execution state separated from administrative review status;
   - self-service submission for all modelled request types;
   - optional requester details captured for platform DSR review;
+  - authorised representative DSR intake and verification metadata with approval
+    blocked unless authority is verified;
+  - pre-upgrade self-service idempotency retry compatibility during the TTL;
+  - conditional representative authority review writes;
   - approval restricted to request types with concrete execution policies;
   - cross-table subject export providers;
   - PostgreSQL provider integration coverage for outbox JSON predicates used by
@@ -65,7 +69,8 @@ should still be verified against code before extension:
   - automatic fulfilment after successful approved erase execution;
   - export artifact retention runner with Taskfile ops commands;
   - erasure coverage contract tests that keep inventory, runtime coverage and
-    impact preview aligned.
+    impact preview aligned, including DSR workflow rows linked only through a
+    representative verifier.
 - Outbox foundation.
 - Redis/rate limiting foundation, including route-level dependency policies,
   settings-aware policy resolution, authenticated reads, tenant flows, invite
@@ -99,7 +104,8 @@ should still be verified against code before extension:
   - explicit delivery evidence semantics; done for URL issuance vs user or
     platform delivery confirmation, but future storage-native evidence can
     still extend it;
-  - authorised representative workflows;
+  - representative evidence document storage, UI review and execution semantics
+    beyond the current backend verification metadata;
   - frontend/UI;
   - concrete execution pipelines for access, rectify, restrict, object and
     portability request types. These review-only types are blocked from approval

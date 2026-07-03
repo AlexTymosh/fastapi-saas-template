@@ -288,6 +288,47 @@ def test_idempotency_returns_existing_or_conflict(migrated_session_factory) -> N
     run_async(_run())
 
 
+def test_idempotency_accepts_pre_representative_self_service_fingerprint(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user = await _create_user(session, email="legacy-idempotency@example.com")
+            service = DataSubjectRequestService(session)
+            audit_context = AuditContext(actor_user_id=user.id)
+
+            first = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="export",
+                requester_note="legacy-note",
+                idempotency_key="legacy-self-service-key",
+                audit_context=audit_context,
+            )
+
+            legacy_source = "request_type=export|requester_note=legacy-note"
+            legacy_fingerprint = sha256(legacy_source.encode("utf-8")).hexdigest()
+            await session.execute(
+                update(DataSubjectRequest)
+                .where(DataSubjectRequest.id == first.id)
+                .values(idempotency_fingerprint=legacy_fingerprint)
+            )
+            await session.flush()
+            await session.refresh(first)
+
+            second = await service.submit_request(
+                requester_user_id=user.id,
+                request_type="export",
+                requester_note="legacy-note",
+                idempotency_key="legacy-self-service-key",
+                audit_context=audit_context,
+            )
+
+            assert second.id == first.id
+            assert second.idempotency_fingerprint == legacy_fingerprint
+
+    run_async(_run())
+
+
 def test_idempotency_expired_key_allows_new_request(migrated_session_factory) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:

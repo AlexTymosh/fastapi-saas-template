@@ -40,18 +40,18 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 
 ## Roadmap status
 
-| Order | PR | Blocks #328 closure | Status |
-|---:|---|---:|---|
-| 1 | Define execution policy for non-export DSR types | Yes | Done |
-| 2 | Accept requester details on DSR submissions | Yes | Done |
-| 3 | Separate URL issuance from delivery evidence | Yes | Done |
-| 4 | Real invite delivery provider / NoOp guard | Yes | Done |
-| 5 | Retention runner Taskfile and ops docs | Yes | Done |
-| 6 | Runtime secrets and Docker hardening | Yes | Done |
-| 7 | PostgreSQL DSR provider integration tests | Yes | Done |
-| 8 | Streaming DSR export archive generation | Yes | Done |
-| 9 | Authorised representative DSR workflow | Yes | Not started |
-| 10 | Final #328 closure reconciliation | Yes | Not started |
+| Order | PR | Blocks #328 closure | Status                               |
+|---:|---|---:|--------------------------------------|
+| 1 | Define execution policy for non-export DSR types | Yes | Done                                 |
+| 2 | Accept requester details on DSR submissions | Yes | Done                                 |
+| 3 | Separate URL issuance from delivery evidence | Yes | Done                                 |
+| 4 | Real invite delivery provider / NoOp guard | Yes | Done                                 |
+| 5 | Retention runner Taskfile and ops docs | Yes | Done                                 |
+| 6 | Runtime secrets and Docker hardening | Yes | Done                                 |
+| 7 | PostgreSQL DSR provider integration tests | Yes | Done                                 |
+| 8 | Streaming DSR export archive generation | Yes | Done                                 |
+| 9 | Authorised representative DSR workflow | Yes | In progress: 2/3 - PR-328-9B prepared |
+| 10 | Final #328 closure reconciliation | Yes | Not started                          |
 
 ## PR-328-3 — Separate URL issuance from delivery evidence
 
@@ -235,7 +235,7 @@ Priority: P2
 Type: `perf(privacy)`
 Recommended branch: `perf/privacy-streaming-export-archives`
 Recommended PR title: `⚡️ perf(privacy): stream DSR export archive generation`
-Status: Patch prepared; not merged.
+Status: Done in merged PR #433; re-verified after merge.
 
 ### Prepared scope
 
@@ -262,6 +262,64 @@ Status: Patch prepared; not merged.
   temporary files behind.
 - Existing export artifact service behaviour still marks artifacts ready, keeps
   schema fields intact and preserves failure-state synchronisation.
+
+## PR-328-9A — Authorised representative DSR intake
+
+Priority: P2
+Type: `feat(privacy)`
+Recommended branch: `feat/privacy-dsr-representative-intake`
+Recommended PR title: `✨ feat(privacy): add representative DSR intake guardrails`
+Status: Patch prepared; not merged.
+
+### Prepared scope
+
+1. Add representative intake metadata to `data_subject_requests`.
+2. Preserve current self-service behaviour as the default DSR submission path.
+3. Allow explicit representative submissions with subject, relationship and
+   authority details.
+4. Store representative submissions as `pending_verification`.
+5. Block approval until representative authority is verified by a later workflow.
+6. Include representative intake metadata in idempotency fingerprints.
+7. Keep requester/subject identifier redaction safe in DSR workflow exports.
+8. Update DSR docs, current-state notes and inventory contracts.
+
+### Failure cases to cover
+
+- Self-service DSRs still infer the authenticated user as subject.
+- Representative DSRs require subject and authority details.
+- Pending/rejected representative DSRs cannot be approved.
+- Idempotency conflicts when the same key is reused for another represented
+  subject or authority payload.
+- A representative exporting their own DSR workflow records does not receive the
+  represented subject's raw user id.
+
+## PR-328-9B — Authorised representative DSR verification workflow
+
+Priority: P2
+Type: `feat(privacy)`
+Recommended branch: `feat/privacy-dsr-representative-review`
+Recommended PR title: `✨ feat(privacy): add representative DSR review workflow`
+Status: Patch prepared; not merged.
+
+### Prepared scope
+
+1. Add platform endpoints to verify or reject representative authority.
+2. Keep DSR lifecycle separate from representative authority review state.
+3. Allow approval only after `representative_status=verified`.
+4. Record minimal audit events for representative verification/rejection.
+5. Add representative-status filtering to platform DSR list/count.
+6. Validate represented subject existence before DSR insert to avoid FK-driven 500s.
+7. Include verifier-only DSR workflow rows in subject exports as reference records.
+8. Update DSR docs and current-state notes.
+
+### Failure cases to cover
+
+- Unknown represented subject IDs return controlled 4xx errors before insert.
+- Verification is rejected for non-representative DSRs.
+- Representative authority cannot be changed after approval/terminal states.
+- Rejected representative authority keeps approval blocked.
+- Verifier-only DSR rows appear in exports as reference records without exposing
+  requester or subject identifiers.
 
 ## Notes for future agents
 

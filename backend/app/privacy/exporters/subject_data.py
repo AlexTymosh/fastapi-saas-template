@@ -423,31 +423,29 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
     ) -> AsyncIterator[PrivacyExportRecord]:
         stmt = (
             select(DataSubjectRequest)
-            .where(
-                or_(
-                    DataSubjectRequest.subject_user_id == context.subject_user_id,
-                    DataSubjectRequest.requester_user_id == context.subject_user_id,
-                    DataSubjectRequest.reviewer_user_id == context.subject_user_id,
-                )
-            )
+            .where(or_(*_subject_workflow_dsr_conditions(context.subject_user_id)))
             .order_by(DataSubjectRequest.created_at.asc(), DataSubjectRequest.id.asc())
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:
-            if self._is_reviewer_only_record(row, context):
-                yield self._reviewer_reference_record(row)
+            if self._is_reference_only_record(row, context):
+                yield self._reference_record(row, context)
                 continue
             yield self._subject_request_record(row, context)
 
     @staticmethod
-    def _is_reviewer_only_record(
+    def _is_reference_only_record(
         row: DataSubjectRequest, context: PrivacyProviderContext
     ) -> bool:
-        return (
-            row.reviewer_user_id == context.subject_user_id
-            and row.subject_user_id != context.subject_user_id
-            and row.requester_user_id != context.subject_user_id
+        is_subject_or_requester = (
+            row.subject_user_id == context.subject_user_id
+            or row.requester_user_id == context.subject_user_id
         )
+        is_review_actor = (
+            row.reviewer_user_id == context.subject_user_id
+            or row.representative_verified_by_user_id == context.subject_user_id
+        )
+        return is_review_actor and not is_subject_or_requester
 
     def _subject_request_record(
         self, row: DataSubjectRequest, context: PrivacyProviderContext
@@ -457,8 +455,14 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
             "request_type": row.request_type,
             "status": row.status,
             "execution_status": row.execution_status,
-            "requester_user_id": row.requester_user_id,
-            "subject_user_id": row.subject_user_id,
+            "requester_role": row.requester_role,
+            "representative_status": row.representative_status,
+            "representative_relationship": row.representative_relationship,
+            "representative_authority_note": row.representative_authority_note,
+            "representative_verified_at": row.representative_verified_at,
+            "representative_rejection_reason_code": (
+                row.representative_rejection_reason_code
+            ),
             "submitted_at": row.submitted_at,
             "acknowledged_at": row.acknowledged_at,
             "reviewed_at": row.reviewed_at,
@@ -485,50 +489,100 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
             "idempotency_key_expires_at",
             "execution_failure_detail",
         ]
-        if row.reviewer_user_id == context.subject_user_id:
-            payload["reviewer_user_id"] = row.reviewer_user_id
-        elif row.reviewer_user_id is not None:
-            payload["has_reviewer"] = True
-            redacted_fields.append("reviewer_user_id")
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="requester_user_id",
+            actor_user_id=row.requester_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_requester",
+        )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="subject_user_id",
+            actor_user_id=row.subject_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_subject",
+        )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="reviewer_user_id",
+            actor_user_id=row.reviewer_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_reviewer",
+        )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="representative_verified_by_user_id",
+            actor_user_id=row.representative_verified_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_representative_verifier",
+        )
 
         return self._record(payload, redacted_fields=tuple(redacted_fields))
 
-    def _reviewer_reference_record(
-        self, row: DataSubjectRequest
+    def _reference_record(
+        self, row: DataSubjectRequest, context: PrivacyProviderContext
     ) -> PrivacyExportRecord:
+        payload: dict[str, object] = {
+            "id": row.id,
+            "status": row.status,
+            "execution_status": row.execution_status,
+            "reviewed_at": row.reviewed_at,
+            "decided_at": row.decided_at,
+            "fulfilled_at": row.fulfilled_at,
+            "cancelled_at": row.cancelled_at,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        redacted_fields = [
+            "request_type",
+            "requester_user_id",
+            "subject_user_id",
+            "submitted_at",
+            "acknowledged_at",
+            "due_at",
+            "extended_until",
+            "decision_reason_code",
+            "rejection_reason_code",
+            "extension_reason_code",
+            "requester_note",
+            "requester_role",
+            "representative_status",
+            "representative_relationship",
+            "representative_authority_note",
+            "representative_verified_at",
+            "representative_rejection_reason_code",
+            "internal_note",
+            "idempotency_key_hash",
+            "idempotency_fingerprint",
+            "idempotency_key_expires_at",
+            "execution_failure_detail",
+            "execution_failure_reason_code",
+        ]
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="reviewer_user_id",
+            actor_user_id=row.reviewer_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_reviewer",
+        )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="representative_verified_by_user_id",
+            actor_user_id=row.representative_verified_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_representative_verifier",
+        )
         return self._record(
-            {
-                "id": row.id,
-                "reviewer_user_id": row.reviewer_user_id,
-                "status": row.status,
-                "execution_status": row.execution_status,
-                "reviewed_at": row.reviewed_at,
-                "decided_at": row.decided_at,
-                "fulfilled_at": row.fulfilled_at,
-                "cancelled_at": row.cancelled_at,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            },
+            payload,
             record_kind=PrivacyExportRecordKind.REFERENCE,
-            redacted_fields=(
-                "request_type",
-                "requester_user_id",
-                "subject_user_id",
-                "submitted_at",
-                "acknowledged_at",
-                "due_at",
-                "extended_until",
-                "decision_reason_code",
-                "rejection_reason_code",
-                "extension_reason_code",
-                "requester_note",
-                "internal_note",
-                "idempotency_key_hash",
-                "idempotency_fingerprint",
-                "idempotency_key_expires_at",
-                "execution_failure_detail",
-                "execution_failure_reason_code",
-            ),
+            redacted_fields=tuple(redacted_fields),
         )
 
 
@@ -907,12 +961,26 @@ async def _get_subject_dsr_ids(
     session: AsyncSession, subject_user_id: UUID
 ) -> tuple[UUID, ...]:
     stmt = select(DataSubjectRequest.id).where(
-        or_(
-            DataSubjectRequest.subject_user_id == subject_user_id,
-            DataSubjectRequest.requester_user_id == subject_user_id,
-        )
+        or_(*_subject_audit_target_dsr_conditions(subject_user_id))
     )
     return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _subject_workflow_dsr_conditions(subject_user_id: UUID) -> tuple[object, ...]:
+    return (
+        DataSubjectRequest.subject_user_id == subject_user_id,
+        DataSubjectRequest.requester_user_id == subject_user_id,
+        DataSubjectRequest.reviewer_user_id == subject_user_id,
+        DataSubjectRequest.representative_verified_by_user_id == subject_user_id,
+    )
+
+
+def _subject_audit_target_dsr_conditions(subject_user_id: UUID) -> tuple[object, ...]:
+    return (
+        DataSubjectRequest.subject_user_id == subject_user_id,
+        DataSubjectRequest.requester_user_id == subject_user_id,
+        DataSubjectRequest.representative_verified_by_user_id == subject_user_id,
+    )
 
 
 async def _get_subject_export_artifact_ids(

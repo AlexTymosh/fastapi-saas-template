@@ -41,10 +41,28 @@ class DataSubjectRequestExecutionStatus(StrEnum):
     DELIVERED = "delivered"
 
 
+class DataSubjectRequestRequesterRole(StrEnum):
+    SELF = "self"
+    AUTHORISED_REPRESENTATIVE = "authorised_representative"
+
+
+class DataSubjectRequestRepresentativeStatus(StrEnum):
+    NOT_REQUIRED = "not_required"
+    PENDING_VERIFICATION = "pending_verification"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+
+
 _REQUEST_TYPE_VALUES = ", ".join(repr(item.value) for item in DataSubjectRequestType)
 _STATUS_VALUES = ", ".join(repr(item.value) for item in DataSubjectRequestStatus)
 _EXECUTION_STATUS_VALUES = ", ".join(
     repr(item.value) for item in DataSubjectRequestExecutionStatus
+)
+_REQUESTER_ROLE_VALUES = ", ".join(
+    repr(item.value) for item in DataSubjectRequestRequesterRole
+)
+_REPRESENTATIVE_STATUS_VALUES = ", ".join(
+    repr(item.value) for item in DataSubjectRequestRepresentativeStatus
 )
 
 
@@ -62,6 +80,14 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
         CheckConstraint(
             f"execution_status IN ({_EXECUTION_STATUS_VALUES})",
             name="data_subject_requests_execution_status_valid",
+        ),
+        CheckConstraint(
+            f"requester_role IN ({_REQUESTER_ROLE_VALUES})",
+            name="data_subject_requests_requester_role_valid",
+        ),
+        CheckConstraint(
+            f"representative_status IN ({_REPRESENTATIVE_STATUS_VALUES})",
+            name="data_subject_requests_representative_status_valid",
         ),
         Index(
             "ix_data_subject_requests_subject_status_created",
@@ -81,6 +107,15 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
             "due_at",
         ),
         Index("ix_data_subject_requests_type_status", "request_type", "status"),
+        Index(
+            "ix_data_subject_requests_requester_role_status",
+            "requester_role",
+            "status",
+        ),
+        Index(
+            "ix_data_subject_requests_representative_status",
+            "representative_status",
+        ),
         Index(
             "ix_data_subject_requests_idempotency_key_hash",
             "idempotency_key_hash",
@@ -103,6 +138,35 @@ class DataSubjectRequest(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         default=DataSubjectRequestExecutionStatus.NOT_STARTED.value,
         server_default=sa.text("'not_started'"),
+    )
+
+    requester_role: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=DataSubjectRequestRequesterRole.SELF.value,
+        server_default=sa.text("'self'"),
+    )
+    representative_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=DataSubjectRequestRepresentativeStatus.NOT_REQUIRED.value,
+        server_default=sa.text("'not_required'"),
+    )
+    representative_relationship: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    representative_authority_note: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    representative_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    representative_verified_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    representative_rejection_reason_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
 
     requester_user_id: Mapped[UUID | None] = mapped_column(

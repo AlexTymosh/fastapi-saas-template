@@ -22,6 +22,8 @@ from app.privacy.erasures.audit import (
 )
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
+    DataSubjectRequestRepresentativeStatus,
+    DataSubjectRequestRequesterRole,
     DataSubjectRequestStatus,
 )
 from app.privacy.models.export_artifact import (
@@ -296,6 +298,77 @@ def test_audit_erasure_minimises_linked_subject_targets(
             assert unrelated.target_id is not None
             assert unrelated.reason == "linked target contains subject context"
             assert unrelated.metadata_json == {"note": "linked subject metadata"}
+
+    run_async(_run())
+
+
+def test_audit_erasure_minimises_verifier_only_dsr_audit_targets(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            verifier = await _create_user(session)
+            requester = await _create_user(session)
+            represented_subject = await _create_user(session)
+            dsr = _dsr_for_user(verifier)
+            now = datetime.now(UTC)
+            verifier_only_dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.SUBMITTED.value,
+                requester_user_id=requester.id,
+                subject_user_id=represented_subject.id,
+                requester_role=(
+                    DataSubjectRequestRequesterRole.AUTHORISED_REPRESENTATIVE.value
+                ),
+                representative_status=(
+                    DataSubjectRequestRepresentativeStatus.VERIFIED.value
+                ),
+                representative_relationship="parent",
+                representative_authority_note="Authority evidence checked offline.",
+                representative_verified_at=now,
+                representative_verified_by_user_id=verifier.id,
+                submitted_at=now,
+                due_at=now + timedelta(days=30),
+            )
+            unrelated_dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.SUBMITTED.value,
+                requester_user_id=requester.id,
+                subject_user_id=represented_subject.id,
+                submitted_at=now,
+                due_at=now + timedelta(days=30),
+            )
+            session.add_all([dsr, verifier_only_dsr, unrelated_dsr])
+            await session.flush()
+
+            verifier_target_event = _target_event(
+                target_type=AuditTargetType.DATA_SUBJECT_REQUEST.value,
+                target_id=verifier_only_dsr.id,
+            )
+            unrelated_event = _target_event(
+                target_type=AuditTargetType.DATA_SUBJECT_REQUEST.value,
+                target_id=unrelated_dsr.id,
+            )
+            session.add_all([verifier_target_event, unrelated_event])
+            await session.flush()
+
+            result = await minimise_audit_events_for_approved_erase_request(
+                session,
+                dsr,
+            )
+            await session.refresh(verifier_target_event)
+            await session.refresh(unrelated_event)
+
+            assert result.status is AuditErasureStatus.MINIMISED
+            assert result.affected_rows == 1
+            assert verifier_target_event.target_id is None
+            assert verifier_target_event.reason is None
+            assert verifier_target_event.metadata_json is None
+            assert verifier_target_event.ip_address is None
+            assert verifier_target_event.user_agent is None
+            assert unrelated_event.target_id == unrelated_dsr.id
+            assert unrelated_event.reason == "linked target contains subject context"
+            assert unrelated_event.metadata_json == {"note": "linked subject metadata"}
 
     run_async(_run())
 

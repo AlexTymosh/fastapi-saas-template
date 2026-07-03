@@ -8,8 +8,19 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.privacy.models.data_subject_request import DataSubjectRequest
+from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
+    DataSubjectRequestRepresentativeStatus,
+    DataSubjectRequestStatus,
+)
 from app.users.models.user import User
+
+_APPROVAL_REPRESENTATIVE_STATUSES = frozenset(
+    {
+        DataSubjectRequestRepresentativeStatus.NOT_REQUIRED.value,
+        DataSubjectRequestRepresentativeStatus.VERIFIED.value,
+    }
+)
 
 
 class DataSubjectRequestRepository:
@@ -103,12 +114,44 @@ class DataSubjectRequestRepository:
         expected_status: str,
         values: Mapping[str, Any],
     ) -> DataSubjectRequest | None:
-        """Atomically update one DSR only if its status has not changed."""
+        """Atomically update one DSR only if its decision state is unchanged."""
+        conditions = [
+            DataSubjectRequest.id == request_id,
+            DataSubjectRequest.status == expected_status,
+        ]
+        if values.get("status") == DataSubjectRequestStatus.APPROVED.value:
+            conditions.append(
+                DataSubjectRequest.representative_status.in_(
+                    _APPROVAL_REPRESENTATIVE_STATUSES
+                )
+            )
+
+        stmt = (
+            update(DataSubjectRequest)
+            .where(*conditions)
+            .values(**values)
+            .returning(DataSubjectRequest)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def update_representative_authority_if_current(
+        self,
+        *,
+        request_id: UUID,
+        expected_status: str,
+        expected_representative_status: str,
+        values: Mapping[str, Any],
+    ) -> DataSubjectRequest | None:
+        """Atomically update representative review fields if state is unchanged."""
         stmt = (
             update(DataSubjectRequest)
             .where(
                 DataSubjectRequest.id == request_id,
                 DataSubjectRequest.status == expected_status,
+                DataSubjectRequest.representative_status
+                == expected_representative_status,
             )
             .values(**values)
             .returning(DataSubjectRequest)
@@ -175,6 +218,7 @@ class DataSubjectRequestRepository:
         requester_user_id: UUID | None = None,
         due_before: datetime | None = None,
         due_after: datetime | None = None,
+        representative_status: str | None = None,
     ) -> list[DataSubjectRequest]:
         stmt = select(DataSubjectRequest)
         if status is not None:
@@ -185,6 +229,10 @@ class DataSubjectRequestRepository:
             stmt = stmt.where(DataSubjectRequest.subject_user_id == subject_user_id)
         if requester_user_id is not None:
             stmt = stmt.where(DataSubjectRequest.requester_user_id == requester_user_id)
+        if representative_status is not None:
+            stmt = stmt.where(
+                DataSubjectRequest.representative_status == representative_status
+            )
         if due_before is not None:
             stmt = stmt.where(DataSubjectRequest.due_at <= due_before)
         if due_after is not None:
@@ -205,6 +253,7 @@ class DataSubjectRequestRepository:
         requester_user_id: UUID | None = None,
         due_before: datetime | None = None,
         due_after: datetime | None = None,
+        representative_status: str | None = None,
     ) -> int:
         stmt = select(func.count()).select_from(DataSubjectRequest)
         if status is not None:
@@ -215,6 +264,10 @@ class DataSubjectRequestRepository:
             stmt = stmt.where(DataSubjectRequest.subject_user_id == subject_user_id)
         if requester_user_id is not None:
             stmt = stmt.where(DataSubjectRequest.requester_user_id == requester_user_id)
+        if representative_status is not None:
+            stmt = stmt.where(
+                DataSubjectRequest.representative_status == representative_status
+            )
         if due_before is not None:
             stmt = stmt.where(DataSubjectRequest.due_at <= due_before)
         if due_after is not None:
