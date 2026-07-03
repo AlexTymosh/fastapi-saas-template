@@ -308,14 +308,17 @@ async def _subject_dsr_ids(
     session: AsyncSession,
     subject: User,
 ) -> tuple[UUID, ...]:
-    stmt = select(DataSubjectRequest.id).where(
-        or_(
-            DataSubjectRequest.subject_user_id == subject.id,
-            DataSubjectRequest.requester_user_id == subject.id,
-            DataSubjectRequest.reviewer_user_id == subject.id,
-        )
-    )
+    stmt = select(DataSubjectRequest.id).where(or_(*_subject_dsr_conditions(subject)))
     return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _subject_dsr_conditions(subject: User) -> tuple[object, ...]:
+    return (
+        DataSubjectRequest.subject_user_id == subject.id,
+        DataSubjectRequest.requester_user_id == subject.id,
+        DataSubjectRequest.reviewer_user_id == subject.id,
+        DataSubjectRequest.representative_verified_by_user_id == subject.id,
+    )
 
 
 async def _subject_export_artifact_ids(
@@ -383,13 +386,7 @@ async def _count_subject_dsr_records(session: AsyncSession, subject: User) -> in
     stmt = (
         select(func.count())
         .select_from(DataSubjectRequest)
-        .where(
-            or_(
-                DataSubjectRequest.subject_user_id == subject.id,
-                DataSubjectRequest.requester_user_id == subject.id,
-                DataSubjectRequest.reviewer_user_id == subject.id,
-            )
-        )
+        .where(or_(*_subject_dsr_conditions(subject)))
     )
     return int(await session.scalar(stmt) or 0)
 

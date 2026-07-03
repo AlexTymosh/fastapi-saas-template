@@ -232,6 +232,44 @@ def test_erasure_impact_preview_handles_subject_without_email(
     run_async(_run())
 
 
+def test_erasure_impact_preview_counts_verifier_only_dsr_rows(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            verifier = await _create_user(
+                session, email=f"verifier-{uuid4()}@example.com"
+            )
+            requester = await _create_user(
+                session, email=f"requester-{uuid4()}@example.com"
+            )
+            represented_subject = await _create_user(
+                session, email=f"represented-{uuid4()}@example.com"
+            )
+            now = datetime.now(UTC)
+            verifier_erase_request = _approved_erase_request(verifier)
+            verifier_only_dsr = DataSubjectRequest(
+                request_type="export",
+                status=DataSubjectRequestStatus.SUBMITTED.value,
+                requester_user_id=requester.id,
+                subject_user_id=represented_subject.id,
+                representative_verified_by_user_id=verifier.id,
+                submitted_at=now,
+                due_at=now + timedelta(days=30),
+            )
+            session.add_all([verifier_erase_request, verifier_only_dsr])
+            await session.flush()
+
+            preview = await build_erasure_impact_preview(
+                session, verifier_erase_request
+            )
+            by_provider = _impact_by_provider(preview)
+
+            assert by_provider["dsr.minimise_workflow_identifiers"].estimated_rows == 2
+
+    run_async(_run())
+
+
 @pytest.mark.parametrize(
     ("request_type", "status", "expected_reason"),
     [

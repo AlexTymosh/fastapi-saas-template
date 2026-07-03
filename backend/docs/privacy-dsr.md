@@ -11,8 +11,8 @@ Implemented areas:
 
 - DSR persistence model, repository and service lifecycle.
 - User-facing DSR submission, listing, read and cancellation API.
-- Authorised representative DSR intake metadata, with approval blocked until
-  platform verification is implemented and completed.
+- Authorised representative DSR intake and verification metadata, with approval
+  blocked unless platform review verifies authority.
 - Platform-facing DSR review, approval, rejection, cancellation and fulfilment
   API.
 - Separate administrative lifecycle status and operational execution status.
@@ -86,7 +86,7 @@ Submission payload:
 - `requester_role=authorised_representative` requires `subject_user_id`,
   `representative_relationship` and `representative_authority_note`. These
   requests are stored with `representative_status=pending_verification` and
-  cannot be approved until platform verification is added and completed.
+  cannot be approved until platform verification marks authority as `verified`.
 
 Export artifact endpoints:
 
@@ -132,6 +132,13 @@ as `verified` or `rejected`. Approval remains blocked while authority is
 `pending_verification` or `rejected`. The verification endpoints store only
 structured status/reason metadata and rely on audit events for the reviewing
 actor, rather than storing copies of evidence documents.
+
+Verifier-only links are treated as first-class workflow references. Subject data
+exports include DSR rows where the exporting subject is only
+`representative_verified_by_user_id` as reference records, while requester,
+subject and unrelated reviewer identifiers stay minimised. Erasure impact
+previews use the same verifier predicate as the DSR workflow erasure provider so
+platform reviewers see the same row count that execution will minimise.
 
 ## Request-type execution policy
 

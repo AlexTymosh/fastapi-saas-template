@@ -59,6 +59,14 @@ PLATFORM_PATHS = {
     "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject": {
         "post": "platform-privacy"
     },
+    (
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}"
+        "/representative/verify"
+    ): {"post": "platform-privacy"},
+    (
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}"
+        "/representative/reject"
+    ): {"post": "platform-privacy"},
     "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel": {
         "post": "platform-privacy"
     },
@@ -144,6 +152,14 @@ EXPECTED_PLATFORM_OPERATION_IDS = {
     ): "reject_platform_data_subject_request",
     (
         "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/representative/verify",
+    ): "verify_platform_dsr_representative_authority",
+    (
+        "post",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/representative/reject",
+    ): "reject_platform_dsr_representative_authority",
+    (
+        "post",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel",
     ): "cancel_platform_data_subject_request",
     (
@@ -222,6 +238,14 @@ WRITE_POLICIES = {
     (
         "POST",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject",
+    ): "platform_write",
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/representative/verify",
+    ): "platform_write",
+    (
+        "POST",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/representative/reject",
     ): "platform_write",
     (
         "POST",
@@ -647,6 +671,8 @@ def test_platform_dsr_mutation_routes_use_function_scoped_write_context(
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/review",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/approve",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/reject",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/representative/verify",
+        "/api/v1/platform/privacy/data-subject-requests/{request_id}/representative/reject",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/cancel",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/execute-erasure",
         "/api/v1/platform/privacy/data-subject-requests/{request_id}/fulfil",

@@ -535,59 +535,62 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
     def _reference_record(
         self, row: DataSubjectRequest, context: PrivacyProviderContext
     ) -> PrivacyExportRecord:
-        reviewer_user_id = (
-            row.reviewer_user_id
-            if row.reviewer_user_id == context.subject_user_id
-            else None
+        payload: dict[str, object] = {
+            "id": row.id,
+            "status": row.status,
+            "execution_status": row.execution_status,
+            "reviewed_at": row.reviewed_at,
+            "decided_at": row.decided_at,
+            "fulfilled_at": row.fulfilled_at,
+            "cancelled_at": row.cancelled_at,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        redacted_fields = [
+            "request_type",
+            "requester_user_id",
+            "subject_user_id",
+            "submitted_at",
+            "acknowledged_at",
+            "due_at",
+            "extended_until",
+            "decision_reason_code",
+            "rejection_reason_code",
+            "extension_reason_code",
+            "requester_note",
+            "requester_role",
+            "representative_status",
+            "representative_relationship",
+            "representative_authority_note",
+            "representative_verified_at",
+            "representative_rejection_reason_code",
+            "internal_note",
+            "idempotency_key_hash",
+            "idempotency_fingerprint",
+            "idempotency_key_expires_at",
+            "execution_failure_detail",
+            "execution_failure_reason_code",
+        ]
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="reviewer_user_id",
+            actor_user_id=row.reviewer_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_reviewer",
         )
-        representative_verified_by_user_id = (
-            row.representative_verified_by_user_id
-            if row.representative_verified_by_user_id == context.subject_user_id
-            else None
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="representative_verified_by_user_id",
+            actor_user_id=row.representative_verified_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_representative_verifier",
         )
         return self._record(
-            {
-                "id": row.id,
-                "reviewer_user_id": reviewer_user_id,
-                "representative_verified_by_user_id": (
-                    representative_verified_by_user_id
-                ),
-                "status": row.status,
-                "execution_status": row.execution_status,
-                "reviewed_at": row.reviewed_at,
-                "decided_at": row.decided_at,
-                "fulfilled_at": row.fulfilled_at,
-                "cancelled_at": row.cancelled_at,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            },
+            payload,
             record_kind=PrivacyExportRecordKind.REFERENCE,
-            redacted_fields=(
-                "request_type",
-                "requester_user_id",
-                "subject_user_id",
-                "submitted_at",
-                "acknowledged_at",
-                "due_at",
-                "extended_until",
-                "decision_reason_code",
-                "rejection_reason_code",
-                "extension_reason_code",
-                "requester_note",
-                "requester_role",
-                "representative_status",
-                "representative_relationship",
-                "representative_authority_note",
-                "representative_verified_at",
-                "representative_verified_by_user_id",
-                "representative_rejection_reason_code",
-                "internal_note",
-                "idempotency_key_hash",
-                "idempotency_fingerprint",
-                "idempotency_key_expires_at",
-                "execution_failure_detail",
-                "execution_failure_reason_code",
-            ),
+            redacted_fields=tuple(redacted_fields),
         )
 
 

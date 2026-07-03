@@ -213,11 +213,18 @@ def test_verifier_only_dsr_rows_are_exported_as_references(
         async with migrated_session_factory() as session:
             service, _, _, request = await _create_representative_request(session)
             verifier = await _create_user(session, email="verifier-export@example.com")
+            approver = await _create_user(session, email="approver-export@example.com")
             await service.verify_representative_authority(
                 request_id=request.id,
                 reviewer_user_id=verifier.id,
                 reason_code="compliance_review",
                 audit_context=AuditContext(actor_user_id=verifier.id),
+            )
+            await service.approve_request(
+                request_id=request.id,
+                reviewer_user_id=approver.id,
+                reason_code="compliance_review",
+                audit_context=AuditContext(actor_user_id=approver.id),
             )
 
             payload = await CrossTableSubjectDataExporter(session).export_subject_data(
@@ -240,11 +247,18 @@ def test_verifier_only_dsr_rows_are_exported_as_references(
             ]
 
             assert len(matching) == 1
-            assert matching[0]["record_kind"] == "reference"
-            assert matching[0]["payload"]["representative_verified_by_user_id"] == (
-                str(verifier.id)
+            record = matching[0]
+            record_payload = record["payload"]
+            redacted_fields = set(record["redacted_fields"])
+
+            assert record["record_kind"] == "reference"
+            assert record_payload["representative_verified_by_user_id"] == str(
+                verifier.id
             )
-            assert "subject_user_id" in matching[0]["redacted_fields"]
-            assert "requester_user_id" in matching[0]["redacted_fields"]
+            assert record_payload["has_reviewer"] is True
+            assert "subject_user_id" in redacted_fields
+            assert "requester_user_id" in redacted_fields
+            assert "reviewer_user_id" in redacted_fields
+            assert "representative_verified_by_user_id" not in redacted_fields
 
     run_async(_run())
