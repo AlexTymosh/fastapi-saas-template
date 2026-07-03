@@ -209,13 +209,18 @@ async def _subject_dsr_ids(
     subject_user_id: UUID,
 ) -> tuple[UUID, ...]:
     stmt = select(DataSubjectRequest.id).where(
-        or_(
-            DataSubjectRequest.subject_user_id == subject_user_id,
-            DataSubjectRequest.requester_user_id == subject_user_id,
-            DataSubjectRequest.reviewer_user_id == subject_user_id,
-        )
+        or_(*_subject_dsr_conditions(subject_user_id))
     )
     return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _subject_dsr_conditions(subject_user_id: UUID) -> tuple[object, ...]:
+    return (
+        DataSubjectRequest.subject_user_id == subject_user_id,
+        DataSubjectRequest.requester_user_id == subject_user_id,
+        DataSubjectRequest.reviewer_user_id == subject_user_id,
+        DataSubjectRequest.representative_verified_by_user_id == subject_user_id,
+    )
 
 
 async def _subject_export_artifact_ids(

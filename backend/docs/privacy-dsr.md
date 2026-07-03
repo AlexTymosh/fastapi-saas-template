@@ -139,8 +139,8 @@ Verifier-only links are treated as first-class workflow references. Subject data
 exports include DSR rows where the exporting subject is only
 `representative_verified_by_user_id` as reference records, while requester,
 subject and unrelated reviewer identifiers stay minimised. Erasure impact
-previews use the same verifier predicate as the DSR workflow erasure provider so
-platform reviewers see the same row count that execution will minimise.
+previews, DSR workflow erasure and audit erasure use the same verifier predicate
+so platform reviewers see the same row count that execution will minimise.
 
 Represented subject existence checks are routed through `UserRepository` before
 DSR insert, so the service layer does not own SQL for the users aggregate.
