@@ -42,6 +42,8 @@ should still be verified against code before extension:
   - execution state separated from administrative review status;
   - self-service submission for all modelled request types;
   - optional requester details captured for platform DSR review;
+  - authorised representative DSR intake metadata with approval blocked until
+    authority verification is implemented and completed;
   - approval restricted to request types with concrete execution policies;
   - cross-table subject export providers;
   - PostgreSQL provider integration coverage for outbox JSON predicates used by
@@ -99,7 +101,8 @@ should still be verified against code before extension:
   - explicit delivery evidence semantics; done for URL issuance vs user or
     platform delivery confirmation, but future storage-native evidence can
     still extend it;
-  - authorised representative workflows;
+  - representative verification endpoints, evidence review and execution
+    semantics beyond the current intake guardrails;
   - frontend/UI;
   - concrete execution pipelines for access, rectify, restrict, object and
     portability request types. These review-only types are blocked from approval

@@ -457,8 +457,14 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
             "request_type": row.request_type,
             "status": row.status,
             "execution_status": row.execution_status,
-            "requester_user_id": row.requester_user_id,
-            "subject_user_id": row.subject_user_id,
+            "requester_role": row.requester_role,
+            "representative_status": row.representative_status,
+            "representative_relationship": row.representative_relationship,
+            "representative_authority_note": row.representative_authority_note,
+            "representative_verified_at": row.representative_verified_at,
+            "representative_rejection_reason_code": (
+                row.representative_rejection_reason_code
+            ),
             "submitted_at": row.submitted_at,
             "acknowledged_at": row.acknowledged_at,
             "reviewed_at": row.reviewed_at,
@@ -485,11 +491,38 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
             "idempotency_key_expires_at",
             "execution_failure_detail",
         ]
-        if row.reviewer_user_id == context.subject_user_id:
-            payload["reviewer_user_id"] = row.reviewer_user_id
-        elif row.reviewer_user_id is not None:
-            payload["has_reviewer"] = True
-            redacted_fields.append("reviewer_user_id")
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="requester_user_id",
+            actor_user_id=row.requester_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_requester",
+        )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="subject_user_id",
+            actor_user_id=row.subject_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_subject",
+        )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="reviewer_user_id",
+            actor_user_id=row.reviewer_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_reviewer",
+        )
+        _include_or_minimise_actor_field(
+            payload,
+            redacted_fields,
+            field_name="representative_verified_by_user_id",
+            actor_user_id=row.representative_verified_by_user_id,
+            subject_user_id=context.subject_user_id,
+            presence_field="has_representative_verifier",
+        )
 
         return self._record(payload, redacted_fields=tuple(redacted_fields))
 
@@ -522,6 +555,13 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
                 "rejection_reason_code",
                 "extension_reason_code",
                 "requester_note",
+                "requester_role",
+                "representative_status",
+                "representative_relationship",
+                "representative_authority_note",
+                "representative_verified_at",
+                "representative_verified_by_user_id",
+                "representative_rejection_reason_code",
                 "internal_note",
                 "idempotency_key_hash",
                 "idempotency_fingerprint",

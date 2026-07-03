@@ -11,6 +11,8 @@ Implemented areas:
 
 - DSR persistence model, repository and service lifecycle.
 - User-facing DSR submission, listing, read and cancellation API.
+- Authorised representative DSR intake metadata, with approval blocked until
+  platform verification is implemented and completed.
 - Platform-facing DSR review, approval, rejection, cancellation and fulfilment
   API.
 - Separate administrative lifecycle status and operational execution status.
@@ -79,6 +81,12 @@ Submission payload:
 - `request_type` is required.
 - `requester_note` is optional, trimmed at the API boundary and limited to 2000
   characters. Blank notes are stored as `null`.
+- `requester_role` defaults to `self`. In this mode the subject is inferred
+  from the authenticated user and representative fields are rejected.
+- `requester_role=authorised_representative` requires `subject_user_id`,
+  `representative_relationship` and `representative_authority_note`. These
+  requests are stored with `representative_status=pending_verification` and
+  cannot be approved until platform verification is added and completed.
 
 Export artifact endpoints:
 
@@ -95,7 +103,12 @@ Endpoints:
 
 Current user API constraints:
 
-- Submission is self-service only: requester and subject are the same local user.
+- Submission defaults to self-service: requester and subject are the same
+  local user unless the requester explicitly declares an authorised
+  representative flow.
+- Representative submissions are intake-only in this PR slice. They are visible
+  to platform reviewers but blocked from approval while their authority remains
+  `pending_verification` or `rejected`.
 - Request types without an implemented execution policy may be submitted for
   platform review, but they cannot be approved until a concrete policy exists.
 - Requester notes are stored for platform review but are not returned in
@@ -106,6 +119,18 @@ Current user API constraints:
   DSR as delivered until delivery is explicitly confirmed.
 - Download URL generation and delivery confirmation are rate-limited at actor and
   authorised artifact scope.
+
+## Authorised representative intake
+
+This backend slice supports intake guardrails for DSRs submitted by an
+authorised representative. The requester can identify another local user as the
+subject only when `requester_role=authorised_representative` is declared and
+relationship plus authority details are provided.
+
+Representative requests remain blocked from approval until a later platform
+verification workflow records `representative_status=verified`. This avoids
+executing export or erase workflows before staff have checked the claimed
+authority.
 
 ## Request-type execution policy
 

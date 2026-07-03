@@ -24,6 +24,8 @@ from app.privacy.erasures.orchestrator import ErasureOrchestrationError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
+    DataSubjectRequestRepresentativeStatus,
+    DataSubjectRequestRequesterRole,
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
@@ -35,6 +37,12 @@ _FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset(
     {DataSubjectRequestType.EXPORT.value, DataSubjectRequestType.ERASE.value}
 )
 _APPROVABLE_REQUEST_TYPES = _FULFILMENT_PIPELINE_REQUEST_TYPES
+_REPRESENTATIVE_APPROVAL_STATUSES = frozenset(
+    {
+        DataSubjectRequestRepresentativeStatus.NOT_REQUIRED.value,
+        DataSubjectRequestRepresentativeStatus.VERIFIED.value,
+    }
+)
 _ERASURE_EXECUTION_NOT_FOUND_REASON_CODES = frozenset(
     {
         "erasure_execution_request_not_found",
@@ -58,6 +66,8 @@ class DataSubjectRequestService:
     MAX_DUE_DAYS = 90
     IDEMPOTENCY_KEY_TTL_HOURS = 24
     REQUESTER_NOTE_MAX_LENGTH = 2000
+    REPRESENTATIVE_RELATIONSHIP_MAX_LENGTH = 64
+    REPRESENTATIVE_AUTHORITY_NOTE_MAX_LENGTH = 2000
 
     _EMAIL_LIKE_PATTERN = re.compile(
         r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}",
@@ -103,6 +113,10 @@ class DataSubjectRequestService:
         requester_user_id: UUID,
         request_type: str,
         requester_note: str | None = None,
+        subject_user_id: UUID | None = None,
+        requester_role: str = DataSubjectRequestRequesterRole.SELF.value,
+        representative_relationship: str | None = None,
+        representative_authority_note: str | None = None,
         idempotency_key: str | None = None,
         now: datetime | None = None,
         audit_context: AuditContext,
@@ -110,6 +124,13 @@ class DataSubjectRequestService:
         reference_now = now or datetime.now(UTC)
         normalised_request_type = self._normalise_request_type(request_type)
         normalised_idempotency_key = self._normalise_idempotency_key(idempotency_key)
+        normalised_requester_role = self._normalise_requester_role(requester_role)
+        normalised_representative_relationship = self._normalise_optional_text(
+            representative_relationship
+        )
+        normalised_representative_authority_note = self._normalise_optional_text(
+            representative_authority_note
+        )
 
         if (
             requester_note is not None
@@ -125,6 +146,13 @@ class DataSubjectRequestService:
         self._validate_idempotency_key_safety(
             idempotency_key=normalised_idempotency_key
         )
+        representative_values = self._build_representative_intake_values(
+            requester_user_id=requester_user_id,
+            subject_user_id=subject_user_id,
+            requester_role=normalised_requester_role,
+            representative_relationship=normalised_representative_relationship,
+            representative_authority_note=normalised_representative_authority_note,
+        )
         idempotency_key_hash = (
             self._hash_idempotency_key(normalised_idempotency_key)
             if normalised_idempotency_key is not None
@@ -134,6 +162,14 @@ class DataSubjectRequestService:
             self._build_fingerprint(
                 request_type=normalised_request_type,
                 requester_note=requester_note,
+                subject_user_id=representative_values["subject_user_id"],
+                requester_role=representative_values["requester_role"],
+                representative_relationship=representative_values[
+                    "representative_relationship"
+                ],
+                representative_authority_note=representative_values[
+                    "representative_authority_note"
+                ],
             )
             if idempotency_key_hash is not None
             else None
@@ -161,7 +197,7 @@ class DataSubjectRequestService:
             request_type=normalised_request_type,
             status=DataSubjectRequestStatus.SUBMITTED.value,
             requester_user_id=requester_user_id,
-            subject_user_id=requester_user_id,
+            **representative_values,
             requester_note=requester_note,
             submitted_at=reference_now,
             due_at=reference_now + timedelta(days=self.DEFAULT_DUE_DAYS),
@@ -243,6 +279,7 @@ class DataSubjectRequestService:
 
         if target_status is DataSubjectRequestStatus.APPROVED:
             self._ensure_request_type_can_be_approved(request)
+            self._ensure_representative_authority_allows_approval(request)
 
         updated = await self.repository.transition_status_if_current(
             request_id=request_id,
@@ -479,6 +516,18 @@ class DataSubjectRequestService:
             )
         )
 
+    @staticmethod
+    def _ensure_representative_authority_allows_approval(
+        request: DataSubjectRequest,
+    ) -> None:
+        if request.representative_status in _REPRESENTATIVE_APPROVAL_STATUSES:
+            return
+        raise ConflictError(
+            detail=(
+                "Authorised representative authority must be verified before approval"
+            )
+        )
+
     async def _ensure_export_ready_for_fulfilment(
         self, request: DataSubjectRequest
     ) -> None:
@@ -592,9 +641,147 @@ class DataSubjectRequestService:
         return sha256(key.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _build_fingerprint(*, request_type: str, requester_note: str | None) -> str:
-        fingerprint_source = (
-            f"request_type={request_type}|requester_note={requester_note or ''}"
+    def _normalise_optional_text(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalised = value.strip()
+        return normalised or None
+
+    @staticmethod
+    def _normalise_requester_role(role: str) -> str:
+        try:
+            return DataSubjectRequestRequesterRole(role).value
+        except ValueError as exc:
+            raise BadRequestError(
+                detail=(
+                    "Invalid requester_role. Supported values: "
+                    "self, authorised_representative"
+                )
+            ) from exc
+
+    def _build_representative_intake_values(
+        self,
+        *,
+        requester_user_id: UUID,
+        subject_user_id: UUID | None,
+        requester_role: str,
+        representative_relationship: str | None,
+        representative_authority_note: str | None,
+    ) -> dict[str, object | None]:
+        if requester_role == DataSubjectRequestRequesterRole.SELF.value:
+            if subject_user_id is not None and subject_user_id != requester_user_id:
+                raise BadRequestError(
+                    detail=(
+                        "subject_user_id is only allowed for representative requests"
+                    )
+                )
+            if representative_relationship is not None:
+                raise BadRequestError(
+                    detail=(
+                        "representative_relationship is only allowed for "
+                        "representative requests"
+                    )
+                )
+            if representative_authority_note is not None:
+                raise BadRequestError(
+                    detail=(
+                        "representative_authority_note is only allowed for "
+                        "representative requests"
+                    )
+                )
+            return {
+                "subject_user_id": requester_user_id,
+                "requester_role": DataSubjectRequestRequesterRole.SELF.value,
+                "representative_status": (
+                    DataSubjectRequestRepresentativeStatus.NOT_REQUIRED.value
+                ),
+                "representative_relationship": None,
+                "representative_authority_note": None,
+                "representative_verified_at": None,
+                "representative_verified_by_user_id": None,
+                "representative_rejection_reason_code": None,
+            }
+
+        if subject_user_id is None:
+            raise BadRequestError(
+                detail="subject_user_id is required for representative requests"
+            )
+        if subject_user_id == requester_user_id:
+            raise BadRequestError(
+                detail=("Representative requests must target a different subject user")
+            )
+        if representative_relationship is None:
+            raise BadRequestError(
+                detail=(
+                    "representative_relationship is required for "
+                    "representative requests"
+                )
+            )
+        if representative_authority_note is None:
+            raise BadRequestError(
+                detail=(
+                    "representative_authority_note is required for "
+                    "representative requests"
+                )
+            )
+        if (
+            len(representative_relationship)
+            > self.REPRESENTATIVE_RELATIONSHIP_MAX_LENGTH
+        ):
+            raise BadRequestError(
+                detail=(
+                    "Representative relationship exceeds maximum length of "
+                    f"{self.REPRESENTATIVE_RELATIONSHIP_MAX_LENGTH} characters"
+                )
+            )
+        if (
+            len(representative_authority_note)
+            > self.REPRESENTATIVE_AUTHORITY_NOTE_MAX_LENGTH
+        ):
+            raise BadRequestError(
+                detail=(
+                    "Representative authority note exceeds maximum length of "
+                    f"{self.REPRESENTATIVE_AUTHORITY_NOTE_MAX_LENGTH} characters"
+                )
+            )
+
+        return {
+            "subject_user_id": subject_user_id,
+            "requester_role": (
+                DataSubjectRequestRequesterRole.AUTHORISED_REPRESENTATIVE.value
+            ),
+            "representative_status": (
+                DataSubjectRequestRepresentativeStatus.PENDING_VERIFICATION.value
+            ),
+            "representative_relationship": representative_relationship,
+            "representative_authority_note": representative_authority_note,
+            "representative_verified_at": None,
+            "representative_verified_by_user_id": None,
+            "representative_rejection_reason_code": None,
+        }
+
+    @staticmethod
+    def _build_fingerprint(
+        *,
+        request_type: str,
+        requester_note: str | None,
+        subject_user_id: object,
+        requester_role: object,
+        representative_relationship: object,
+        representative_authority_note: object,
+    ) -> str:
+        fingerprint_source = "|".join(
+            (
+                f"request_type={request_type}",
+                f"requester_note={requester_note or ''}",
+                f"subject_user_id={subject_user_id}",
+                f"requester_role={requester_role}",
+                (f"representative_relationship={representative_relationship or ''}"),
+                (
+                    "representative_authority_note="
+                    f"{representative_authority_note or ''}"
+                ),
+            )
         )
         return sha256(fingerprint_source.encode("utf-8")).hexdigest()
 

@@ -61,6 +61,10 @@ async def submit_data_subject_request(
             requester_user_id=user.id,
             request_type=payload.request_type.value,
             requester_note=payload.requester_note,
+            subject_user_id=payload.subject_user_id,
+            requester_role=payload.requester_role.value,
+            representative_relationship=payload.representative_relationship,
+            representative_authority_note=payload.representative_authority_note,
             idempotency_key=idempotency_key,
             audit_context=build_audit_context_from_request(
                 actor_user_id=user.id, request=request
