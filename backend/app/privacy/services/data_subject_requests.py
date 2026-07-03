@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import AuditContext
@@ -33,7 +32,7 @@ from app.privacy.models.data_subject_request import (
 from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
-from app.users.models.user import User
+from app.users.repositories.users import UserRepository
 
 _FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset(
     {DataSubjectRequestType.EXPORT.value, DataSubjectRequestType.ERASE.value}
@@ -114,6 +113,7 @@ class DataSubjectRequestService:
         self.repository = DataSubjectRequestRepository(session)
         self.audit_events = AuditEventService(session)
         self.export_artifacts = ExportArtifactRepository(session)
+        self.users = UserRepository(session)
 
     async def submit_request(
         self,
@@ -187,6 +187,19 @@ class DataSubjectRequestService:
             else None
         )
 
+        legacy_self_service_fingerprint = None
+        if (
+            idempotency_key_hash is not None
+            and representative_values["requester_role"]
+            == DataSubjectRequestRequesterRole.SELF.value
+        ):
+            legacy_self_service_fingerprint = (
+                self._build_pre_representative_fingerprint(
+                    request_type=normalised_request_type,
+                    requester_note=requester_note,
+                )
+            )
+
         if idempotency_key_hash is not None:
             await self.repository.lock_requester_for_idempotency(
                 requester_user_id=requester_user_id,
@@ -197,7 +210,11 @@ class DataSubjectRequestService:
                 now=reference_now,
             )
             if existing is not None:
-                if existing.idempotency_fingerprint == idempotency_fingerprint:
+                if self._idempotency_fingerprint_matches(
+                    existing=existing,
+                    current_fingerprint=idempotency_fingerprint,
+                    legacy_self_service_fingerprint=legacy_self_service_fingerprint,
+                ):
                     return existing
                 raise ConflictError(
                     detail=(
@@ -480,14 +497,17 @@ class DataSubjectRequestService:
         reference_now = now or datetime.now(UTC)
         request = await self.get_platform_request(request_id=request_id)
         self._ensure_representative_authority_reviewable(request)
+        verified_status = DataSubjectRequestRepresentativeStatus.VERIFIED.value
 
-        request.representative_status = (
-            DataSubjectRequestRepresentativeStatus.VERIFIED.value
+        updated = await self._update_representative_authority_if_current(
+            request=request,
+            values={
+                "representative_status": verified_status,
+                "representative_verified_at": reference_now,
+                "representative_verified_by_user_id": reviewer_user_id,
+                "representative_rejection_reason_code": None,
+            },
         )
-        request.representative_verified_at = reference_now
-        request.representative_verified_by_user_id = reviewer_user_id
-        request.representative_rejection_reason_code = None
-        updated = await self.repository.save(request)
         await self._record_representative_authority_event(
             request=updated,
             action=AuditAction.DATA_SUBJECT_REQUEST_REPRESENTATIVE_VERIFIED,
@@ -507,14 +527,17 @@ class DataSubjectRequestService:
         del reviewer_user_id
         request = await self.get_platform_request(request_id=request_id)
         self._ensure_representative_authority_reviewable(request)
+        rejected_status = DataSubjectRequestRepresentativeStatus.REJECTED.value
 
-        request.representative_status = (
-            DataSubjectRequestRepresentativeStatus.REJECTED.value
+        updated = await self._update_representative_authority_if_current(
+            request=request,
+            values={
+                "representative_status": rejected_status,
+                "representative_verified_at": None,
+                "representative_verified_by_user_id": None,
+                "representative_rejection_reason_code": reason_code,
+            },
         )
-        request.representative_verified_at = None
-        request.representative_verified_by_user_id = None
-        request.representative_rejection_reason_code = reason_code
-        updated = await self.repository.save(request)
         await self._record_representative_authority_event(
             request=updated,
             action=AuditAction.DATA_SUBJECT_REQUEST_REPRESENTATIVE_REJECTED,
@@ -842,9 +865,7 @@ class DataSubjectRequestService:
             raise BadRequestError(
                 detail="subject_user_id is required for representative requests"
             )
-        stmt = select(User.id).where(User.id == subject_user_id)
-        existing_subject_id = (await self.session.execute(stmt)).scalar_one_or_none()
-        if existing_subject_id is None:
+        if not await self.users.exists_by_id(subject_user_id):
             raise BadRequestError(detail="Representative subject user was not found")
 
     @staticmethod
@@ -867,6 +888,43 @@ class DataSubjectRequestService:
                     "request has been decided, fulfilled or cancelled"
                 )
             )
+
+    async def _update_representative_authority_if_current(
+        self,
+        *,
+        request: DataSubjectRequest,
+        values: dict[str, object],
+    ) -> DataSubjectRequest:
+        updated = await self.repository.update_representative_authority_if_current(
+            request_id=request.id,
+            expected_status=request.status,
+            expected_representative_status=request.representative_status,
+            values=values,
+        )
+        if updated is not None:
+            return updated
+
+        latest = await self.repository.get_by_id(
+            request.id,
+            populate_existing=True,
+        )
+        if latest is None:
+            raise NotFoundError(detail="Data subject request not found")
+        if latest.status != request.status:
+            raise ConflictError(
+                detail=(
+                    "Data subject request status changed during representative "
+                    "authority review; current status is "
+                    f"'{latest.status}'"
+                )
+            )
+        raise ConflictError(
+            detail=(
+                "Representative authority status changed during review; current "
+                "representative status is "
+                f"'{latest.representative_status}'"
+            )
+        )
 
     async def _record_representative_authority_event(
         self,
@@ -914,6 +972,44 @@ class DataSubjectRequestService:
             )
         )
         return sha256(fingerprint_source.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _build_pre_representative_fingerprint(
+        *,
+        request_type: str,
+        requester_note: str | None,
+    ) -> str:
+        fingerprint_source = (
+            f"request_type={request_type}|requester_note={requester_note or ''}"
+        )
+        return sha256(fingerprint_source.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _idempotency_fingerprint_matches(
+        cls,
+        *,
+        existing: DataSubjectRequest,
+        current_fingerprint: str | None,
+        legacy_self_service_fingerprint: str | None,
+    ) -> bool:
+        if existing.idempotency_fingerprint == current_fingerprint:
+            return True
+        if legacy_self_service_fingerprint is None:
+            return False
+        if existing.idempotency_fingerprint != legacy_self_service_fingerprint:
+            return False
+        return cls._is_legacy_self_service_idempotency_row(existing)
+
+    @staticmethod
+    def _is_legacy_self_service_idempotency_row(
+        existing: DataSubjectRequest,
+    ) -> bool:
+        return (
+            existing.requester_role == DataSubjectRequestRequesterRole.SELF.value
+            and existing.subject_user_id == existing.requester_user_id
+            and existing.representative_relationship is None
+            and existing.representative_authority_note is None
+        )
 
     @staticmethod
     def _normalise_request_type(request_type: str) -> str:

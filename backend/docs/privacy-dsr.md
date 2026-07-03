@@ -87,6 +87,8 @@ Submission payload:
   `representative_relationship` and `representative_authority_note`. These
   requests are stored with `representative_status=pending_verification` and
   cannot be approved until platform verification marks authority as `verified`.
+  Self-service idempotent retries accept the pre-representative fingerprint format
+  for rows that are still inside the 24-hour idempotency-key TTL window.
 
 Export artifact endpoints:
 
@@ -139,6 +141,12 @@ exports include DSR rows where the exporting subject is only
 subject and unrelated reviewer identifiers stay minimised. Erasure impact
 previews use the same verifier predicate as the DSR workflow erasure provider so
 platform reviewers see the same row count that execution will minimise.
+
+Represented subject existence checks are routed through `UserRepository` before
+DSR insert, so the service layer does not own SQL for the users aggregate.
+Representative verification and rejection writes are conditional on the current
+DSR lifecycle status and representative authority status. Stale concurrent
+updates return a conflict and do not emit representative authority audit events.
 
 ## Request-type execution policy
 

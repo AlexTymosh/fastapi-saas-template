@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
@@ -12,6 +12,7 @@ from app.core.errors import BadRequestError, ConflictError
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
 from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
     DataSubjectRequestRepresentativeStatus,
     DataSubjectRequestRequesterRole,
     DataSubjectRequestStatus,
@@ -53,16 +54,25 @@ async def _create_representative_request(session):
 
 def test_representative_submission_rejects_unknown_subject(
     migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _run() -> None:
         async with migrated_session_factory() as session:
             requester = await _create_user(session, email="rep-missing@example.com")
             service = DataSubjectRequestService(session)
+            subject_id = uuid4()
+            checked_subject_ids: list[UUID] = []
+
+            async def _subject_exists(user_id: UUID) -> bool:
+                checked_subject_ids.append(user_id)
+                return False
+
+            monkeypatch.setattr(service.users, "exists_by_id", _subject_exists)
 
             with pytest.raises(BadRequestError, match="subject user was not found"):
                 await service.submit_request(
                     requester_user_id=requester.id,
-                    subject_user_id=uuid4(),
+                    subject_user_id=subject_id,
                     request_type="export",
                     requester_role=(
                         DataSubjectRequestRequesterRole.AUTHORISED_REPRESENTATIVE.value
@@ -71,6 +81,8 @@ def test_representative_submission_rejects_unknown_subject(
                     representative_authority_note="Authority evidence checked offline.",
                     audit_context=AuditContext(actor_user_id=requester.id),
                 )
+
+            assert checked_subject_ids == [subject_id]
 
     run_async(_run())
 
@@ -167,6 +179,64 @@ def test_representative_authority_review_is_blocked_after_approval(
                     reason_code="policy_violation",
                     audit_context=AuditContext(actor_user_id=reviewer.id),
                 )
+
+    run_async(_run())
+
+
+def test_representative_authority_verify_stale_status_conflicts_without_audit(
+    migrated_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            service, _, _, request = await _create_representative_request(session)
+            reviewer = await _create_user(session, email="rep-stale@example.com")
+
+            async def _simulate_stale_representative_update(**kwargs):
+                await session.execute(
+                    update(DataSubjectRequest)
+                    .where(DataSubjectRequest.id == request.id)
+                    .values(status=DataSubjectRequestStatus.CANCELLED.value)
+                )
+                await session.flush()
+                return None
+
+            monkeypatch.setattr(
+                service.repository,
+                "update_representative_authority_if_current",
+                _simulate_stale_representative_update,
+            )
+
+            with pytest.raises(ConflictError, match="status changed"):
+                await service.verify_representative_authority(
+                    request_id=request.id,
+                    reviewer_user_id=reviewer.id,
+                    reason_code="compliance_review",
+                    audit_context=AuditContext(actor_user_id=reviewer.id),
+                )
+
+            representative_verified_action = (
+                AuditAction.DATA_SUBJECT_REQUEST_REPRESENTATIVE_VERIFIED.value
+            )
+            audit_rows = list(
+                (
+                    await session.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.target_id == request.id,
+                            AuditEvent.action == representative_verified_action,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            persisted = await service.get_request(request_id=request.id)
+
+            assert audit_rows == []
+            assert persisted.status == DataSubjectRequestStatus.CANCELLED.value
+            assert persisted.representative_status == (
+                DataSubjectRequestRepresentativeStatus.PENDING_VERIFICATION.value
+            )
 
     run_async(_run())
 

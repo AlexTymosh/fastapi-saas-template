@@ -117,6 +117,30 @@ class DataSubjectRequestRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def update_representative_authority_if_current(
+        self,
+        *,
+        request_id: UUID,
+        expected_status: str,
+        expected_representative_status: str,
+        values: Mapping[str, Any],
+    ) -> DataSubjectRequest | None:
+        """Atomically update representative review fields if state is unchanged."""
+        stmt = (
+            update(DataSubjectRequest)
+            .where(
+                DataSubjectRequest.id == request_id,
+                DataSubjectRequest.status == expected_status,
+                DataSubjectRequest.representative_status
+                == expected_representative_status,
+            )
+            .values(**values)
+            .returning(DataSubjectRequest)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def save(self, request: DataSubjectRequest) -> DataSubjectRequest:
         self.session.add(request)
         await self.session.flush()

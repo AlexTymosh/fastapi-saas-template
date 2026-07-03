@@ -44,6 +44,8 @@ should still be verified against code before extension:
   - optional requester details captured for platform DSR review;
   - authorised representative DSR intake and verification metadata with approval
     blocked unless authority is verified;
+  - pre-upgrade self-service idempotency retry compatibility during the TTL;
+  - conditional representative authority review writes;
   - approval restricted to request types with concrete execution policies;
   - cross-table subject export providers;
   - PostgreSQL provider integration coverage for outbox JSON predicates used by
