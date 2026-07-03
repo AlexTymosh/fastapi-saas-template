@@ -138,15 +138,18 @@ actor, rather than storing copies of evidence documents.
 Verifier-only links are treated as first-class workflow references. Subject data
 exports include DSR rows where the exporting subject is only
 `representative_verified_by_user_id` as reference records, while requester,
-subject and unrelated reviewer identifiers stay minimised. Erasure impact
-previews, DSR workflow erasure and audit erasure use the same verifier predicate
-so platform reviewers see the same row count that execution will minimise.
+subject and unrelated reviewer identifiers stay minimised. Audit exports also
+include audit rows whose target DSR is linked to the subject only through the
+representative verifier field. Erasure impact previews, DSR workflow erasure
+and audit erasure use the same verifier predicate so platform reviewers see
+the same row count that execution will minimise.
 
 Represented subject existence checks are routed through `UserRepository` before
 DSR insert, so the service layer does not own SQL for the users aggregate.
-Representative verification and rejection writes are conditional on the current
-DSR lifecycle status and representative authority status. Stale concurrent
-updates return a conflict and do not emit representative authority audit events.
+Representative verification, rejection and approval writes are conditional on
+the current DSR lifecycle status and representative authority status. Stale
+concurrent updates return a conflict and do not emit representative authority
+audit events.
 
 ## Request-type execution policy
 

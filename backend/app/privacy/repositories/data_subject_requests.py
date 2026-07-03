@@ -8,8 +8,19 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.privacy.models.data_subject_request import DataSubjectRequest
+from app.privacy.models.data_subject_request import (
+    DataSubjectRequest,
+    DataSubjectRequestRepresentativeStatus,
+    DataSubjectRequestStatus,
+)
 from app.users.models.user import User
+
+_APPROVAL_REPRESENTATIVE_STATUSES = frozenset(
+    {
+        DataSubjectRequestRepresentativeStatus.NOT_REQUIRED.value,
+        DataSubjectRequestRepresentativeStatus.VERIFIED.value,
+    }
+)
 
 
 class DataSubjectRequestRepository:
@@ -103,13 +114,21 @@ class DataSubjectRequestRepository:
         expected_status: str,
         values: Mapping[str, Any],
     ) -> DataSubjectRequest | None:
-        """Atomically update one DSR only if its status has not changed."""
+        """Atomically update one DSR only if its decision state is unchanged."""
+        conditions = [
+            DataSubjectRequest.id == request_id,
+            DataSubjectRequest.status == expected_status,
+        ]
+        if values.get("status") == DataSubjectRequestStatus.APPROVED.value:
+            conditions.append(
+                DataSubjectRequest.representative_status.in_(
+                    _APPROVAL_REPRESENTATIVE_STATUSES
+                )
+            )
+
         stmt = (
             update(DataSubjectRequest)
-            .where(
-                DataSubjectRequest.id == request_id,
-                DataSubjectRequest.status == expected_status,
-            )
+            .where(*conditions)
             .values(**values)
             .returning(DataSubjectRequest)
             .execution_options(synchronize_session="fetch")

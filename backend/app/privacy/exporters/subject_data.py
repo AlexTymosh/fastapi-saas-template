@@ -423,15 +423,7 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
     ) -> AsyncIterator[PrivacyExportRecord]:
         stmt = (
             select(DataSubjectRequest)
-            .where(
-                or_(
-                    DataSubjectRequest.subject_user_id == context.subject_user_id,
-                    DataSubjectRequest.requester_user_id == context.subject_user_id,
-                    DataSubjectRequest.reviewer_user_id == context.subject_user_id,
-                    DataSubjectRequest.representative_verified_by_user_id
-                    == context.subject_user_id,
-                )
-            )
+            .where(or_(*_subject_workflow_dsr_conditions(context.subject_user_id)))
             .order_by(DataSubjectRequest.created_at.asc(), DataSubjectRequest.id.asc())
         )
         rows = (await self.session.execute(stmt)).scalars().all()
@@ -969,12 +961,26 @@ async def _get_subject_dsr_ids(
     session: AsyncSession, subject_user_id: UUID
 ) -> tuple[UUID, ...]:
     stmt = select(DataSubjectRequest.id).where(
-        or_(
-            DataSubjectRequest.subject_user_id == subject_user_id,
-            DataSubjectRequest.requester_user_id == subject_user_id,
-        )
+        or_(*_subject_audit_target_dsr_conditions(subject_user_id))
     )
     return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _subject_workflow_dsr_conditions(subject_user_id: UUID) -> tuple[object, ...]:
+    return (
+        DataSubjectRequest.subject_user_id == subject_user_id,
+        DataSubjectRequest.requester_user_id == subject_user_id,
+        DataSubjectRequest.reviewer_user_id == subject_user_id,
+        DataSubjectRequest.representative_verified_by_user_id == subject_user_id,
+    )
+
+
+def _subject_audit_target_dsr_conditions(subject_user_id: UUID) -> tuple[object, ...]:
+    return (
+        DataSubjectRequest.subject_user_id == subject_user_id,
+        DataSubjectRequest.requester_user_id == subject_user_id,
+        DataSubjectRequest.representative_verified_by_user_id == subject_user_id,
+    )
 
 
 async def _get_subject_export_artifact_ids(

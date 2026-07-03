@@ -7,7 +7,12 @@ import pytest
 from sqlalchemy import select, update
 
 from app.audit.context import AuditContext
-from app.audit.models.audit_event import AuditAction, AuditEvent
+from app.audit.models.audit_event import (
+    AuditAction,
+    AuditCategory,
+    AuditEvent,
+    AuditTargetType,
+)
 from app.core.errors import BadRequestError, ConflictError
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
@@ -116,6 +121,51 @@ def test_verify_representative_authority_allows_approval(
                 audit_context=AuditContext(actor_user_id=reviewer.id),
             )
             assert approved.status == DataSubjectRequestStatus.APPROVED.value
+
+    run_async(_run())
+
+
+def test_approval_transition_requires_current_representative_status(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            service, _, _, request = await _create_representative_request(session)
+            reviewer = await _create_user(session, email="rep-atomic@example.com")
+            await service.verify_representative_authority(
+                request_id=request.id,
+                reviewer_user_id=reviewer.id,
+                reason_code="compliance_review",
+                audit_context=AuditContext(actor_user_id=reviewer.id),
+            )
+            await session.execute(
+                update(DataSubjectRequest)
+                .where(DataSubjectRequest.id == request.id)
+                .values(
+                    representative_status=(
+                        DataSubjectRequestRepresentativeStatus.REJECTED.value
+                    )
+                )
+            )
+            await session.flush()
+
+            updated = await service.repository.transition_status_if_current(
+                request_id=request.id,
+                expected_status=DataSubjectRequestStatus.SUBMITTED.value,
+                values={
+                    "status": DataSubjectRequestStatus.APPROVED.value,
+                    "reviewer_user_id": reviewer.id,
+                    "decision_reason_code": "compliance_review",
+                    "decided_at": datetime.now(UTC),
+                },
+            )
+            persisted = await service.get_request(request_id=request.id)
+
+            assert updated is None
+            assert persisted.status == DataSubjectRequestStatus.SUBMITTED.value
+            assert persisted.representative_status == (
+                DataSubjectRequestRepresentativeStatus.REJECTED.value
+            )
 
     run_async(_run())
 
@@ -296,6 +346,17 @@ def test_verifier_only_dsr_rows_are_exported_as_references(
                 reason_code="compliance_review",
                 audit_context=AuditContext(actor_user_id=approver.id),
             )
+            audit_event = AuditEvent(
+                actor_user_id=approver.id,
+                category=AuditCategory.COMPLIANCE.value,
+                action=AuditAction.DATA_SUBJECT_REQUEST_APPROVED.value,
+                target_type=AuditTargetType.DATA_SUBJECT_REQUEST.value,
+                target_id=request.id,
+                reason="approval context for a represented request",
+                metadata_json={"request_type": "export", "unsafe": "internal"},
+            )
+            session.add(audit_event)
+            await session.flush()
 
             payload = await CrossTableSubjectDataExporter(session).export_subject_data(
                 ExportContext(
@@ -330,5 +391,21 @@ def test_verifier_only_dsr_rows_are_exported_as_references(
             assert "requester_user_id" in redacted_fields
             assert "reviewer_user_id" in redacted_fields
             assert "representative_verified_by_user_id" not in redacted_fields
+
+            audit_records = payload["data"]["audit.subject_actor_or_target_join_events"]
+            audit_match = [
+                item
+                for item in audit_records
+                if item["payload"].get("id") == str(audit_event.id)
+            ]
+            assert len(audit_match) == 1
+            audit_payload = audit_match[0]["payload"]
+            audit_redacted_fields = set(audit_match[0]["redacted_fields"])
+            assert audit_payload["target_id"] == str(request.id)
+            assert audit_payload["has_actor"] is True
+            assert audit_payload["metadata_json"] == {"request_type": "export"}
+            assert "actor_user_id" in audit_redacted_fields
+            assert "reason" in audit_redacted_fields
+            assert "metadata_json.unsafe" in audit_redacted_fields
 
     run_async(_run())
