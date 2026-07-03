@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import AuditContext
@@ -32,6 +33,7 @@ from app.privacy.models.data_subject_request import (
 from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
+from app.users.models.user import User
 
 _FULFILMENT_PIPELINE_REQUEST_TYPES = frozenset(
     {DataSubjectRequestType.EXPORT.value, DataSubjectRequestType.ERASE.value}
@@ -41,6 +43,12 @@ _REPRESENTATIVE_APPROVAL_STATUSES = frozenset(
     {
         DataSubjectRequestRepresentativeStatus.NOT_REQUIRED.value,
         DataSubjectRequestRepresentativeStatus.VERIFIED.value,
+    }
+)
+_REPRESENTATIVE_REVIEWABLE_REQUEST_STATUSES = frozenset(
+    {
+        DataSubjectRequestStatus.SUBMITTED.value,
+        DataSubjectRequestStatus.UNDER_REVIEW.value,
     }
 )
 _ERASURE_EXECUTION_NOT_FOUND_REASON_CODES = frozenset(
@@ -152,6 +160,10 @@ class DataSubjectRequestService:
             requester_role=normalised_requester_role,
             representative_relationship=normalised_representative_relationship,
             representative_authority_note=normalised_representative_authority_note,
+        )
+        await self._ensure_representative_subject_exists(
+            requester_role=normalised_requester_role,
+            subject_user_id=representative_values["subject_user_id"],
         )
         idempotency_key_hash = (
             self._hash_idempotency_key(normalised_idempotency_key)
@@ -374,6 +386,7 @@ class DataSubjectRequestService:
             requester_user_id=kwargs.get("requester_user_id"),
             due_before=kwargs.get("due_before"),
             due_after=kwargs.get("due_after"),
+            representative_status=kwargs.get("representative_status"),
         )
         return rows, total
 
@@ -454,6 +467,61 @@ class DataSubjectRequestService:
             reason_code=reason_code,
             audit_context=audit_context,
         )
+
+    async def verify_representative_authority(
+        self,
+        *,
+        request_id: UUID,
+        reviewer_user_id: UUID,
+        reason_code: str | None,
+        audit_context: AuditContext,
+        now: datetime | None = None,
+    ) -> DataSubjectRequest:
+        reference_now = now or datetime.now(UTC)
+        request = await self.get_platform_request(request_id=request_id)
+        self._ensure_representative_authority_reviewable(request)
+
+        request.representative_status = (
+            DataSubjectRequestRepresentativeStatus.VERIFIED.value
+        )
+        request.representative_verified_at = reference_now
+        request.representative_verified_by_user_id = reviewer_user_id
+        request.representative_rejection_reason_code = None
+        updated = await self.repository.save(request)
+        await self._record_representative_authority_event(
+            request=updated,
+            action=AuditAction.DATA_SUBJECT_REQUEST_REPRESENTATIVE_VERIFIED,
+            audit_context=audit_context,
+            reason_code=reason_code,
+        )
+        return updated
+
+    async def reject_representative_authority(
+        self,
+        *,
+        request_id: UUID,
+        reviewer_user_id: UUID,
+        reason_code: str,
+        audit_context: AuditContext,
+    ) -> DataSubjectRequest:
+        del reviewer_user_id
+        request = await self.get_platform_request(request_id=request_id)
+        self._ensure_representative_authority_reviewable(request)
+
+        request.representative_status = (
+            DataSubjectRequestRepresentativeStatus.REJECTED.value
+        )
+        request.representative_verified_at = None
+        request.representative_verified_by_user_id = None
+        request.representative_rejection_reason_code = reason_code
+        updated = await self.repository.save(request)
+        await self._record_representative_authority_event(
+            request=updated,
+            action=AuditAction.DATA_SUBJECT_REQUEST_REPRESENTATIVE_REJECTED,
+            audit_context=audit_context,
+            reason_code=reason_code,
+        )
+        return updated
 
     async def cancel_platform_request(
         self,
@@ -759,6 +827,68 @@ class DataSubjectRequestService:
             "representative_verified_by_user_id": None,
             "representative_rejection_reason_code": None,
         }
+
+    async def _ensure_representative_subject_exists(
+        self,
+        *,
+        requester_role: str,
+        subject_user_id: object | None,
+    ) -> None:
+        if requester_role != (
+            DataSubjectRequestRequesterRole.AUTHORISED_REPRESENTATIVE.value
+        ):
+            return
+        if not isinstance(subject_user_id, UUID):
+            raise BadRequestError(
+                detail="subject_user_id is required for representative requests"
+            )
+        stmt = select(User.id).where(User.id == subject_user_id)
+        existing_subject_id = (await self.session.execute(stmt)).scalar_one_or_none()
+        if existing_subject_id is None:
+            raise BadRequestError(detail="Representative subject user was not found")
+
+    @staticmethod
+    def _ensure_representative_authority_reviewable(
+        request: DataSubjectRequest,
+    ) -> None:
+        if request.requester_role != (
+            DataSubjectRequestRequesterRole.AUTHORISED_REPRESENTATIVE.value
+        ):
+            raise ConflictError(
+                detail=(
+                    "Representative authority review is only valid for "
+                    "authorised-representative requests"
+                )
+            )
+        if request.status not in _REPRESENTATIVE_REVIEWABLE_REQUEST_STATUSES:
+            raise ConflictError(
+                detail=(
+                    "Representative authority cannot be changed after the "
+                    "request has been decided, fulfilled or cancelled"
+                )
+            )
+
+    async def _record_representative_authority_event(
+        self,
+        *,
+        request: DataSubjectRequest,
+        action: AuditAction,
+        audit_context: AuditContext,
+        reason_code: str | None,
+    ) -> None:
+        await self.audit_events.record_event(
+            audit_context=audit_context,
+            category=AuditCategory.COMPLIANCE,
+            action=action,
+            target_type=AuditTargetType.DATA_SUBJECT_REQUEST,
+            target_id=request.id,
+            metadata_json={
+                "request_type": request.request_type,
+                "status": request.status,
+                "representative_status": request.representative_status,
+                "reason_code": reason_code,
+            },
+        )
 
     @staticmethod
     def _build_fingerprint(

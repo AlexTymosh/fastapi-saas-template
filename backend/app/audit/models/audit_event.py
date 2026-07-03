@@ -44,6 +44,12 @@ class AuditAction(StrEnum):
     DATA_SUBJECT_REQUEST_CANCELLED = "data_subject_request_cancelled"
     DATA_SUBJECT_REQUEST_FULFILLED = "data_subject_request_fulfilled"
     DATA_SUBJECT_REQUEST_ERASURE_EXECUTED = "data_subject_request_erasure_executed"
+    DATA_SUBJECT_REQUEST_REPRESENTATIVE_VERIFIED = (
+        "data_subject_request_representative_verified"
+    )
+    DATA_SUBJECT_REQUEST_REPRESENTATIVE_REJECTED = (
+        "data_subject_request_representative_rejected"
+    )
     EXPORT_ARTIFACT_REQUESTED = "export_artifact_requested"
     EXPORT_ARTIFACT_GENERATED = "export_artifact_generated"
     EXPORT_ARTIFACT_FAILED = "export_artifact_failed"

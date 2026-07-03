@@ -50,7 +50,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 6 | Runtime secrets and Docker hardening | Yes | Done                                 |
 | 7 | PostgreSQL DSR provider integration tests | Yes | Done                                 |
 | 8 | Streaming DSR export archive generation | Yes | Done                                 |
-| 9 | Authorised representative DSR workflow | Yes | In progress: 1/3 - PR-328-9A is Done |
+| 9 | Authorised representative DSR workflow | Yes | In progress: 2/3 - PR-328-9B prepared |
 | 10 | Final #328 closure reconciliation | Yes | Not started                          |
 
 ## PR-328-3 — Separate URL issuance from delivery evidence
@@ -292,6 +292,34 @@ Status: Patch prepared; not merged.
   subject or authority payload.
 - A representative exporting their own DSR workflow records does not receive the
   represented subject's raw user id.
+
+## PR-328-9B — Authorised representative DSR verification workflow
+
+Priority: P2
+Type: `feat(privacy)`
+Recommended branch: `feat/privacy-dsr-representative-review`
+Recommended PR title: `✨ feat(privacy): add representative DSR review workflow`
+Status: Patch prepared; not merged.
+
+### Prepared scope
+
+1. Add platform endpoints to verify or reject representative authority.
+2. Keep DSR lifecycle separate from representative authority review state.
+3. Allow approval only after `representative_status=verified`.
+4. Record minimal audit events for representative verification/rejection.
+5. Add representative-status filtering to platform DSR list/count.
+6. Validate represented subject existence before DSR insert to avoid FK-driven 500s.
+7. Include verifier-only DSR workflow rows in subject exports as reference records.
+8. Update DSR docs and current-state notes.
+
+### Failure cases to cover
+
+- Unknown represented subject IDs return controlled 4xx errors before insert.
+- Verification is rejected for non-representative DSRs.
+- Representative authority cannot be changed after approval/terminal states.
+- Rejected representative authority keeps approval blocked.
+- Verifier-only DSR rows appear in exports as reference records without exposing
+  requester or subject identifiers.
 
 ## Notes for future agents
 

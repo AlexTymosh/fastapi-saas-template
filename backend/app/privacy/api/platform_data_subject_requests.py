@@ -23,6 +23,7 @@ from app.core.platform import (
 )
 from app.core.rate_limit import PLATFORM_READ_POLICY, rate_limit_dependency
 from app.privacy.models.data_subject_request import (
+    DataSubjectRequestRepresentativeStatus,
     DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
@@ -35,7 +36,9 @@ from app.privacy.schemas.data_subject_requests import (
     PlatformDataSubjectRequestsCollectionResponse,
     PlatformDataSubjectRequestsMeta,
     RejectDataSubjectRequest,
+    RejectRepresentativeAuthority,
     ReviewDataSubjectRequest,
+    VerifyRepresentativeAuthority,
 )
 from app.privacy.services.data_subject_requests import DataSubjectRequestService
 
@@ -64,6 +67,7 @@ async def list_platform_data_subject_requests(
     requester_user_id: UUID | None = None,
     due_before: datetime | None = None,
     due_after: datetime | None = None,
+    representative_status: DataSubjectRequestRepresentativeStatus | None = None,
 ) -> PlatformDataSubjectRequestsCollectionResponse:
     rows, total = await DataSubjectRequestService(db_session).list_platform_requests(
         limit=limit,
@@ -74,6 +78,9 @@ async def list_platform_data_subject_requests(
         requester_user_id=requester_user_id,
         due_before=due_before,
         due_after=due_after,
+        representative_status=(
+            representative_status.value if representative_status else None
+        ),
     )
     return PlatformDataSubjectRequestsCollectionResponse(
         data=[PlatformDataSubjectRequestResponse.model_validate(r) for r in rows],
@@ -98,6 +105,72 @@ async def get_platform_data_subject_request(
 ) -> PlatformDataSubjectRequestResponse:
     row = await DataSubjectRequestService(db_session).get_platform_request(
         request_id=request_id
+    )
+    return PlatformDataSubjectRequestResponse.model_validate(row)
+
+
+@router.post(
+    "/{request_id}/representative/verify",
+    response_model=PlatformDataSubjectRequestResponse,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+)
+async def verify_platform_dsr_representative_authority(
+    request_id: UUID,
+    payload: VerifyRepresentativeAuthority,
+    request: Request,
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(
+            require_rate_limited_platform_write_context(
+                PlatformPermission.PRIVACY_REQUESTS_REVIEW
+            ),
+            scope="function",
+        ),
+    ],
+) -> PlatformDataSubjectRequestResponse:
+    actor = write_context.actor
+    row = await DataSubjectRequestService(
+        write_context.session
+    ).verify_representative_authority(
+        request_id=request_id,
+        reviewer_user_id=actor.user.id,
+        reason_code=payload.reason_code.value if payload.reason_code else None,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=actor.user.id, request=request
+        ),
+    )
+    return PlatformDataSubjectRequestResponse.model_validate(row)
+
+
+@router.post(
+    "/{request_id}/representative/reject",
+    response_model=PlatformDataSubjectRequestResponse,
+    responses={**WRITE_ERROR_RESPONSES, **RATE_LIMIT_ERROR_RESPONSES},
+)
+async def reject_platform_dsr_representative_authority(
+    request_id: UUID,
+    payload: RejectRepresentativeAuthority,
+    request: Request,
+    write_context: Annotated[
+        PlatformWriteContext,
+        Depends(
+            require_rate_limited_platform_write_context(
+                PlatformPermission.PRIVACY_REQUESTS_REVIEW
+            ),
+            scope="function",
+        ),
+    ],
+) -> PlatformDataSubjectRequestResponse:
+    actor = write_context.actor
+    row = await DataSubjectRequestService(
+        write_context.session
+    ).reject_representative_authority(
+        request_id=request_id,
+        reviewer_user_id=actor.user.id,
+        reason_code=payload.reason_code.value,
+        audit_context=build_audit_context_from_request(
+            actor_user_id=actor.user.id, request=request
+        ),
     )
     return PlatformDataSubjectRequestResponse.model_validate(row)
 

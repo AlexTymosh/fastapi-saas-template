@@ -127,10 +127,11 @@ authorised representative. The requester can identify another local user as the
 subject only when `requester_role=authorised_representative` is declared and
 relationship plus authority details are provided.
 
-Representative requests remain blocked from approval until a later platform
-verification workflow records `representative_status=verified`. This avoids
-executing export or erase workflows before staff have checked the claimed
-authority.
+Representative verification endpoints let platform reviewers mark authority
+as `verified` or `rejected`. Approval remains blocked while authority is
+`pending_verification` or `rejected`. The verification endpoints store only
+structured status/reason metadata and rely on audit events for the reviewing
+actor, rather than storing copies of evidence documents.
 
 ## Request-type execution policy
 
@@ -170,6 +171,10 @@ Endpoints:
 - `POST /{request_id}/review` move submitted request to under review.
 - `POST /{request_id}/approve` approve with optional structured reason code.
 - `POST /{request_id}/reject` reject with required structured reason code.
+- `POST /{request_id}/representative/verify` mark representative authority
+  verified with optional structured reason code.
+- `POST /{request_id}/representative/reject` mark representative authority
+  rejected with required structured reason code.
 - `POST /{request_id}/cancel` cancel when lifecycle permits.
 - `POST /{request_id}/execute-erasure` execute an approved erase DSR.
 - `POST /{request_id}/fulfil` fulfil an approved request when execution evidence

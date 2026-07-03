@@ -175,6 +175,7 @@ class DataSubjectRequestRepository:
         requester_user_id: UUID | None = None,
         due_before: datetime | None = None,
         due_after: datetime | None = None,
+        representative_status: str | None = None,
     ) -> list[DataSubjectRequest]:
         stmt = select(DataSubjectRequest)
         if status is not None:
@@ -185,6 +186,10 @@ class DataSubjectRequestRepository:
             stmt = stmt.where(DataSubjectRequest.subject_user_id == subject_user_id)
         if requester_user_id is not None:
             stmt = stmt.where(DataSubjectRequest.requester_user_id == requester_user_id)
+        if representative_status is not None:
+            stmt = stmt.where(
+                DataSubjectRequest.representative_status == representative_status
+            )
         if due_before is not None:
             stmt = stmt.where(DataSubjectRequest.due_at <= due_before)
         if due_after is not None:
@@ -205,6 +210,7 @@ class DataSubjectRequestRepository:
         requester_user_id: UUID | None = None,
         due_before: datetime | None = None,
         due_after: datetime | None = None,
+        representative_status: str | None = None,
     ) -> int:
         stmt = select(func.count()).select_from(DataSubjectRequest)
         if status is not None:
@@ -215,6 +221,10 @@ class DataSubjectRequestRepository:
             stmt = stmt.where(DataSubjectRequest.subject_user_id == subject_user_id)
         if requester_user_id is not None:
             stmt = stmt.where(DataSubjectRequest.requester_user_id == requester_user_id)
+        if representative_status is not None:
+            stmt = stmt.where(
+                DataSubjectRequest.representative_status == representative_status
+            )
         if due_before is not None:
             stmt = stmt.where(DataSubjectRequest.due_at <= due_before)
         if due_after is not None:

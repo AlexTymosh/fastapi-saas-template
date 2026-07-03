@@ -428,26 +428,32 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
                     DataSubjectRequest.subject_user_id == context.subject_user_id,
                     DataSubjectRequest.requester_user_id == context.subject_user_id,
                     DataSubjectRequest.reviewer_user_id == context.subject_user_id,
+                    DataSubjectRequest.representative_verified_by_user_id
+                    == context.subject_user_id,
                 )
             )
             .order_by(DataSubjectRequest.created_at.asc(), DataSubjectRequest.id.asc())
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         for row in rows:
-            if self._is_reviewer_only_record(row, context):
-                yield self._reviewer_reference_record(row)
+            if self._is_reference_only_record(row, context):
+                yield self._reference_record(row, context)
                 continue
             yield self._subject_request_record(row, context)
 
     @staticmethod
-    def _is_reviewer_only_record(
+    def _is_reference_only_record(
         row: DataSubjectRequest, context: PrivacyProviderContext
     ) -> bool:
-        return (
-            row.reviewer_user_id == context.subject_user_id
-            and row.subject_user_id != context.subject_user_id
-            and row.requester_user_id != context.subject_user_id
+        is_subject_or_requester = (
+            row.subject_user_id == context.subject_user_id
+            or row.requester_user_id == context.subject_user_id
         )
+        is_review_actor = (
+            row.reviewer_user_id == context.subject_user_id
+            or row.representative_verified_by_user_id == context.subject_user_id
+        )
+        return is_review_actor and not is_subject_or_requester
 
     def _subject_request_record(
         self, row: DataSubjectRequest, context: PrivacyProviderContext
@@ -526,13 +532,26 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
 
         return self._record(payload, redacted_fields=tuple(redacted_fields))
 
-    def _reviewer_reference_record(
-        self, row: DataSubjectRequest
+    def _reference_record(
+        self, row: DataSubjectRequest, context: PrivacyProviderContext
     ) -> PrivacyExportRecord:
+        reviewer_user_id = (
+            row.reviewer_user_id
+            if row.reviewer_user_id == context.subject_user_id
+            else None
+        )
+        representative_verified_by_user_id = (
+            row.representative_verified_by_user_id
+            if row.representative_verified_by_user_id == context.subject_user_id
+            else None
+        )
         return self._record(
             {
                 "id": row.id,
-                "reviewer_user_id": row.reviewer_user_id,
+                "reviewer_user_id": reviewer_user_id,
+                "representative_verified_by_user_id": (
+                    representative_verified_by_user_id
+                ),
                 "status": row.status,
                 "execution_status": row.execution_status,
                 "reviewed_at": row.reviewed_at,
