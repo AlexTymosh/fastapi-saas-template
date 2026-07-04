@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-07-01
+Date: 2026-07-03
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -14,312 +14,117 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 
 - PR #426 is merged into `main`.
 - PR-328-1 is done: non-export/non-erase request types are review-only.
-- Approval for request types without execution policy is blocked in the central
-  DSR service transition path.
 - PR #427 is merged into `main`.
-- PR-328-2 is done: self-service DSR submissions accept `requester_note`,
-  normalise blank notes, keep user responses minimal and expose notes only to
-  authorised platform reviewers.
+- PR-328-2 is done: self-service DSR submissions accept requester details.
 - PR #428 is merged into `main`.
-- PR-328-3 is done: URL issuance is separated from confirmed delivery evidence;
-  delivery confirmation is explicit, rate-limited, atomic, idempotent and guarded
-  by artifact availability plus linked DSR eligibility.
+- PR-328-3 is done: URL issuance is separated from confirmed delivery evidence.
 - PR #429 is merged into `main`.
-- PR-328-4 is done: invite delivery has an SMTP provider, NoOp guardrails for
-  protected environments, accept URL validation, and SMTP transport guardrails.
+- PR-328-4 is done: invite delivery has an SMTP provider and NoOp guardrails.
 - PR #430 is merged into `main`.
-- PR-328-5 is done: retention runner Taskfile commands, CLI smoke tests,
-  `.env.example` guardrails and scheduler docs are merged.
+- PR-328-5 is done: retention runner Taskfile commands and ops docs are merged.
 - PR #431 is merged into `main`.
-- PR-328-6 is done: backend container runtime uses an unprivileged user, runtime
-  secret handling is documented, and regression tests guard Docker hardening.
+- PR-328-6 is done: backend container runtime hardening baseline is merged.
 - PR #432 is merged into `main`.
-- PR-328-7 is done: PostgreSQL/Testcontainers coverage verifies DSR provider
-  JSON predicates used by subject export, erasure impact preview and outbox
-  erasure scrubbing.
+- PR-328-7 is done: PostgreSQL DSR provider integration tests are merged.
+- PR #433 is merged into `main`.
+- PR-328-8 is done: DSR export archive generation streams through temp files.
+- PR #434 is merged into `main`.
+- PR-328-9A is done: authorised representative DSR intake is merged.
+- PR-328-9B is done: representative authority review workflow is merged.
 
 ## Roadmap status
 
-| Order | PR | Blocks #328 closure | Status                               |
-|---:|---|---:|--------------------------------------|
-| 1 | Define execution policy for non-export DSR types | Yes | Done                                 |
-| 2 | Accept requester details on DSR submissions | Yes | Done                                 |
-| 3 | Separate URL issuance from delivery evidence | Yes | Done                                 |
-| 4 | Real invite delivery provider / NoOp guard | Yes | Done                                 |
-| 5 | Retention runner Taskfile and ops docs | Yes | Done                                 |
-| 6 | Runtime secrets and Docker hardening | Yes | Done                                 |
-| 7 | PostgreSQL DSR provider integration tests | Yes | Done                                 |
-| 8 | Streaming DSR export archive generation | Yes | Done                                 |
-| 9 | Authorised representative DSR workflow | Yes | In progress: 2/3 - PR-328-9B prepared |
-| 10 | Final #328 closure reconciliation | Yes | Not started                          |
-
-## PR-328-3 — Separate URL issuance from delivery evidence
-
-Priority: P2
-Type: `feat(privacy)`
-Branch: `feat/privacy-export-delivery-evidence`
-PR title: `✨ feat(privacy): separate export URL issuance from delivery evidence`
-Status: Done in merged PR #428.
-
-### Delivered scope
-
-1. Added export artifact URL-issuance metadata:
-   - `download_url_issued_at`;
-   - `download_url_issue_count`.
-2. Kept `downloaded_at` and `download_count` for confirmed delivery only.
-3. Stopped marking export DSR execution as `delivered` during URL creation.
-4. Added self-service and platform `confirm-delivery` endpoints.
-5. Marked export DSR execution as `delivered` only after delivery confirmation.
-6. Added delivery confirmation audit evidence.
-7. Backfilled legacy URL issuance data out of delivery columns.
-8. Reclassified legacy ready, expired and cancelled URL-issued DSR states.
-9. Guarded delivery confirmation with artifact availability and linked DSR
-   eligibility inside the atomic update.
-10. Updated API/service/repository/exporter/migration tests and docs.
-
-### Failure cases covered
-
-- URL issued but delivery not confirmed keeps DSR execution state non-delivered.
-- Delivery confirmation marks DSR execution as delivered.
-- Expired artifacts cannot be confirmed as delivered.
-- Another user cannot confirm delivery for someone else's export artifact.
-- Multiple URL issuances increase URL issue metadata without increasing delivery
-  count.
-- Existing download URL rate limits apply to URL issuance and delivery
-  confirmation endpoints.
-- Repeated/concurrent delivery confirmation remains idempotent.
-- Retention, subject-erasure cancellation and platform DSR cancellation races
-  cannot write confirmed delivery evidence.
-
-## PR-328-4 — Real invite delivery provider / NoOp guard
-
-Priority: P2
-Type: `feat(invites)`
-Recommended branch: `feat/invite-delivery-provider-guard`
-Recommended PR title: `✨ feat(invites): add SMTP invite delivery provider guard`
-Status: Done in merged PR #429; re-verified after merge.
-
-### Goal
-
-The invite outbox worker must not silently mark invite events processed through a
-NoOp sink in protected environments. Local/test can still use NoOp for developer
-and test workflows, but `dev`, `staging` and `prod` must use a real delivery
-provider when invite delivery is enabled.
-
-### Planned implementation
-
-1. Add an SMTP-backed `InviteTokenSink` using Python stdlib email/SMTP support.
-2. Keep `NoOpInviteTokenSink` only for local/test or disabled invite delivery.
-3. Add `INVITE_DELIVERY__*` settings for provider, sender, accept URL template
-   and SMTP connection/auth/TLS controls.
-4. Reject NoOp invite delivery in `dev`, `staging` and `prod` when
-   `OUTBOX__INVITE_DELIVERY_ENABLED=true`.
-5. Require HTTPS invitation accept URLs in `staging` and `prod`.
-6. Keep raw invite tokens in memory only and deliver them through the outbox
-   worker sink boundary.
-7. Add unit/regression tests for provider selection, protected-environment guard,
-   SMTP message construction and token URL encoding.
-8. Update `.env.example` and invite delivery documentation.
-
-### PR #429 follow-up
-
-Codex found several edge cases after the first implementation. The merged PR now
-honours disabled invite delivery before provider selection, tolerates blank local
-NoOp SMTP fields, rejects plaintext SMTP in protected environments, terminalizes
-expired pending invites before delivery, and short-circuits disabled delivery
-before token decryption.
-
-### Failure cases covered
-
-- Protected environment + enabled invite delivery + NoOp provider is rejected.
-- Disabled invite delivery + stale SMTP provider settings returns NoOp before
-  SMTP configuration is parsed.
-- Disabled invite delivery drains pending invite outbox events before token
-  decryption and without requiring `SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY`.
-- NoOp invite delivery tolerates blank optional SMTP env values copied from the
-  local `.env.example` template.
-- Expired pending invites are marked expired before token decryption or SMTP
-  delivery, and their outbox events are terminally processed without sending.
-- SMTP provider cannot start without host, sender and `{token}` URL template.
-- SMTP username/password must be configured together.
-- Staging/prod accept URL templates must use HTTPS.
-- Staging/prod SMTP delivery must use direct TLS or STARTTLS.
-- SMTP delivery exceptions continue to bubble to the outbox worker so the outbox
-  event is retried/failed instead of marked processed.
-
-## PR-328-5 — Retention runner Taskfile and ops docs
-
-Priority: P2
-Type: `chore(privacy)`
-Recommended branch: `chore/privacy-retention-runner-ops`
-Recommended PR title: `🧹 chore(privacy): add export retention runner ops commands`
-Status: Done in merged PR #430; re-verified after merge.
-
-### Delivered scope
-
-1. Added Taskfile commands for retention one-shot and dry-run execution.
-2. Added smoke coverage for retention CLI parsing and Taskfile task presence.
-3. Documented manual execution and scheduled operation patterns.
-4. Documented single-active-runner guidance for scheduled retention jobs.
-5. Kept runtime retention behaviour unchanged.
-6. Restored auth, outbox and invite delivery examples in `.env.example` after
-   Codex found they were accidentally removed.
-
-### Failure cases covered
-
-- Dry-run stays non-mutating.
-- Invalid batch size fails clearly.
-- Taskfile exposes the intended retention commands from the repository root.
-- Scheduled-operation docs do not imply multiple active retention runners are
-  safe without a separate distributed lock or row-claiming contract.
-- Required runtime auth/outbox/invite env examples are not silently dropped from
-  `.env.example`.
-
-## PR-328-6 — Runtime secrets and Docker hardening
-
-Priority: P2
-Type: `security(runtime)`
-Recommended branch: `security/runtime-secrets-docker-hardening`
-Recommended PR title: `🛡️ security(runtime): harden backend container runtime`
-Status: Done in merged PR #431; re-verified after merge.
-
-### Delivered scope
-
-1. Added an unprivileged `app:app` runtime user to the backend Docker image.
-2. Moved the final backend runtime stage to `USER app:app`.
-3. Copied runtime application files with `app:app` ownership.
-4. Documented runtime secret handling and container hardening guidance.
-5. Updated current-state documentation to avoid overclaiming production readiness.
-6. Added regression tests for Dockerfile runtime hardening guardrails.
-
-### Follow-up outside this PR
-
-Remaining string-based secret-like settings should be converted to `SecretStr` in
-a separate focused PR if stricter redaction of full settings dumps is required.
-Do not combine that refactor with the PostgreSQL DSR provider tests.
-
-## PR-328-7 — PostgreSQL DSR provider integration tests
-
-Priority: P2
-Type: `chore(privacy)`
-Recommended branch: `test/privacy-postgres-provider-coverage`
-Recommended PR title: `🧹 chore(privacy): cover DSR providers on PostgreSQL`
-Status: Done in merged PR #432; re-verified after merge.
-
-### Delivered scope
-
-1. Added PostgreSQL/Testcontainers coverage for subject export provider lookup via
-   `outbox_events.payload_json["email"]`.
-2. Added PostgreSQL/Testcontainers coverage for erasure impact preview counts that
-   depend on the same outbox JSON email predicate.
-3. Added PostgreSQL/Testcontainers coverage for outbox erasure scrubbing through
-   the PostgreSQL JSON predicate and `SELECT ... FOR UPDATE` path.
-4. Kept the tests opt-in by infrastructure marker: `privacy`, `integration` and
-   `container`; they are not marked `external_db` because they start a disposable
-   PostgreSQL container.
-5. Updated DSR provider/current-state docs to mark PostgreSQL JSON predicate
-   coverage as implemented.
-
-### Failure cases covered
-
-- PostgreSQL JSON predicate finds the subject-linked outbox event.
-- PostgreSQL JSON predicate does not include unrelated outbox events.
-- Exported outbox references do not expose raw email or encrypted token payloads.
-- Erasure impact counts subject-linked outbox events through PostgreSQL JSON
-  access.
-- Outbox erasure scrubs only the subject-linked JSON payload row.
-
-## PR-328-8 — Streaming DSR export archive generation
-
-Priority: P2
-Type: `perf(privacy)`
-Recommended branch: `perf/privacy-streaming-export-archives`
-Recommended PR title: `⚡️ perf(privacy): stream DSR export archive generation`
-Status: Done in merged PR #433; re-verified after merge.
-
-### Prepared scope
-
-1. Add a streaming subject export JSON chunk writer that iterates provider records
-   without materialising the complete export payload as a Python dictionary for
-   archive generation.
-2. Replace in-memory ZIP assembly with a temporary ZIP file written through
-   `ZipFile.open("export.json", mode="w")`.
-3. Add `StorageAdapter.put_file()` and implement file streaming for local and
-   S3-compatible storage backends.
-4. Compute archive size and checksum by reading the temporary file in bounded
-   chunks.
-5. Delete temporary archive files after upload and after generation failures.
-6. Preserve the existing ZIP schema, storage metadata, DSR execution state and
-   public API behaviour.
-7. Update export artifact documentation and current-state notes.
-
-### Failure cases to cover
-
-- Archive generation uses streaming JSON chunks and still produces a valid
-  `export.json` ZIP member.
-- Prepared archive files are deleted after successful storage upload.
-- Oversized generated archives fail with `artifact_too_large` and do not leave
-  temporary files behind.
-- Existing export artifact service behaviour still marks artifacts ready, keeps
-  schema fields intact and preserves failure-state synchronisation.
+| Order | PR | Blocks #328 closure | Status |
+|---:|---|---:|---|
+| 1 | Define execution policy for non-export DSR types | Yes | Done |
+| 2 | Accept requester details on DSR submissions | Yes | Done |
+| 3 | Separate URL issuance from delivery evidence | Yes | Done |
+| 4 | Real invite delivery provider / NoOp guard | Yes | Done |
+| 5 | Retention runner Taskfile and ops docs | Yes | Done |
+| 6 | Runtime secrets and Docker hardening | Yes | Done |
+| 7 | PostgreSQL DSR provider integration tests | Yes | Done |
+| 8 | Streaming DSR export archive generation | Yes | Done |
+| 9 | Authorised representative DSR workflow | Yes | Done |
+| 10 | Final #328 closure reconciliation | Yes | Not started |
 
 ## PR-328-9A — Authorised representative DSR intake
 
 Priority: P2
 Type: `feat(privacy)`
-Recommended branch: `feat/privacy-dsr-representative-intake`
-Recommended PR title: `✨ feat(privacy): add representative DSR intake guardrails`
-Status: Patch prepared; not merged.
+Branch: `feat/privacy-dsr-representative-intake`
+PR title: `✨ feat(privacy): add representative DSR intake guardrails`
+Status: Done in merged PR #434; re-verified after merge.
 
-### Prepared scope
+### Delivered scope
 
-1. Add representative intake metadata to `data_subject_requests`.
-2. Preserve current self-service behaviour as the default DSR submission path.
-3. Allow explicit representative submissions with subject, relationship and
+1. Added representative intake metadata to `data_subject_requests`.
+2. Preserved current self-service behaviour as the default DSR submission path.
+3. Allowed explicit representative submissions with subject, relationship and
    authority details.
-4. Store representative submissions as `pending_verification`.
-5. Block approval until representative authority is verified by a later workflow.
-6. Include representative intake metadata in idempotency fingerprints.
-7. Keep requester/subject identifier redaction safe in DSR workflow exports.
-8. Update DSR docs, current-state notes and inventory contracts.
+4. Stored representative submissions as `pending_verification`.
+5. Blocked approval until representative authority is verified.
+6. Included representative intake metadata in idempotency fingerprints.
+7. Validated represented subject users before DSR insert.
+8. Preserved pre-upgrade self-service idempotency retries during the TTL window.
 
-### Failure cases to cover
-
-- Self-service DSRs still infer the authenticated user as subject.
-- Representative DSRs require subject and authority details.
-- Pending/rejected representative DSRs cannot be approved.
-- Idempotency conflicts when the same key is reused for another represented
-  subject or authority payload.
-- A representative exporting their own DSR workflow records does not receive the
-  represented subject's raw user id.
-
-## PR-328-9B — Authorised representative DSR verification workflow
+## PR-328-9B — Platform representative authority verification
 
 Priority: P2
 Type: `feat(privacy)`
-Recommended branch: `feat/privacy-dsr-representative-review`
-Recommended PR title: `✨ feat(privacy): add representative DSR review workflow`
+Branch: `feat/privacy-dsr-representative-intake`
+PR title: `✨ feat(privacy): add representative DSR review workflow`
+Status: Done in merged PR #434; re-verified after merge.
+
+### Delivered scope
+
+1. Added platform representative authority verify/reject endpoints.
+2. Kept DSR lifecycle separate from representative authority review state.
+3. Added conditional representative authority review writes.
+4. Added atomic approval guard on representative status.
+5. Added representative-status filtering to platform DSR list/count.
+6. Added compliance audit events for representative authority decisions.
+7. Included verifier-only DSR workflow rows in subject exports as references.
+8. Aligned erasure impact preview and execution predicates for verifier links.
+
+## PR-328-9C — Representative fulfilment/export/erasure semantics
+
+Priority: P2
+Type: `test(privacy)`
+Recommended branch: `test/privacy-dsr-representative-fulfilment`
+Recommended PR title: `🧹 chore(privacy): cover representative DSR fulfilment`
 Status: Patch prepared; not merged.
 
 ### Prepared scope
 
-1. Add platform endpoints to verify or reject representative authority.
-2. Keep DSR lifecycle separate from representative authority review state.
-3. Allow approval only after `representative_status=verified`.
-4. Record minimal audit events for representative verification/rejection.
-5. Add representative-status filtering to platform DSR list/count.
-6. Validate represented subject existence before DSR insert to avoid FK-driven 500s.
-7. Include verifier-only DSR workflow rows in subject exports as reference records.
-8. Update DSR docs and current-state notes.
+1. Add regression coverage proving verified representative export artifacts are
+   built from represented subject data.
+2. Prove representative export artifacts are requester-owned, not subject-owned.
+3. Prove represented subjects cannot read representative-owned artifacts through
+   own-artifact endpoints.
+4. Prove representative erase DSRs erase the represented subject, not the
+   representative requester.
+5. Document fulfilment/export/erasure semantics for representative DSRs.
 
 ### Failure cases to cover
 
-- Unknown represented subject IDs return controlled 4xx errors before insert.
-- Verification is rejected for non-representative DSRs.
-- Representative authority cannot be changed after approval/terminal states.
-- Rejected representative authority keeps approval blocked.
-- Verifier-only DSR rows appear in exports as reference records without exposing
-  requester or subject identifiers.
+- Export generation accidentally uses representative requester data.
+- Export artifact ownership is accidentally changed from requester to subject.
+- Represented subject can download a representative-owned artifact.
+- Erasure execution accidentally erases the representative requester.
+- Fulfilment semantics drift without documentation.
+
+## Final #328 closure reconciliation
+
+Status: Not started.
+
+### Remaining scope
+
+After PR-328-9C is merged:
+
+1. Re-run full CI.
+2. Check issue #328 against all child/follow-up work.
+3. Update the closure checklist.
+4. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 
