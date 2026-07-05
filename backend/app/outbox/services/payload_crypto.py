@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from cryptography.fernet import Fernet, InvalidToken
+from pydantic import SecretStr
 
 from app.core.config.settings import Settings, get_settings
 
 _LOCAL_TEST_FALLBACK_FERNET_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 
 
+def _secret_value(secret: SecretStr | str) -> str:
+    if isinstance(secret, SecretStr):
+        return secret.get_secret_value()
+    return secret
+
+
 def resolve_outbox_encryption_key(*, settings: Settings | None = None) -> str:
     current_settings = settings or get_settings()
     configured_key = current_settings.security.outbox_token_encryption_key
-    if configured_key:
-        return configured_key
+    if configured_key is not None:
+        return _secret_value(configured_key)
     if current_settings.app.environment in {"local", "test"}:
         return _LOCAL_TEST_FALLBACK_FERNET_KEY
     raise ValueError("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY must be configured")

@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import hvac
 from hvac.exceptions import InvalidPath
+from pydantic import SecretStr
 
 from app.core.config.settings import VaultSettings
+
+
+def _optional_secret_value(secret: SecretStr | str | None) -> str | None:
+    if secret is None:
+        return None
+    if isinstance(secret, SecretStr):
+        return secret.get_secret_value()
+    return secret
 
 
 class VaultSecretsProvider:
@@ -31,7 +40,7 @@ class VaultSecretsProvider:
     def _build_client(self) -> hvac.Client:
         client = hvac.Client(
             url=self.settings.addr,
-            token=self.settings.token,
+            token=_optional_secret_value(self.settings.token),
             namespace=self.settings.namespace,
         )
 
@@ -41,12 +50,14 @@ class VaultSecretsProvider:
             return client
 
         if self.settings.auth_method == "approle":
-            if not self.settings.role_id or not self.settings.secret_id:
+            role_id = _optional_secret_value(self.settings.role_id)
+            secret_id = _optional_secret_value(self.settings.secret_id)
+            if not role_id or not secret_id:
                 raise RuntimeError("Vault AppRole auth requires role_id and secret_id")
 
             client.auth.approle.login(
-                role_id=self.settings.role_id,
-                secret_id=self.settings.secret_id,
+                role_id=role_id,
+                secret_id=secret_id,
             )
 
             if not client.is_authenticated():
