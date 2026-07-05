@@ -92,9 +92,9 @@ Priority: P2
 Type: `test(privacy)`
 Recommended branch: `test/privacy-dsr-representative-fulfilment`
 Recommended PR title: `🧹 chore(privacy): cover representative DSR fulfilment`
-Status: Patch prepared; not merged.
+Status: Done in merged PR #435; re-verified after merge.
 
-### Prepared scope
+### Delivered scope
 
 1. Add regression coverage proving verified representative export artifacts are
    built from represented subject data.
@@ -115,16 +115,17 @@ Status: Patch prepared; not merged.
 
 ## Final #328 closure reconciliation
 
-Status: Not started.
+Status: Ready after the runtime secret masking patch is merged and CI passes.
 
 ### Remaining scope
 
-After PR-328-9C is merged:
+After the runtime secret masking patch is merged:
 
 1. Re-run full CI.
-2. Check issue #328 against all child/follow-up work.
-3. Update the closure checklist.
-4. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+2. Confirm all runtime secret-like settings are masked through `SecretStr`.
+3. Check issue #328 against all child/follow-up work.
+4. Update the closure checklist.
+5. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 

@@ -1,6 +1,7 @@
 import pytest
 
 from app.core.config.settings import get_settings
+from app.outbox.services.payload_crypto import resolve_outbox_encryption_key
 from tests.helpers.settings import reset_settings_cache
 
 FERNET_TEST_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
@@ -175,6 +176,61 @@ def test_rate_limiting_identifier_secret_is_redacted_in_model_dump(monkeypatch) 
 
     serialised = repr(settings.model_dump())
     assert secret not in serialised
+    assert "**********" in serialised
+
+    reset_settings_cache()
+
+
+@pytest.mark.security
+def test_remaining_runtime_secret_settings_are_redacted(monkeypatch) -> None:
+    vault_token = "vault-token-secret"
+    vault_role_id = "vault-role-id-secret"
+    vault_secret_id = "vault-secret-id-secret"
+    keycloak_secret = "keycloak-client-secret"
+    local_signing_secret = "local-export-signing-secret"
+
+    monkeypatch.setenv("APP__ENVIRONMENT", "test")
+    monkeypatch.setenv("VAULT__TOKEN", vault_token)
+    monkeypatch.setenv("VAULT__ROLE_ID", vault_role_id)
+    monkeypatch.setenv("VAULT__SECRET_ID", vault_secret_id)
+    monkeypatch.setenv("SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY", FERNET_TEST_KEY)
+    monkeypatch.setenv("SECURITY__KEYCLOAK_CLIENT_SECRET", keycloak_secret)
+    monkeypatch.setenv("PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET", local_signing_secret)
+
+    reset_settings_cache()
+    settings = get_settings()
+
+    assert settings.vault.token is not None
+    assert settings.vault.token.get_secret_value() == vault_token
+    assert settings.vault.role_id is not None
+    assert settings.vault.role_id.get_secret_value() == vault_role_id
+    assert settings.vault.secret_id is not None
+    assert settings.vault.secret_id.get_secret_value() == vault_secret_id
+    assert settings.security.outbox_token_encryption_key is not None
+    assert (
+        settings.security.outbox_token_encryption_key.get_secret_value()
+        == FERNET_TEST_KEY
+    )
+    assert settings.security.keycloak_client_secret is not None
+    assert (
+        settings.security.keycloak_client_secret.get_secret_value() == keycloak_secret
+    )
+    assert (
+        settings.privacy_exports.local_signing_secret.get_secret_value()
+        == local_signing_secret
+    )
+    assert resolve_outbox_encryption_key(settings=settings) == FERNET_TEST_KEY
+
+    serialised = repr(settings.model_dump())
+    for raw_secret in (
+        vault_token,
+        vault_role_id,
+        vault_secret_id,
+        FERNET_TEST_KEY,
+        keycloak_secret,
+        local_signing_secret,
+    ):
+        assert raw_secret not in serialised
     assert "**********" in serialised
 
     reset_settings_cache()

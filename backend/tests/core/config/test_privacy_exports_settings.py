@@ -186,3 +186,25 @@ def test_default_local_export_signing_secret_is_allowed_when_exports_disabled() 
     settings = Settings(**kwargs)
 
     assert settings.privacy_exports.enabled is False
+    assert settings.privacy_exports.local_signing_secret.get_secret_value()
+
+
+def test_local_export_signing_secret_is_trimmed_and_masked() -> None:
+    raw_secret = "local-export-signing-secret"
+    settings = Settings(
+        privacy_exports={
+            "enabled": False,
+            "local_signing_secret": f"  {raw_secret}  ",
+        }
+    )
+
+    assert (
+        settings.privacy_exports.local_signing_secret.get_secret_value() == raw_secret
+    )
+    assert raw_secret not in repr(settings.model_dump())
+    assert "**********" in repr(settings.model_dump())
+
+
+def test_blank_local_export_signing_secret_is_rejected() -> None:
+    with pytest.raises(ValueError, match="LOCAL_SIGNING_SECRET"):
+        Settings(privacy_exports={"local_signing_secret": "   "})

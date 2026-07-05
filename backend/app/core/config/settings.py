@@ -49,6 +49,24 @@ def _normalise_optional_string(value: str | None) -> str | None:
     return normalised or None
 
 
+def _normalise_optional_secret(value: object) -> SecretStr | None:
+    if value is None:
+        return None
+    if isinstance(value, SecretStr):
+        raw_value = value.get_secret_value()
+    else:
+        raw_value = str(value)
+    normalised = raw_value.strip()
+    return SecretStr(normalised) if normalised else None
+
+
+def _normalise_required_secret(value: object, *, env_name: str) -> SecretStr:
+    normalised = _normalise_optional_secret(value)
+    if normalised is None:
+        raise ValueError(f"{env_name} must not be empty")
+    return normalised
+
+
 def _normalise_cidr_list(value: list[str] | tuple[str, ...] | str | None) -> list[str]:
     result: list[str] = []
     for raw_item in _normalise_string_list(value):
@@ -139,15 +157,20 @@ class VaultSettings(BaseModel):
     enabled: bool = False
     addr: str = "http://vault:8200"
     namespace: str | None = None
-    token: str | None = None
+    token: SecretStr | None = None
     mount: str = "secret"
     path: str = "fastapi-saas-template"
     auth_method: Literal["token", "approle"] = "token"
-    role_id: str | None = None
-    secret_id: str | None = None
+    role_id: SecretStr | None = None
+    secret_id: SecretStr | None = None
     fail_fast: bool = False
     tls_required: bool = True
     allow_plaintext_private_network: bool = False
+
+    @field_validator("token", "role_id", "secret_id", mode="before")
+    @classmethod
+    def normalise_optional_secret(cls, value: object) -> SecretStr | None:
+        return _normalise_optional_secret(value)
 
 
 class DatabaseSettings(BaseModel):
@@ -182,23 +205,22 @@ class RedisSettings(BaseModel):
 
 
 class SecuritySettings(BaseModel):
-    outbox_token_encryption_key: str | None = None
+    outbox_token_encryption_key: SecretStr | None = None
 
-    @field_validator("outbox_token_encryption_key")
+    @field_validator("outbox_token_encryption_key", mode="before")
     @classmethod
-    def validate_outbox_token_encryption_key(cls, value: str | None) -> str | None:
-        if value is None:
+    def validate_outbox_token_encryption_key(cls, value: object) -> SecretStr | None:
+        normalised_secret = _normalise_optional_secret(value)
+        if normalised_secret is None:
             return None
-        normalized = value.strip()
-        if not normalized:
-            return None
+        normalised = normalised_secret.get_secret_value()
         try:
-            Fernet(normalized.encode("utf-8"))
+            Fernet(normalised.encode("utf-8"))
         except Exception as exc:
             raise ValueError(
                 "SECURITY__OUTBOX_TOKEN_ENCRYPTION_KEY must be a valid Fernet key"
             ) from exc
-        return normalized
+        return SecretStr(normalised)
 
     """
     Security settings that are unrelated to runtime JWT validation.
@@ -206,7 +228,12 @@ class SecuritySettings(BaseModel):
     Runtime JWT validation configuration is sourced from `auth.*` only.
     """
 
-    keycloak_client_secret: str | None = None
+    keycloak_client_secret: SecretStr | None = None
+
+    @field_validator("keycloak_client_secret", mode="before")
+    @classmethod
+    def normalise_keycloak_client_secret(cls, value: object) -> SecretStr | None:
+        return _normalise_optional_secret(value)
 
 
 class AuthSettings(BaseModel):
@@ -499,7 +526,9 @@ class PrivacyExportsSettings(BaseModel):
     artifact_retention_days: int = Field(default=30, ge=1)
     max_artifact_size_bytes: int = Field(default=10_485_760, gt=0)
     schema_version: str = "1.0"
-    local_signing_secret: str = _DEFAULT_LOCAL_EXPORT_SIGNING_SECRET
+    local_signing_secret: SecretStr = Field(
+        default_factory=lambda: SecretStr(_DEFAULT_LOCAL_EXPORT_SIGNING_SECRET)
+    )
     s3_endpoint_url: str | None = None
     s3_region_name: str | None = None
     s3_bucket_name: str | None = None
@@ -513,6 +542,13 @@ class PrivacyExportsSettings(BaseModel):
     s3_connect_timeout_seconds: float = Field(default=3.0, gt=0)
     s3_read_timeout_seconds: float = Field(default=10.0, gt=0)
     s3_max_attempts: int = Field(default=3, gt=0, le=10)
+
+    @field_validator("local_signing_secret", mode="before")
+    @classmethod
+    def normalise_local_signing_secret(cls, value: object) -> SecretStr:
+        return _normalise_required_secret(
+            value, env_name="PRIVACY_EXPORTS__LOCAL_SIGNING_SECRET"
+        )
 
     @field_validator(
         "s3_region_name",
