@@ -42,13 +42,13 @@ tasks:
         --dry-run --once
 
   privacy:retention:once:
-    desc: Run one expired privacy export artifact retention pass.
+    desc: Run one privacy retention pass across DSR-adjacent data.
     dir: backend
     cmds:
       - uv run --locked python -m app.privacy.retention_cli
 
   privacy:retention:dry-run:
-    desc: Count expired privacy export artifacts without mutating state.
+    desc: Preview one privacy retention pass without mutating data or storage.
     dir: backend
     cmds:
       - uv run --locked python -m app.privacy.retention_cli --dry-run

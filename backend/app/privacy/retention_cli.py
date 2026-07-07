@@ -5,7 +5,7 @@ import asyncio
 import logging
 
 from app.core.db.session import dispose_engine, get_session_factory
-from app.privacy.maintenance import expire_ready_export_artifacts
+from app.privacy.maintenance import run_privacy_retention_maintenance
 
 logger = logging.getLogger(__name__)
 
@@ -13,15 +13,15 @@ logger = logging.getLogger(__name__)
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Expire ready privacy export artifacts and purge their stored "
-            "archive objects."
+            "Run one privacy retention pass across export artifacts, invites, "
+            "outbox payloads, audit events, and expired DSR idempotency keys."
         ),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help=(
-            "Show how many artifacts would be expired without changing data "
+            "Show how many rows/objects would be retained without changing data "
             "or deleting storage objects."
         ),
     )
@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--batch-size",
         type=int,
         default=1000,
-        help="Maximum number of expired ready artifacts to process in one run.",
+        help="Maximum rows/objects to process per retention step in one run.",
     )
     parser.add_argument(
         "--quiet",
@@ -39,13 +39,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def run_once(*, dry_run: bool = False, batch_size: int = 1000) -> int:
+async def run_once(*, dry_run: bool = False, batch_size: int = 1000) -> dict[str, int]:
     if batch_size < 1:
-        raise ValueError("Privacy export retention batch size must be positive")
+        raise ValueError("Privacy retention batch size must be positive")
 
     session_factory = get_session_factory()
     async with session_factory() as session:
-        expired_count = await expire_ready_export_artifacts(
+        summary = await run_privacy_retention_maintenance(
             session,
             dry_run=dry_run,
             limit=batch_size,
@@ -54,26 +54,29 @@ async def run_once(*, dry_run: bool = False, batch_size: int = 1000) -> int:
             await session.rollback()
         else:
             await session.commit()
-    return expired_count
+    return summary.as_log_extra()
 
 
 async def _amain(*, quiet: bool, dry_run: bool, batch_size: int) -> int:
     try:
-        expired_count = await run_once(
+        summary = await run_once(
             dry_run=dry_run,
             batch_size=batch_size,
         )
-        action = "would expire" if dry_run else "expired"
-        logger.info(
-            "Privacy export retention %s %s artifact(s)",
-            action,
-            expired_count,
-        )
+        action = "would retain" if dry_run else "retained"
+        logger.info("Privacy retention %s rows/objects", action, extra=summary)
         if not quiet:
-            print(f"Privacy export retention {action} {expired_count} artifact(s)")
+            print(_format_summary(action=action, summary=summary))
         return 0
     finally:
         await dispose_engine()
+
+
+def _format_summary(*, action: str, summary: dict[str, int]) -> str:
+    details = ", ".join(
+        f"{key}={value}" for key, value in summary.items() if key != "total"
+    )
+    return f"Privacy retention {action} {summary['total']} total ({details})"
 
 
 def main() -> int:
