@@ -163,6 +163,8 @@ Status: Open in PR #437; Codex review follow-up patch prepared.
 - Audit rows under active legal hold are excluded from retention minimisation.
 - Audit bulk updates recheck legal-hold eligibility at mutation time.
 - Export artifact object deletion remains delegated to `ExportArtifactService`.
+- Storage-deleting export artifact retention runs after database-only retention
+  steps to avoid rollback/storage inconsistency if a later DB step fails.
 
 ### Codex review follow-up
 
@@ -173,6 +175,8 @@ Status: Open in PR #437; Codex review follow-up patch prepared.
 3. Fixed the audit legal-hold race by reusing the audit eligibility predicates
    in the bulk `UPDATE`, not only during ID selection.
 4. Added regression tests for all three failure cases.
+5. Fixed storage rollback inconsistency by running storage-deleting export
+   artifact retention after database-only invite/outbox/audit/DSR steps.
 
 ## Final #328 closure reconciliation
 

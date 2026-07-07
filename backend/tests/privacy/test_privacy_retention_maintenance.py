@@ -538,3 +538,50 @@ def test_privacy_retention_audit_update_rechecks_legal_hold(
             assert audit_event.user_agent == "Browser/2.0"
 
     run_async(_run())
+
+
+def test_privacy_retention_defers_storage_deletion_until_database_steps_pass(
+    monkeypatch,
+    migrated_session_factory,
+) -> None:
+    class RetentionStepFailure(RuntimeError):
+        pass
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            artifact_id, storage_key, dsr_id = await _create_expired_ready_artifact(
+                session
+            )
+            service = ExportArtifactService(session)
+
+            async def _fail_dsr_idempotency_cleanup(
+                session,
+                *,
+                now: datetime,
+                limit: int,
+                dry_run: bool,
+            ) -> int:
+                raise RetentionStepFailure("database-only retention failed")
+
+            monkeypatch.setattr(
+                privacy_maintenance,
+                "_clean_expired_dsr_idempotency_keys",
+                _fail_dsr_idempotency_cleanup,
+            )
+
+            with pytest.raises(RetentionStepFailure):
+                await privacy_maintenance.run_privacy_retention_maintenance(session)
+
+            persisted_artifact = await service.repo.get_by_id(artifact_id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.status == ExportArtifactStatus.READY.value
+            assert persisted_artifact.storage_key == storage_key
+            assert service.storage.exists(storage_key) is True
+            persisted_dsr = await service.dsr_repo.get_by_id(dsr_id)
+            assert persisted_dsr is not None
+            assert (
+                persisted_dsr.execution_status
+                == DataSubjectRequestExecutionStatus.READY.value
+            )
+
+    run_async(_run())

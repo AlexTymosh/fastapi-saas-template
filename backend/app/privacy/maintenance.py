@@ -68,43 +68,51 @@ async def run_privacy_retention_maintenance(
 
     Dry-run mode performs a non-mutating database/storage preview. Each step is
     capped by ``limit`` so operators can safely run repeated maintenance passes.
+    Database-only retention steps run before storage-deleting export cleanup so
+    later database failures cannot leave export rows pointing at purged objects.
     """
 
     if limit < 1:
         raise ValueError("Privacy retention batch size must be positive")
 
     reference_now = _normalise_utc(now)
+    anonymised_invites = await _anonymise_retained_invites(
+        session,
+        now=reference_now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    scrubbed_outbox_events = await _scrub_retained_outbox_events(
+        session,
+        now=reference_now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    minimised_audit_events = await _minimise_retained_audit_events(
+        session,
+        now=reference_now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    cleaned_dsr_idempotency_keys = await _clean_expired_dsr_idempotency_keys(
+        session,
+        now=reference_now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    expired_export_artifacts = await expire_ready_export_artifacts(
+        session,
+        now=reference_now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+
     return PrivacyRetentionMaintenanceSummary(
-        expired_export_artifacts=await expire_ready_export_artifacts(
-            session,
-            now=reference_now,
-            limit=limit,
-            dry_run=dry_run,
-        ),
-        anonymised_invites=await _anonymise_retained_invites(
-            session,
-            now=reference_now,
-            limit=limit,
-            dry_run=dry_run,
-        ),
-        scrubbed_outbox_events=await _scrub_retained_outbox_events(
-            session,
-            now=reference_now,
-            limit=limit,
-            dry_run=dry_run,
-        ),
-        minimised_audit_events=await _minimise_retained_audit_events(
-            session,
-            now=reference_now,
-            limit=limit,
-            dry_run=dry_run,
-        ),
-        cleaned_dsr_idempotency_keys=await _clean_expired_dsr_idempotency_keys(
-            session,
-            now=reference_now,
-            limit=limit,
-            dry_run=dry_run,
-        ),
+        expired_export_artifacts=expired_export_artifacts,
+        anonymised_invites=anonymised_invites,
+        scrubbed_outbox_events=scrubbed_outbox_events,
+        minimised_audit_events=minimised_audit_events,
+        cleaned_dsr_idempotency_keys=cleaned_dsr_idempotency_keys,
     )
 
 

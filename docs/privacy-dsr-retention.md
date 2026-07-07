@@ -45,6 +45,9 @@ and DSR idempotency rows.
 - Audit rows with an active legal hold are excluded from retention minimisation.
 - Audit minimisation rechecks age, legal-hold and mutable-field predicates in the
   bulk `UPDATE`, not only during the initial ID selection.
+- Database-only retention steps run before the storage-deleting export artifact
+  cleanup. A later database-only failure must not leave export rows restored by
+  rollback while their archive object has already been purged.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so
   DB state and object storage cleanup stay consistent.
 
