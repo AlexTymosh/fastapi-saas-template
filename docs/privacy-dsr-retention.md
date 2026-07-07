@@ -37,9 +37,14 @@ and DSR idempotency rows.
 
 - The maintenance helper does not commit. The caller owns transaction control.
 - Dry-run mode performs a preview and must not mutate database rows or storage.
+- Invite and outbox SQL queries filter out already retained rows before applying
+  the batch limit. Repeated runs must not let older no-op rows starve later
+  mutable rows.
 - Pending and processing outbox events are excluded because a worker may still
   hold or deliver their payload.
 - Audit rows with an active legal hold are excluded from retention minimisation.
+- Audit minimisation rechecks age, legal-hold and mutable-field predicates in the
+  bulk `UPDATE`, not only during the initial ID selection.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so
   DB state and object storage cleanup stay consistent.
 

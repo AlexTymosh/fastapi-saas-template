@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.models.audit_event import AuditCategory, AuditEvent
 from app.core.config.settings import get_settings
 from app.invites.anonymisation import (
+    SCRUBBED_INVITE_EMAIL_DOMAIN,
+    SCRUBBED_INVITE_TOKEN_PREFIX,
     is_scrubbed_invite,
     scrubbed_invite_email,
     scrubbed_invite_token_hash,
@@ -191,7 +193,8 @@ async def _load_retained_invites(
                     )
                     <= revoked_cutoff,
                 ),
-            )
+            ),
+            _invite_needs_retention_condition(),
         )
         .order_by(Invite.updated_at.asc(), Invite.id.asc())
         .limit(limit)
@@ -199,6 +202,17 @@ async def _load_retained_invites(
         .execution_options(populate_existing=True)
     )
     return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _invite_needs_retention_condition() -> object:
+    scrubbed_email_pattern = f"%@{SCRUBBED_INVITE_EMAIL_DOMAIN}"
+    scrubbed_token_pattern = f"{SCRUBBED_INVITE_TOKEN_PREFIX}:%"
+    return or_(
+        ~Invite.email.like(scrubbed_email_pattern),
+        ~Invite.token_hash.like(scrubbed_token_pattern),
+        Invite.revoked_by_user_id.is_not(None),
+        Invite.expires_at.is_not(None),
+    )
 
 
 def _invite_needs_retention(invite: Invite) -> bool:
@@ -254,6 +268,7 @@ async def _load_retained_outbox_events(
                 OutboxEvent.created_at,
             )
             <= cutoff,
+            _outbox_event_needs_retention_condition(),
         )
         .order_by(OutboxEvent.created_at.asc(), OutboxEvent.id.asc())
         .limit(limit)
@@ -261,6 +276,24 @@ async def _load_retained_outbox_events(
         .execution_options(populate_existing=True)
     )
     return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _outbox_event_needs_retention_condition() -> object:
+    payload_marker = OutboxEvent.payload_json[_PRIVACY_RETENTION_MARKER].as_boolean()
+    failed_with_free_text = and_(
+        OutboxEvent.status == OutboxStatus.FAILED.value,
+        OutboxEvent.last_error.is_not(None),
+        OutboxEvent.last_error != _PRIVACY_RETENTION_LAST_ERROR,
+    )
+    stale_delivery_claim = or_(
+        OutboxEvent.locked_at.is_not(None),
+        OutboxEvent.next_attempt_at.is_not(None),
+    )
+    return or_(
+        payload_marker.is_not(True),
+        failed_with_free_text,
+        stale_delivery_claim,
+    )
 
 
 def _outbox_event_needs_retention(event: OutboxEvent) -> bool:
@@ -312,7 +345,10 @@ async def _minimise_retained_audit_events(
 
     result = await session.execute(
         update(AuditEvent)
-        .where(AuditEvent.id.in_(ids))
+        .where(
+            AuditEvent.id.in_(ids),
+            *_retained_audit_event_filters(now),
+        )
         .values(
             actor_user_id=None,
             reason=None,
@@ -331,6 +367,24 @@ async def _retained_audit_event_ids(
     now: datetime,
     limit: int,
 ) -> tuple[Any, ...]:
+    stmt = (
+        select(AuditEvent.id)
+        .where(*_retained_audit_event_filters(now))
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+        .limit(limit)
+    )
+    return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _retained_audit_event_filters(now: datetime) -> tuple[object, ...]:
+    return (
+        _audit_retention_age_condition(now),
+        _audit_legal_hold_released_condition(now),
+        _audit_event_needs_retention_condition(),
+    )
+
+
+def _audit_retention_age_condition(now: datetime) -> object:
     settings = get_settings().audit
     default_cutoff = now - timedelta(days=settings.retention_days)
     security_cutoff = now - timedelta(days=settings.security_retention_days)
@@ -339,40 +393,37 @@ async def _retained_audit_event_ids(
         AuditCategory.SECURITY.value,
         AuditCategory.COMPLIANCE.value,
     )
-
-    stmt = (
-        select(AuditEvent.id)
-        .where(
-            or_(
-                and_(
-                    AuditEvent.category == AuditCategory.SECURITY.value,
-                    AuditEvent.created_at <= security_cutoff,
-                ),
-                and_(
-                    AuditEvent.category == AuditCategory.COMPLIANCE.value,
-                    AuditEvent.created_at <= compliance_cutoff,
-                ),
-                and_(
-                    AuditEvent.category.notin_(protected_categories),
-                    AuditEvent.created_at <= default_cutoff,
-                ),
-            ),
-            or_(
-                AuditEvent.legal_hold_until.is_(None),
-                AuditEvent.legal_hold_until <= now,
-            ),
-            or_(
-                AuditEvent.actor_user_id.is_not(None),
-                AuditEvent.reason.is_not(None),
-                AuditEvent.metadata_json.is_not(None),
-                AuditEvent.ip_address.is_not(None),
-                AuditEvent.user_agent.is_not(None),
-            ),
-        )
-        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
-        .limit(limit)
+    return or_(
+        and_(
+            AuditEvent.category == AuditCategory.SECURITY.value,
+            AuditEvent.created_at <= security_cutoff,
+        ),
+        and_(
+            AuditEvent.category == AuditCategory.COMPLIANCE.value,
+            AuditEvent.created_at <= compliance_cutoff,
+        ),
+        and_(
+            AuditEvent.category.notin_(protected_categories),
+            AuditEvent.created_at <= default_cutoff,
+        ),
     )
-    return tuple((await session.execute(stmt)).scalars().all())
+
+
+def _audit_legal_hold_released_condition(now: datetime) -> object:
+    return or_(
+        AuditEvent.legal_hold_until.is_(None),
+        AuditEvent.legal_hold_until <= now,
+    )
+
+
+def _audit_event_needs_retention_condition() -> object:
+    return or_(
+        AuditEvent.actor_user_id.is_not(None),
+        AuditEvent.reason.is_not(None),
+        AuditEvent.metadata_json.is_not(None),
+        AuditEvent.ip_address.is_not(None),
+        AuditEvent.user_agent.is_not(None),
+    )
 
 
 async def _clean_expired_dsr_idempotency_keys(

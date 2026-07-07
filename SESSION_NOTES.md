@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-07-05
+Date: 2026-07-07
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -36,9 +36,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   covered.
 - PR #436 is merged into `main`.
 - Runtime secret masking hardening is done.
-- PR-328-10A is prepared in this patch: retention maintenance is expanded beyond
-  export artifacts to invite lifecycle rows, delivered/failed outbox payloads,
-  old audit free-form/network/actor context, and expired DSR idempotency keys.
+- PR #437 is open for PR-328-10A. Codex review follow-up is prepared for
+  invite/outbox batch starvation and audit legal-hold recheck gaps.
 
 ## Roadmap status
 
@@ -53,7 +52,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 7 | PostgreSQL DSR provider integration tests | Yes | Done |
 | 8 | Streaming DSR export archive generation | Yes | Done |
 | 9 | Authorised representative DSR workflow | Yes | Done |
-| 10A | Expand retention beyond export artifacts | Yes | Done |
+| 10A | Expand retention beyond export artifacts | Yes | Prepared in this patch |
 | 10B | DSR operations visibility | Yes | Not started |
 | 10C | DSR permission contract cleanup | Yes | Not started |
 | 10D | Provider contract alignment | Yes | Not started |
@@ -132,7 +131,7 @@ Priority: P1
 Type: `feat(privacy)`
 Recommended branch: `privacy/dsr-retention-maintenance-hardening`
 Recommended PR title: `✨ feat(privacy): expand DSR retention maintenance`
-Status: Prepared in this patch; run focused tests before opening PR.
+Status: Open in PR #437; Codex review follow-up patch prepared.
 
 ### Delivered scope
 
@@ -158,9 +157,22 @@ Status: Prepared in this patch; run focused tests before opening PR.
 
 - The runner does not commit; transaction ownership stays with the caller.
 - Dry-run mode must not mutate DB rows or delete storage objects.
+- Invite retention filters already-retained rows before applying the batch cap.
+- Outbox retention filters already-scrubbed rows before applying the batch cap.
 - Outbox `pending` and `processing` rows are excluded to avoid delivery races.
 - Audit rows under active legal hold are excluded from retention minimisation.
+- Audit bulk updates recheck legal-hold eligibility at mutation time.
 - Export artifact object deletion remains delegated to `ExportArtifactService`.
+
+### Codex review follow-up
+
+1. Fixed invite batch starvation by pushing the needs-retention predicate into
+   the SQL query before `LIMIT`.
+2. Fixed outbox batch starvation by pushing the already-scrubbed marker and
+   failed-error checks into the SQL query before `LIMIT`.
+3. Fixed the audit legal-hold race by reusing the audit eligibility predicates
+   in the bulk `UPDATE`, not only during ID selection.
+4. Added regression tests for all three failure cases.
 
 ## Final #328 closure reconciliation
 

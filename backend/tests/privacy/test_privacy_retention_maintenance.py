@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import update
 
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import (
@@ -16,11 +17,14 @@ from app.core.config.settings import get_settings
 from app.invites.anonymisation import (
     SCRUBBED_INVITE_EMAIL_DOMAIN,
     SCRUBBED_INVITE_TOKEN_PREFIX,
+    scrubbed_invite_email,
+    scrubbed_invite_token_hash,
 )
 from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import MembershipRole
 from app.organisations.models.organisation import Organisation
 from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
+from app.privacy import maintenance as privacy_maintenance
 from app.privacy.maintenance import (
     expire_ready_export_artifacts,
     run_privacy_retention_maintenance,
@@ -98,9 +102,7 @@ async def _create_expired_ready_artifact(session):
     return artifact.id, storage_key, dsr.id
 
 
-async def _create_retained_privacy_rows(session):
-    now = datetime.now(UTC)
-    old = now - timedelta(days=get_settings().audit.retention_days + 1)
+async def _create_retention_subject(session, *, old: datetime):
     user = User(
         external_auth_id=f"kc|{uuid4()}",
         email=f"retention-{uuid4()}@example.com",
@@ -114,6 +116,13 @@ async def _create_retained_privacy_rows(session):
     )
     session.add_all([user, organisation])
     await session.flush()
+    return user, organisation
+
+
+async def _create_retained_privacy_rows(session):
+    now = datetime.now(UTC)
+    old = now - timedelta(days=get_settings().audit.retention_days + 1)
+    user, organisation = await _create_retention_subject(session, old=old)
 
     invite = Invite(
         email=user.email,
@@ -323,5 +332,209 @@ def test_privacy_retention_runner_minimises_non_export_tables(
             assert dsr.idempotency_key_hash is None
             assert dsr.idempotency_fingerprint is None
             assert dsr.idempotency_key_expires_at is None
+
+    run_async(_run())
+
+
+def test_privacy_retention_invite_batch_skips_already_scrubbed_rows(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            invite_retention_days = get_settings().invite_retention.accepted_days
+            old = now - timedelta(days=invite_retention_days + 2)
+            older = old - timedelta(days=1)
+            user, organisation = await _create_retention_subject(session, old=older)
+
+            scrubbed_invite_id = uuid4()
+            target_invite_id = uuid4()
+            session.add_all(
+                [
+                    Invite(
+                        id=scrubbed_invite_id,
+                        email=scrubbed_invite_email(scrubbed_invite_id),
+                        organisation_id=organisation.id,
+                        role=MembershipRole.MEMBER,
+                        status=InviteStatus.ACCEPTED,
+                        token_hash=scrubbed_invite_token_hash(scrubbed_invite_id),
+                        expires_at=None,
+                        revoked_by_user_id=None,
+                        created_at=older,
+                        updated_at=older,
+                    ),
+                    Invite(
+                        id=target_invite_id,
+                        email=user.email,
+                        organisation_id=organisation.id,
+                        role=MembershipRole.MEMBER,
+                        status=InviteStatus.ACCEPTED,
+                        token_hash=f"token-{uuid4()}",
+                        expires_at=old,
+                        revoked_by_user_id=user.id,
+                        created_at=old,
+                        updated_at=old,
+                    ),
+                ]
+            )
+            await session.flush()
+
+            summary = await run_privacy_retention_maintenance(
+                session,
+                now=now,
+                limit=1,
+            )
+
+            assert summary.anonymised_invites == 1
+            target_invite = await session.get(Invite, target_invite_id)
+            assert target_invite is not None
+            assert target_invite.email == scrubbed_invite_email(target_invite_id)
+            assert target_invite.token_hash == scrubbed_invite_token_hash(
+                target_invite_id
+            )
+            assert target_invite.expires_at is None
+            assert target_invite.revoked_by_user_id is None
+
+    run_async(_run())
+
+
+def test_privacy_retention_outbox_batch_skips_already_scrubbed_rows(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            old = now - timedelta(days=31)
+            older = old - timedelta(days=1)
+            scrubbed_event_id = uuid4()
+            target_event_id = uuid4()
+            target_invite_id = uuid4()
+            organisation_id = uuid4()
+
+            session.add_all(
+                [
+                    OutboxEvent(
+                        id=scrubbed_event_id,
+                        event_type=OutboxEventType.INVITE_CREATED.value,
+                        aggregate_type="invite",
+                        aggregate_id=uuid4(),
+                        payload_json={"privacy_retention_scrubbed": True},
+                        status=OutboxStatus.PROCESSED.value,
+                        processed_at=older,
+                        created_at=older,
+                        updated_at=older,
+                    ),
+                    OutboxEvent(
+                        id=target_event_id,
+                        event_type=OutboxEventType.INVITE_CREATED.value,
+                        aggregate_type="invite",
+                        aggregate_id=target_invite_id,
+                        payload_json={
+                            "email": "retention@example.com",
+                            "encrypted_raw_token": "ciphertext",
+                            "invite_id": str(target_invite_id),
+                            "organisation_id": str(organisation_id),
+                            "role": MembershipRole.MEMBER.value,
+                        },
+                        status=OutboxStatus.FAILED.value,
+                        attempts=1,
+                        max_attempts=1,
+                        processed_at=old,
+                        last_error="delivery failed for retention@example.com",
+                        created_at=old,
+                        updated_at=old,
+                    ),
+                ]
+            )
+            await session.flush()
+
+            summary = await run_privacy_retention_maintenance(
+                session,
+                now=now,
+                limit=1,
+            )
+
+            assert summary.scrubbed_outbox_events == 1
+            target_event = await session.get(OutboxEvent, target_event_id)
+            assert target_event is not None
+            assert target_event.payload_json == {
+                "invite_id": str(target_invite_id),
+                "organisation_id": str(organisation_id),
+                "role": MembershipRole.MEMBER.value,
+                "sensitive_payload_scrubbed": True,
+                "privacy_retention_scrubbed": True,
+            }
+            assert target_event.last_error == "privacy_retention_scrubbed"
+
+    run_async(_run())
+
+
+def test_privacy_retention_audit_update_rechecks_legal_hold(
+    monkeypatch,
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            old = now - timedelta(days=get_settings().audit.retention_days + 1)
+            user = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=f"audit-retention-{uuid4()}@example.com",
+                email_verified=True,
+            )
+            session.add(user)
+            await session.flush()
+
+            audit_event = AuditEvent(
+                actor_user_id=user.id,
+                category=AuditCategory.TENANT.value,
+                action=AuditAction.USER_SUSPENDED.value,
+                target_type=AuditTargetType.USER.value,
+                target_id=user.id,
+                reason="manual review",
+                metadata_json={"case": "retention"},
+                ip_address="192.0.2.20",
+                user_agent="Browser/2.0",
+                created_at=old,
+            )
+            session.add(audit_event)
+            await session.flush()
+
+            original_selector = privacy_maintenance._retained_audit_event_ids
+
+            async def _select_then_place_legal_hold(
+                session,
+                *,
+                now: datetime,
+                limit: int,
+            ):
+                ids = await original_selector(session, now=now, limit=limit)
+                await session.execute(
+                    update(AuditEvent)
+                    .where(AuditEvent.id.in_(ids))
+                    .values(legal_hold_until=now + timedelta(days=1))
+                    .execution_options(synchronize_session=False)
+                )
+                return ids
+
+            monkeypatch.setattr(
+                privacy_maintenance,
+                "_retained_audit_event_ids",
+                _select_then_place_legal_hold,
+            )
+
+            summary = await privacy_maintenance.run_privacy_retention_maintenance(
+                session,
+                now=now,
+            )
+
+            assert summary.minimised_audit_events == 0
+            await session.refresh(audit_event)
+            assert audit_event.legal_hold_until is not None
+            assert audit_event.actor_user_id == user.id
+            assert audit_event.reason == "manual review"
+            assert audit_event.metadata_json == {"case": "retention"}
+            assert audit_event.ip_address == "192.0.2.20"
+            assert audit_event.user_agent == "Browser/2.0"
 
     run_async(_run())
