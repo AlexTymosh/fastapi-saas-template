@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-07-03
+Date: 2026-07-05
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -31,6 +31,14 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR #434 is merged into `main`.
 - PR-328-9A is done: authorised representative DSR intake is merged.
 - PR-328-9B is done: representative authority review workflow is merged.
+- PR #435 is merged into `main`.
+- PR-328-9C is done: representative fulfilment/export/erasure semantics are
+  covered.
+- PR #436 is merged into `main`.
+- Runtime secret masking hardening is done.
+- PR-328-10A is prepared in this patch: retention maintenance is expanded beyond
+  export artifacts to invite lifecycle rows, delivered/failed outbox payloads,
+  old audit free-form/network/actor context, and expired DSR idempotency keys.
 
 ## Roadmap status
 
@@ -45,7 +53,12 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 7 | PostgreSQL DSR provider integration tests | Yes | Done |
 | 8 | Streaming DSR export archive generation | Yes | Done |
 | 9 | Authorised representative DSR workflow | Yes | Done |
-| 10 | Final #328 closure reconciliation | Yes | Not started |
+| 10A | Expand retention beyond export artifacts | Yes | Done |
+| 10B | DSR operations visibility | Yes | Not started |
+| 10C | DSR permission contract cleanup | Yes | Not started |
+| 10D | Provider contract alignment | Yes | Not started |
+| 10E | Batched subject export providers | Yes | Not started |
+| 10F | Final #328 closure reconciliation | Yes | Not started |
 
 ## PR-328-9A — Authorised representative DSR intake
 
@@ -113,19 +126,55 @@ Status: Done in merged PR #435; re-verified after merge.
 - Erasure execution accidentally erases the representative requester.
 - Fulfilment semantics drift without documentation.
 
+## PR-328-10A — Expand retention beyond export artifacts
+
+Priority: P1
+Type: `feat(privacy)`
+Recommended branch: `privacy/dsr-retention-maintenance-hardening`
+Recommended PR title: `✨ feat(privacy): expand DSR retention maintenance`
+Status: Prepared in this patch; run focused tests before opening PR.
+
+### Delivered scope
+
+1. Replaced the single-purpose export artifact retention helper with a bounded
+   `run_privacy_retention_maintenance()` orchestration helper.
+2. Preserved `expire_ready_export_artifacts()` for backward-compatible callers
+   and existing tests.
+3. Added invite lifecycle retention for accepted, expired and revoked invite rows:
+   email/token tombstones, `expires_at` cleanup and `revoked_by_user_id`
+   minimisation.
+4. Added delivered/failed outbox payload scrubbing after the delivery retention
+   window while leaving pending/processing rows untouched.
+5. Added audit minimisation for old non-held audit rows: actor link, free-form
+   reason, metadata, IP address and user-agent are removed while action/timestamp
+   integrity remains.
+6. Added expired DSR idempotency metadata cleanup.
+7. Updated `privacy:retention:*` Taskfile descriptions and CLI output so the
+   command reports a per-step retention summary instead of export-only counts.
+8. Expanded privacy retention regression tests for dry-run safety and apply mode.
+9. Added `docs/privacy-dsr-retention.md` with operator guidance and boundaries.
+
+### Regression boundaries
+
+- The runner does not commit; transaction ownership stays with the caller.
+- Dry-run mode must not mutate DB rows or delete storage objects.
+- Outbox `pending` and `processing` rows are excluded to avoid delivery races.
+- Audit rows under active legal hold are excluded from retention minimisation.
+- Export artifact object deletion remains delegated to `ExportArtifactService`.
+
 ## Final #328 closure reconciliation
 
-Status: Ready after the runtime secret masking patch is merged and CI passes.
+Status: Not ready. Continue with PR-328-10B through PR-328-10F.
 
 ### Remaining scope
 
-After the runtime secret masking patch is merged:
-
-1. Re-run full CI.
-2. Confirm all runtime secret-like settings are masked through `SecretStr`.
-3. Check issue #328 against all child/follow-up work.
-4. Update the closure checklist.
-5. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+1. Add DSR operations visibility for failed/stale export and erasure execution.
+2. Resolve the legacy `GDPR_EXPORT` / `GDPR_ERASE` permission contract drift.
+3. Align provider inventory, runtime provider registries and erasure coverage.
+4. Remove high-cardinality eager `.all()` loading from subject export providers.
+5. Re-run full CI.
+6. Update the closure checklist.
+7. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 

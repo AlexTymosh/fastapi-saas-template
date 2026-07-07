@@ -6,8 +6,25 @@ from uuid import uuid4
 import pytest
 
 from app.audit.context import AuditContext
+from app.audit.models.audit_event import (
+    AuditAction,
+    AuditCategory,
+    AuditEvent,
+    AuditTargetType,
+)
 from app.core.config.settings import get_settings
-from app.privacy.maintenance import expire_ready_export_artifacts
+from app.invites.anonymisation import (
+    SCRUBBED_INVITE_EMAIL_DOMAIN,
+    SCRUBBED_INVITE_TOKEN_PREFIX,
+)
+from app.invites.models.invite import Invite, InviteStatus
+from app.memberships.models.membership import MembershipRole
+from app.organisations.models.organisation import Organisation
+from app.outbox.models.outbox_event import OutboxEvent, OutboxEventType, OutboxStatus
+from app.privacy.maintenance import (
+    expire_ready_export_artifacts,
+    run_privacy_retention_maintenance,
+)
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
@@ -81,6 +98,93 @@ async def _create_expired_ready_artifact(session):
     return artifact.id, storage_key, dsr.id
 
 
+async def _create_retained_privacy_rows(session):
+    now = datetime.now(UTC)
+    old = now - timedelta(days=get_settings().audit.retention_days + 1)
+    user = User(
+        external_auth_id=f"kc|{uuid4()}",
+        email=f"retention-{uuid4()}@example.com",
+        email_verified=True,
+    )
+    organisation = Organisation(
+        name="Retention Test Org",
+        slug=f"retention-{uuid4()}",
+        created_at=old,
+        updated_at=old,
+    )
+    session.add_all([user, organisation])
+    await session.flush()
+
+    invite = Invite(
+        email=user.email,
+        organisation_id=organisation.id,
+        role=MembershipRole.MEMBER,
+        status=InviteStatus.ACCEPTED,
+        token_hash=f"token-{uuid4()}",
+        expires_at=old,
+        revoked_by_user_id=user.id,
+        created_at=old,
+        updated_at=old,
+    )
+    session.add(invite)
+    await session.flush()
+
+    outbox_event = OutboxEvent(
+        event_type=OutboxEventType.INVITE_CREATED.value,
+        aggregate_type="invite",
+        aggregate_id=invite.id,
+        payload_json={
+            "email": user.email,
+            "encrypted_raw_token": "ciphertext",
+            "invite_id": str(invite.id),
+            "organisation_id": str(organisation.id),
+            "role": MembershipRole.MEMBER.value,
+        },
+        status=OutboxStatus.FAILED.value,
+        attempts=1,
+        max_attempts=1,
+        processed_at=old,
+        last_error=f"delivery failed for {user.email}",
+        created_at=old,
+        updated_at=old,
+    )
+    audit_event = AuditEvent(
+        actor_user_id=user.id,
+        category=AuditCategory.TENANT.value,
+        action=AuditAction.INVITE_CREATED.value,
+        target_type=AuditTargetType.USER.value,
+        target_id=user.id,
+        reason=f"manual action for {user.email}",
+        metadata_json={"email": user.email},
+        ip_address="192.0.2.10",
+        user_agent="Browser/1.0",
+        created_at=old,
+    )
+    dsr = DataSubjectRequest(
+        request_type="access",
+        status=DataSubjectRequestStatus.SUBMITTED.value,
+        requester_user_id=user.id,
+        subject_user_id=user.id,
+        submitted_at=old,
+        due_at=old + timedelta(days=30),
+        idempotency_key_hash="hash",
+        idempotency_fingerprint="fingerprint",
+        idempotency_key_expires_at=old,
+        created_at=old,
+        updated_at=old,
+    )
+    session.add_all([outbox_event, audit_event, dsr])
+    await session.flush()
+    return {
+        "user_id": user.id,
+        "organisation_id": organisation.id,
+        "invite_id": invite.id,
+        "outbox_event_id": outbox_event.id,
+        "audit_event_id": audit_event.id,
+        "dsr_id": dsr.id,
+    }
+
+
 def test_privacy_retention_dry_run_does_not_mutate_or_delete_storage(
     migrated_session_factory,
 ) -> None:
@@ -138,5 +242,86 @@ def test_privacy_retention_expires_and_purges_storage_object(
                 == DataSubjectRequestExecutionStatus.FAILED.value
             )
             assert persisted_dsr.execution_failure_reason_code == "artifact_expired"
+
+    run_async(_run())
+
+
+def test_privacy_retention_summary_dry_run_covers_non_export_tables(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            ids = await _create_retained_privacy_rows(session)
+
+            summary = await run_privacy_retention_maintenance(
+                session,
+                dry_run=True,
+            )
+
+            assert summary.expired_export_artifacts == 0
+            assert summary.anonymised_invites == 1
+            assert summary.scrubbed_outbox_events == 1
+            assert summary.minimised_audit_events == 1
+            assert summary.cleaned_dsr_idempotency_keys == 1
+            assert summary.total == 4
+
+            invite = await session.get(Invite, ids["invite_id"])
+            assert invite is not None
+            assert not invite.email.endswith(f"@{SCRUBBED_INVITE_EMAIL_DOMAIN}")
+            outbox_event = await session.get(OutboxEvent, ids["outbox_event_id"])
+            assert outbox_event is not None
+            assert "email" in outbox_event.payload_json
+            audit_event = await session.get(AuditEvent, ids["audit_event_id"])
+            assert audit_event is not None
+            assert audit_event.actor_user_id is not None
+            dsr = await session.get(DataSubjectRequest, ids["dsr_id"])
+            assert dsr is not None
+            assert dsr.idempotency_key_hash == "hash"
+
+    run_async(_run())
+
+
+def test_privacy_retention_runner_minimises_non_export_tables(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            ids = await _create_retained_privacy_rows(session)
+
+            summary = await run_privacy_retention_maintenance(session)
+
+            assert summary.as_log_extra()["total"] == 4
+            invite = await session.get(Invite, ids["invite_id"])
+            assert invite is not None
+            assert invite.email.endswith(f"@{SCRUBBED_INVITE_EMAIL_DOMAIN}")
+            assert invite.token_hash.startswith(f"{SCRUBBED_INVITE_TOKEN_PREFIX}:")
+            assert invite.expires_at is None
+            assert invite.revoked_by_user_id is None
+
+            outbox_event = await session.get(OutboxEvent, ids["outbox_event_id"])
+            assert outbox_event is not None
+            assert outbox_event.payload_json == {
+                "invite_id": str(ids["invite_id"]),
+                "organisation_id": str(ids["organisation_id"]),
+                "role": MembershipRole.MEMBER.value,
+                "sensitive_payload_scrubbed": True,
+                "privacy_retention_scrubbed": True,
+            }
+            assert outbox_event.last_error == "privacy_retention_scrubbed"
+
+            audit_event = await session.get(AuditEvent, ids["audit_event_id"])
+            assert audit_event is not None
+            assert audit_event.actor_user_id is None
+            assert audit_event.target_id == ids["user_id"]
+            assert audit_event.reason is None
+            assert audit_event.metadata_json is None
+            assert audit_event.ip_address is None
+            assert audit_event.user_agent is None
+
+            dsr = await session.get(DataSubjectRequest, ids["dsr_id"])
+            assert dsr is not None
+            assert dsr.idempotency_key_hash is None
+            assert dsr.idempotency_fingerprint is None
+            assert dsr.idempotency_key_expires_at is None
 
     run_async(_run())
