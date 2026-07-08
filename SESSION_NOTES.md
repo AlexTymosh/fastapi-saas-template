@@ -41,7 +41,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   lifecycle rows, delivered/failed outbox payloads, old audit context and
   expired DSR idempotency metadata.
 - PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
-  export lease false positives and aggregate database read ownership.
+  export lease false positives, aggregate database read ownership and CLI
+  observability initialization.
 
 ## Roadmap status
 
@@ -206,6 +207,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
 9. Added `docs/privacy-dsr-operations.md` with command, metrics and log guidance.
 10. Added regression tests for degraded/healthy snapshots, metric attributes,
     stale-threshold validation and Windows CLI loop selection.
+11. Initialized and shut down the observability provider around CLI health
+    snapshots so OTLP metrics can be exported outside the FastAPI lifespan.
 
 ### Regression boundaries
 
@@ -220,6 +223,10 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
   from being counted as stale.
 - Aggregate SQL reads live in `DsrExecutionHealthRepository`; the service layer
   only orchestrates repository calls, logging and metric emission.
+- The standalone CLI initializes observability before recording DSR metrics and
+  shuts it down afterwards, including the provider flush path.
+- CLI observability shutdown still runs if the snapshot read fails after
+  successful observability initialization.
 
 ### Codex review follow-up
 
@@ -231,6 +238,10 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
    boundary protection.
 4. Updated operator docs to describe active lease handling and read-model query
    ownership.
+5. Fixed standalone CLI metrics export by initializing observability before the
+   DSR health snapshot and shutting it down afterwards.
+6. Added regression coverage for CLI observability lifecycle order and failure
+   cleanup.
 
 ## Final #328 closure reconciliation
 

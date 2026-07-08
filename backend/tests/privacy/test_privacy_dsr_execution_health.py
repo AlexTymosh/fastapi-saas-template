@@ -338,6 +338,119 @@ def test_privacy_dsr_health_service_keeps_database_reads_in_repository() -> None
         assert snippet not in source
 
 
+def test_privacy_dsr_health_cli_initializes_observability_before_snapshot(
+    monkeypatch,
+) -> None:
+    order: list[str] = []
+    fake_settings = object()
+
+    async def _init_observability(settings) -> None:
+        assert settings is fake_settings
+        order.append("init_observability")
+
+    async def _shutdown_observability() -> None:
+        order.append("shutdown_observability")
+
+    async def _dispose_engine() -> None:
+        order.append("dispose_engine")
+
+    async def _run_once(*, stale_after_seconds: int) -> dict[str, object]:
+        assert stale_after_seconds == 60
+        order.append("run_once")
+        return {
+            "status": "ok",
+            "total_dsr_jobs": 0,
+            "failed_dsr_jobs": 0,
+            "stale_dsr_jobs": 0,
+            "failed_export_artifacts": 0,
+            "stale_export_artifacts": 0,
+        }
+
+    monkeypatch.setattr(privacy_dsr_health, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(
+        privacy_dsr_health,
+        "init_observability",
+        _init_observability,
+    )
+    monkeypatch.setattr(
+        privacy_dsr_health,
+        "shutdown_observability",
+        _shutdown_observability,
+    )
+    monkeypatch.setattr(privacy_dsr_health, "dispose_engine", _dispose_engine)
+    monkeypatch.setattr(privacy_dsr_health, "run_once", _run_once)
+
+    async def _run() -> None:
+        result = await privacy_dsr_health._amain(  # noqa: SLF001
+            quiet=True,
+            stale_after_seconds=60,
+        )
+
+        assert result == 0
+        assert order == [
+            "init_observability",
+            "run_once",
+            "shutdown_observability",
+            "dispose_engine",
+        ]
+
+    run_async(_run())
+
+
+def test_privacy_dsr_health_cli_shuts_down_observability_after_snapshot_failure(
+    monkeypatch,
+) -> None:
+    order: list[str] = []
+
+    class SnapshotFailure(RuntimeError):
+        pass
+
+    async def _init_observability(settings) -> None:
+        del settings
+        order.append("init_observability")
+
+    async def _shutdown_observability() -> None:
+        order.append("shutdown_observability")
+
+    async def _dispose_engine() -> None:
+        order.append("dispose_engine")
+
+    async def _run_once(*, stale_after_seconds: int) -> dict[str, object]:
+        assert stale_after_seconds == 60
+        order.append("run_once")
+        raise SnapshotFailure("snapshot failed")
+
+    monkeypatch.setattr(privacy_dsr_health, "get_settings", object)
+    monkeypatch.setattr(
+        privacy_dsr_health,
+        "init_observability",
+        _init_observability,
+    )
+    monkeypatch.setattr(
+        privacy_dsr_health,
+        "shutdown_observability",
+        _shutdown_observability,
+    )
+    monkeypatch.setattr(privacy_dsr_health, "dispose_engine", _dispose_engine)
+    monkeypatch.setattr(privacy_dsr_health, "run_once", _run_once)
+
+    async def _run() -> None:
+        with pytest.raises(SnapshotFailure):
+            await privacy_dsr_health._amain(  # noqa: SLF001
+                quiet=True,
+                stale_after_seconds=60,
+            )
+
+        assert order == [
+            "init_observability",
+            "run_once",
+            "shutdown_observability",
+            "dispose_engine",
+        ]
+
+    run_async(_run())
+
+
 def test_privacy_dsr_health_cli_uses_selector_loop_factory_on_windows(
     monkeypatch,
 ) -> None:

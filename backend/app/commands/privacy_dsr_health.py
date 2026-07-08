@@ -7,13 +7,13 @@ import selectors
 import sys
 from datetime import timedelta
 
+from app.core.config.settings import get_settings
 from app.core.db.session import dispose_engine, get_session_factory
-from app.privacy.services.dsr_execution_health import (
-    DEFAULT_DSR_STALE_AFTER,
-    get_privacy_dsr_execution_health,
-)
+from app.core.observability import init_observability, shutdown_observability
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_DSR_STALE_AFTER_SECONDS = 3600
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stale-after-seconds",
         type=int,
-        default=int(DEFAULT_DSR_STALE_AFTER.total_seconds()),
+        default=DEFAULT_DSR_STALE_AFTER_SECONDS,
         help="Seconds after which queued/processing DSR jobs are treated as stale.",
     )
     parser.add_argument(
@@ -38,6 +38,10 @@ async def run_once(*, stale_after_seconds: int) -> dict[str, object]:
     if stale_after_seconds < 1:
         raise ValueError("DSR execution stale_after_seconds must be positive")
 
+    from app.privacy.services.dsr_execution_health import (
+        get_privacy_dsr_execution_health,
+    )
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         snapshot = await get_privacy_dsr_execution_health(
@@ -48,13 +52,19 @@ async def run_once(*, stale_after_seconds: int) -> dict[str, object]:
 
 
 async def _amain(*, quiet: bool, stale_after_seconds: int) -> int:
+    observability_started = False
     try:
+        await init_observability(get_settings())
+        observability_started = True
+
         summary = await run_once(stale_after_seconds=stale_after_seconds)
         logger.info("Privacy DSR execution health checked", extra=summary)
         if not quiet:
             print(_format_summary(summary))
         return 0
     finally:
+        if observability_started:
+            await shutdown_observability()
         await dispose_engine()
 
 

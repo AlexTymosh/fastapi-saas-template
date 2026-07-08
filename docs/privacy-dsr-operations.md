@@ -64,6 +64,10 @@ observability layer:
 - `privacy.dsr.health_checks.total`
 - `privacy.dsr.jobs`
 
+The CLI initializes the configured observability provider before collecting the
+snapshot and shuts it down afterwards, which also runs the provider flush path.
+With metrics disabled or `OBSERVABILITY__EXPORTER=none`, this remains a no-op.
+
 Metric attributes are intentionally low-cardinality and do not include request
 IDs, user IDs, email addresses, storage keys, tokens, notes or free-form error
 messages.
