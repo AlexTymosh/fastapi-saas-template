@@ -36,6 +36,10 @@ default Proactor event loop.
 Only `export` and `erase` DSR request types are included because those are the
 request types that currently have execution workflows.
 
+Aggregate database reads live in a dedicated privacy read-model repository so
+the service layer only orchestrates the health snapshot and observability side
+effects.
+
 ## Health status
 
 The snapshot status is `ok` when there are no failed or stale execution jobs.
@@ -46,6 +50,11 @@ The status is `degraded` when any of these conditions are present:
 - failed export artifacts
 - stale queued export artifacts
 - processing export artifacts with an expired or missing stale lease
+
+Processing export DSR requests are not counted as stale while they have a
+processing export artifact with an active future lease. This avoids false alarms
+for large exports where the worker heartbeat is still renewing the artifact
+lease.
 
 ## Metrics
 

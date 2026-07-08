@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import LogCategory, get_logger
@@ -12,11 +11,11 @@ from app.core.observability.privacy_dsr_metrics import (
     record_privacy_dsr_health_snapshot,
 )
 from app.privacy.models.data_subject_request import (
-    DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
     DataSubjectRequestType,
 )
-from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
+from app.privacy.models.export_artifact import ExportArtifactStatus
+from app.privacy.repositories.dsr_execution_health import DsrExecutionHealthRepository
 
 log = get_logger(__name__)
 
@@ -24,6 +23,9 @@ DEFAULT_DSR_STALE_AFTER = timedelta(hours=1)
 _DSR_JOB_REQUEST_TYPES = (
     DataSubjectRequestType.EXPORT.value,
     DataSubjectRequestType.ERASE.value,
+)
+_DSR_EXECUTION_STATUSES = tuple(
+    status.value for status in DataSubjectRequestExecutionStatus
 )
 _STALE_DSR_STATUSES = (
     DataSubjectRequestExecutionStatus.QUEUED.value,
@@ -179,15 +181,20 @@ async def get_privacy_dsr_execution_health(
 
     checked_at = _normalise_utc(now)
     stale_cutoff = checked_at - stale_after
-    request_counts = await _count_dsr_requests_by_status(session)
-    stale_request_counts = await _count_stale_dsr_requests_by_status(
-        session,
+    repo = DsrExecutionHealthRepository(session)
+    request_counts = await repo.count_dsr_requests_by_status(
+        request_types=_DSR_JOB_REQUEST_TYPES,
+        execution_statuses=_DSR_EXECUTION_STATUSES,
+    )
+    stale_request_counts = await repo.count_stale_dsr_requests_by_status(
+        request_types=_DSR_JOB_REQUEST_TYPES,
+        stale_statuses=_STALE_DSR_STATUSES,
+        checked_at=checked_at,
         stale_cutoff=stale_cutoff,
     )
     failed_request_counts = _failed_counts_from_request_counts(request_counts)
-    export_artifact_counts = await _count_export_artifacts_by_status(session)
-    stale_export_artifacts = await _count_stale_export_artifacts(
-        session,
+    export_artifact_counts = await repo.count_export_artifacts_by_status()
+    stale_export_artifacts = await repo.count_stale_export_artifacts(
         checked_at=checked_at,
         stale_cutoff=stale_cutoff,
     )
@@ -226,110 +233,6 @@ async def get_privacy_dsr_execution_health(
     if emit_log:
         _log_dsr_execution_health(snapshot)
     return snapshot
-
-
-async def _count_dsr_requests_by_status(
-    session: AsyncSession,
-) -> dict[str, dict[str, int]]:
-    counts = _empty_request_counts()
-    stmt = (
-        select(
-            DataSubjectRequest.request_type,
-            DataSubjectRequest.execution_status,
-            func.count(),
-        )
-        .where(DataSubjectRequest.request_type.in_(_DSR_JOB_REQUEST_TYPES))
-        .group_by(
-            DataSubjectRequest.request_type,
-            DataSubjectRequest.execution_status,
-        )
-    )
-    for request_type, execution_status, count in (await session.execute(stmt)).all():
-        counts[str(request_type)][str(execution_status)] = int(count)
-    return counts
-
-
-async def _count_stale_dsr_requests_by_status(
-    session: AsyncSession,
-    *,
-    stale_cutoff: datetime,
-) -> dict[str, dict[str, int]]:
-    counts = _empty_request_counts(statuses=_STALE_DSR_STATUSES)
-    stale_since = func.coalesce(
-        DataSubjectRequest.execution_started_at,
-        DataSubjectRequest.updated_at,
-        DataSubjectRequest.created_at,
-    )
-    stmt = (
-        select(
-            DataSubjectRequest.request_type,
-            DataSubjectRequest.execution_status,
-            func.count(),
-        )
-        .where(
-            DataSubjectRequest.request_type.in_(_DSR_JOB_REQUEST_TYPES),
-            DataSubjectRequest.execution_status.in_(_STALE_DSR_STATUSES),
-            stale_since <= stale_cutoff,
-        )
-        .group_by(
-            DataSubjectRequest.request_type,
-            DataSubjectRequest.execution_status,
-        )
-    )
-    for request_type, execution_status, count in (await session.execute(stmt)).all():
-        counts[str(request_type)][str(execution_status)] = int(count)
-    return counts
-
-
-async def _count_export_artifacts_by_status(session: AsyncSession) -> dict[str, int]:
-    counts = {status.value: 0 for status in ExportArtifactStatus}
-    stmt = select(ExportArtifact.status, func.count()).group_by(ExportArtifact.status)
-    for artifact_status, count in (await session.execute(stmt)).all():
-        counts[str(artifact_status)] = int(count)
-    return counts
-
-
-async def _count_stale_export_artifacts(
-    session: AsyncSession,
-    *,
-    checked_at: datetime,
-    stale_cutoff: datetime,
-) -> int:
-    stmt = (
-        select(func.count())
-        .select_from(ExportArtifact)
-        .where(
-            or_(
-                and_(
-                    ExportArtifact.status == ExportArtifactStatus.QUEUED.value,
-                    ExportArtifact.queued_at <= stale_cutoff,
-                ),
-                and_(
-                    ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
-                    ExportArtifact.processing_lease_expires_at.is_not(None),
-                    ExportArtifact.processing_lease_expires_at <= checked_at,
-                ),
-                and_(
-                    ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
-                    ExportArtifact.processing_lease_expires_at.is_(None),
-                    ExportArtifact.started_at <= stale_cutoff,
-                ),
-            )
-        )
-    )
-    return int((await session.execute(stmt)).scalar_one())
-
-
-def _empty_request_counts(
-    *, statuses: tuple[str, ...] | None = None
-) -> dict[str, dict[str, int]]:
-    selected_statuses = statuses or tuple(
-        status.value for status in DataSubjectRequestExecutionStatus
-    )
-    return {
-        request_type: {execution_status: 0 for execution_status in selected_statuses}
-        for request_type in _DSR_JOB_REQUEST_TYPES
-    }
 
 
 def _failed_counts_from_request_counts(

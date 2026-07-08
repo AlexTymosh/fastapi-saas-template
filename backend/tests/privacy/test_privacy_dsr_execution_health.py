@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -75,7 +76,9 @@ async def _create_export_artifact(
     status: ExportArtifactStatus,
     now: datetime,
     old: datetime,
+    processing_lease_expires_at: datetime | None = None,
 ) -> ExportArtifact:
+    is_processing = status is ExportArtifactStatus.PROCESSING
     artifact = ExportArtifact(
         data_subject_request_id=dsr.id,
         status=status.value,
@@ -83,18 +86,16 @@ async def _create_export_artifact(
         storage_backend=ExportArtifactStorageBackend.LOCAL.value,
         schema_version="1.0",
         queued_at=old,
-        started_at=old if status is ExportArtifactStatus.PROCESSING else None,
-        processing_token=(
-            str(uuid4()) if status is ExportArtifactStatus.PROCESSING else None
-        ),
+        started_at=old if is_processing else None,
+        processing_token=str(uuid4()) if is_processing else None,
         processing_lease_expires_at=(
-            now - timedelta(minutes=1)
-            if status is ExportArtifactStatus.PROCESSING
-            else None
+            processing_lease_expires_at if is_processing else None
         ),
         failed_at=old if status is ExportArtifactStatus.FAILED else None,
         expires_at=now + timedelta(days=1),
     )
+    if is_processing and processing_lease_expires_at is None:
+        artifact.processing_lease_expires_at = now - timedelta(minutes=1)
     session.add(artifact)
     await session.flush()
     return artifact
@@ -183,6 +184,46 @@ def test_privacy_dsr_execution_health_reports_failed_and_stale_jobs(
             assert captured_logs[0][1] == "privacy_dsr_execution_health_checked"
             assert "requester_user_id" not in str(captured_logs[0][2])
             assert "subject_user_id" not in str(captured_logs[0][2])
+
+    run_async(_run())
+
+
+def test_privacy_dsr_execution_health_ignores_active_export_processing_lease(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            old = now - timedelta(hours=2)
+            export_dsr = await _create_dsr(
+                session,
+                request_type=DataSubjectRequestType.EXPORT,
+                execution_status=DataSubjectRequestExecutionStatus.PROCESSING,
+                now=now,
+                old=old,
+            )
+            await _create_export_artifact(
+                session,
+                dsr=export_dsr,
+                status=ExportArtifactStatus.PROCESSING,
+                now=now,
+                old=old,
+                processing_lease_expires_at=now + timedelta(minutes=15),
+            )
+
+            snapshot = await get_privacy_dsr_execution_health(
+                session,
+                now=now,
+                stale_after=timedelta(hours=1),
+                emit_metrics=False,
+                emit_log=False,
+            )
+
+            assert snapshot.status == "ok"
+            assert snapshot.total_dsr_jobs == 1
+            assert snapshot.total_stale_dsr_jobs == 0
+            assert snapshot.stale_request_counts["export"]["processing"] == 0
+            assert snapshot.stale_export_artifacts == 0
 
     run_async(_run())
 
@@ -279,6 +320,22 @@ def test_privacy_dsr_health_rejects_invalid_stale_threshold(
                 )
 
     run_async(_run())
+
+
+def test_privacy_dsr_health_service_keeps_database_reads_in_repository() -> None:
+    source = inspect.getsource(dsr_execution_health)
+    forbidden_database_access = (
+        "session.execute(",
+        "select(",
+        "func.",
+        "and_(",
+        "or_(",
+        ".where(",
+        ".group_by(",
+    )
+
+    for snippet in forbidden_database_access:
+        assert snippet not in source
 
 
 def test_privacy_dsr_health_cli_uses_selector_loop_factory_on_windows(

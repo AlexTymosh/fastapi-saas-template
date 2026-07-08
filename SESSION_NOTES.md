@@ -40,9 +40,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR-328-10A is done: retention maintenance covers export artifacts, invite
   lifecycle rows, delivered/failed outbox payloads, old audit context and
   expired DSR idempotency metadata.
-- PR-328-10B is prepared in this patch: DSR execution health snapshots,
-  low-cardinality metrics, structured logs, an operator command and a Windows
-  selector-loop CLI fix are added.
+- PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
+  export lease false positives and aggregate database read ownership.
 
 ## Roadmap status
 
@@ -58,7 +57,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 8 | Streaming DSR export archive generation | Yes | Done |
 | 9 | Authorised representative DSR workflow | Yes | Done |
 | 10A | Expand retention beyond export artifacts | Yes | Done |
-| 10B | DSR operations visibility | Yes | PDone |
+| 10B | DSR operations visibility | Yes | Done |
 | 10C | DSR permission contract cleanup | Yes | Not started |
 | 10D | Provider contract alignment | Yes | Not started |
 | 10E | Batched subject export providers | Yes | Not started |
@@ -189,7 +188,7 @@ Priority: P1
 Type: `feat(privacy)`
 Recommended branch: `privacy/dsr-ops-visibility`
 Recommended PR title: `✨ feat(privacy): add DSR execution health visibility`
-Status: Prepared in this patch; run focused tests before opening PR.
+Status: Open in PR #438; Codex review follow-up patch prepared.
 
 ### Delivered scope
 
@@ -217,6 +216,21 @@ Status: Prepared in this patch; run focused tests before opening PR.
 - The default stale threshold is one hour and can be overridden per command run.
 - Windows CLI execution uses a selector loop because Psycopg async does not
   support the default Proactor loop.
+- Actively leased processing export artifacts prevent their linked export DSRs
+  from being counted as stale.
+- Aggregate SQL reads live in `DsrExecutionHealthRepository`; the service layer
+  only orchestrates repository calls, logging and metric emission.
+
+### Codex review follow-up
+
+1. Fixed false degraded snapshots for long-running exports with active future
+   processing leases.
+2. Moved DSR/export artifact aggregate SQL reads out of the service layer into a
+   dedicated privacy read-model repository.
+3. Added regression coverage for active export leases and service/repository
+   boundary protection.
+4. Updated operator docs to describe active lease handling and read-model query
+   ownership.
 
 ## Final #328 closure reconciliation
 
