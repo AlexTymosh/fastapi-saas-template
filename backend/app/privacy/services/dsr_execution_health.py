@@ -194,13 +194,10 @@ async def get_privacy_dsr_execution_health(
     )
     failed_request_counts = _failed_counts_from_request_counts(request_counts)
     export_artifact_counts = await repo.count_export_artifacts_by_status()
+    failed_export_artifacts = await repo.count_current_failed_export_artifacts()
     stale_export_artifacts = await repo.count_stale_export_artifacts(
         checked_at=checked_at,
         stale_cutoff=stale_cutoff,
-    )
-    failed_export_artifacts = export_artifact_counts.get(
-        ExportArtifactStatus.FAILED.value,
-        0,
     )
     snapshot = DsrExecutionHealthSnapshot(
         checked_at=checked_at,

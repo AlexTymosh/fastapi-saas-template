@@ -154,14 +154,14 @@ def test_privacy_dsr_execution_health_reports_failed_and_stale_jobs(
             await _create_export_artifact(
                 session,
                 dsr=failed_export_dsr,
-                status=ExportArtifactStatus.FAILED,
+                status=ExportArtifactStatus.PROCESSING,
                 now=now,
-                old=old,
+                old=old - timedelta(minutes=1),
             )
             await _create_export_artifact(
                 session,
                 dsr=failed_export_dsr,
-                status=ExportArtifactStatus.PROCESSING,
+                status=ExportArtifactStatus.FAILED,
                 now=now,
                 old=old,
             )
@@ -224,6 +224,96 @@ def test_privacy_dsr_execution_health_ignores_active_export_processing_lease(
             assert snapshot.total_stale_dsr_jobs == 0
             assert snapshot.stale_request_counts["export"]["processing"] == 0
             assert snapshot.stale_export_artifacts == 0
+
+    run_async(_run())
+
+
+def test_privacy_dsr_execution_health_ignores_superseded_failed_artifact(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            old = now - timedelta(hours=2)
+            recent = now - timedelta(minutes=5)
+            export_dsr = await _create_dsr(
+                session,
+                request_type=DataSubjectRequestType.EXPORT,
+                execution_status=DataSubjectRequestExecutionStatus.READY,
+                now=now,
+                old=old,
+            )
+            await _create_export_artifact(
+                session,
+                dsr=export_dsr,
+                status=ExportArtifactStatus.FAILED,
+                now=now,
+                old=old,
+            )
+            await _create_export_artifact(
+                session,
+                dsr=export_dsr,
+                status=ExportArtifactStatus.READY,
+                now=now,
+                old=recent,
+            )
+
+            snapshot = await get_privacy_dsr_execution_health(
+                session,
+                now=now,
+                stale_after=timedelta(hours=1),
+                emit_metrics=False,
+                emit_log=False,
+            )
+
+            assert snapshot.status == "ok"
+            assert snapshot.export_artifact_counts["failed"] == 1
+            assert snapshot.failed_export_artifacts == 0
+
+    run_async(_run())
+
+
+def test_privacy_dsr_execution_health_degrades_for_current_failed_artifact(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            old = now - timedelta(hours=2)
+            recent = now - timedelta(minutes=5)
+            export_dsr = await _create_dsr(
+                session,
+                request_type=DataSubjectRequestType.EXPORT,
+                execution_status=DataSubjectRequestExecutionStatus.READY,
+                now=now,
+                old=old,
+            )
+            await _create_export_artifact(
+                session,
+                dsr=export_dsr,
+                status=ExportArtifactStatus.READY,
+                now=now,
+                old=old,
+            )
+            await _create_export_artifact(
+                session,
+                dsr=export_dsr,
+                status=ExportArtifactStatus.FAILED,
+                now=now,
+                old=recent,
+            )
+
+            snapshot = await get_privacy_dsr_execution_health(
+                session,
+                now=now,
+                stale_after=timedelta(hours=1),
+                emit_metrics=False,
+                emit_log=False,
+            )
+
+            assert snapshot.status == "degraded"
+            assert snapshot.total_failed_dsr_jobs == 0
+            assert snapshot.failed_export_artifacts == 1
 
     run_async(_run())
 

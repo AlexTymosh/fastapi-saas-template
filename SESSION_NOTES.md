@@ -41,8 +41,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   lifecycle rows, delivered/failed outbox payloads, old audit context and
   expired DSR idempotency metadata.
 - PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
-  export lease false positives, aggregate database read ownership and CLI
-  observability initialization.
+  export lease false positives, aggregate database read ownership, CLI
+  observability initialization and current failed artifact scoping.
 
 ## Roadmap status
 
@@ -196,8 +196,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
 1. Added `get_privacy_dsr_execution_health()` for aggregate DSR execution health.
 2. Counted `export` and `erase` DSR jobs by execution status.
 3. Reported failed and stale queued/processing DSR jobs.
-4. Reported export artifact counts, failed artifacts and stale queued/processing
-   artifacts.
+4. Reported export artifact counts, current failed artifacts and stale
+   queued/processing artifacts.
 5. Added low-cardinality OpenTelemetry metrics for DSR health snapshots.
 6. Added structured health logs without request IDs, user IDs, emails, storage
    keys, tokens, notes or free-form error details.
@@ -227,6 +227,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
   shuts it down afterwards, including the provider flush path.
 - CLI observability shutdown still runs if the snapshot read fails after
   successful observability initialization.
+- Superseded historical failed export artifacts remain visible in by-status
+  counts but no longer degrade the current health snapshot.
 
 ### Codex review follow-up
 
@@ -242,6 +244,10 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
    DSR health snapshot and shutting it down afterwards.
 6. Added regression coverage for CLI observability lifecycle order and failure
    cleanup.
+7. Limited failed-artifact degradation to current failed artifacts that have not
+   been superseded by a newer artifact for the same DSR.
+8. Added regression coverage for superseded failed artifacts and current failed
+   artifact degradation.
 
 ## Final #328 closure reconciliation
 

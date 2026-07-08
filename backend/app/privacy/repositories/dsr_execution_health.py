@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
@@ -107,6 +108,33 @@ class DsrExecutionHealthRepository:
         for artifact_status, count in await self.session.execute(stmt):
             counts[str(artifact_status)] = int(count)
         return counts
+
+    async def count_current_failed_export_artifacts(self) -> int:
+        newer_artifact = aliased(ExportArtifact)
+        newer_for_same_dsr = (
+            select(newer_artifact.id)
+            .where(
+                newer_artifact.data_subject_request_id
+                == ExportArtifact.data_subject_request_id,
+                or_(
+                    newer_artifact.queued_at > ExportArtifact.queued_at,
+                    and_(
+                        newer_artifact.queued_at == ExportArtifact.queued_at,
+                        newer_artifact.created_at > ExportArtifact.created_at,
+                    ),
+                ),
+            )
+            .exists()
+        )
+        stmt = (
+            select(func.count())
+            .select_from(ExportArtifact)
+            .where(
+                ExportArtifact.status == ExportArtifactStatus.FAILED.value,
+                ~newer_for_same_dsr,
+            )
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
 
     async def count_stale_export_artifacts(
         self,

@@ -31,7 +31,7 @@ default Proactor event loop.
 | DSR requests | Current counts by request type and execution status. |
 | DSR requests | Failed and stale queued/processing counts. |
 | Export artifacts | Current counts by artifact status. |
-| Export artifacts | Failed artifacts and stale queued/processing artifacts. |
+| Export artifacts | Current failed artifacts and stale queued/processing artifacts. |
 
 Only `export` and `erase` DSR request types are included because those are the
 request types that currently have execution workflows.
@@ -47,7 +47,8 @@ The status is `degraded` when any of these conditions are present:
 
 - failed or partially fulfilled DSR execution requests
 - stale queued or processing DSR execution requests
-- failed export artifacts
+- current failed export artifacts that have not been superseded by a newer
+  artifact for the same DSR
 - stale queued export artifacts
 - processing export artifacts with an expired or missing stale lease
 
@@ -55,6 +56,10 @@ Processing export DSR requests are not counted as stale while they have a
 processing export artifact with an active future lease. This avoids false alarms
 for large exports where the worker heartbeat is still renewing the artifact
 lease.
+
+Historical failed export artifacts remain visible in the by-status artifact
+counts, but they do not degrade the snapshot once a newer artifact for the same
+DSR becomes the current execution artifact.
 
 ## Metrics
 
