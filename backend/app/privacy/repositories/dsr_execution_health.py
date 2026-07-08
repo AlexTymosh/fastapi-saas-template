@@ -15,6 +15,12 @@ from app.privacy.models.data_subject_request import (
 )
 from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
 
+_STALE_EXPORT_ARTIFACT_STATUSES = (
+    ExportArtifactStatus.QUEUED.value,
+    ExportArtifactStatus.PROCESSING.value,
+    ExportArtifactStatus.READY.value,
+)
+
 
 class DsrExecutionHealthRepository:
     """Read-model repository for aggregate DSR execution health queries."""
@@ -116,41 +122,26 @@ class DsrExecutionHealthRepository:
         return counts
 
     async def count_current_failed_export_artifacts(self) -> int:
-        newer_artifact = aliased(ExportArtifact)
-        newer_for_same_dsr = (
-            select(newer_artifact.id)
-            .where(
-                newer_artifact.data_subject_request_id
-                == ExportArtifact.data_subject_request_id,
-                or_(
-                    newer_artifact.queued_at > ExportArtifact.queued_at,
-                    and_(
-                        newer_artifact.queued_at == ExportArtifact.queued_at,
-                        newer_artifact.created_at > ExportArtifact.created_at,
-                    ),
-                ),
-            )
-            .exists()
-        )
         stmt = (
             select(func.count())
             .select_from(ExportArtifact)
             .where(
                 ExportArtifact.status == ExportArtifactStatus.FAILED.value,
                 _non_cancelled_export_dsr_exists(),
-                ~newer_for_same_dsr,
+                ~_newer_artifact_for_same_dsr_exists(),
             )
         )
         return int((await self.session.execute(stmt)).scalar_one())
 
-    async def count_stale_export_artifacts(
+    async def count_stale_export_artifacts_by_status(
         self,
         *,
         checked_at: datetime,
         stale_cutoff: datetime,
-    ) -> int:
+    ) -> dict[str, int]:
+        counts = {status: 0 for status in _STALE_EXPORT_ARTIFACT_STATUSES}
         stmt = (
-            select(func.count())
+            select(ExportArtifact.status, func.count())
             .select_from(ExportArtifact)
             .where(
                 _non_cancelled_export_dsr_exists(),
@@ -169,10 +160,37 @@ class DsrExecutionHealthRepository:
                         ExportArtifact.processing_lease_expires_at.is_(None),
                         ExportArtifact.started_at <= stale_cutoff,
                     ),
+                    and_(
+                        ExportArtifact.status == ExportArtifactStatus.READY.value,
+                        ExportArtifact.expires_at <= checked_at,
+                        ~_newer_artifact_for_same_dsr_exists(),
+                    ),
                 ),
             )
+            .group_by(ExportArtifact.status)
         )
-        return int((await self.session.execute(stmt)).scalar_one())
+        for artifact_status, count in await self.session.execute(stmt):
+            counts[str(artifact_status)] = int(count)
+        return counts
+
+
+def _newer_artifact_for_same_dsr_exists() -> ColumnElement[bool]:
+    newer_artifact = aliased(ExportArtifact)
+    return (
+        select(newer_artifact.id)
+        .where(
+            newer_artifact.data_subject_request_id
+            == ExportArtifact.data_subject_request_id,
+            or_(
+                newer_artifact.queued_at > ExportArtifact.queued_at,
+                and_(
+                    newer_artifact.queued_at == ExportArtifact.queued_at,
+                    newer_artifact.created_at > ExportArtifact.created_at,
+                ),
+            ),
+        )
+        .exists()
+    )
 
 
 def _non_cancelled_dsr_predicate() -> ColumnElement[bool]:

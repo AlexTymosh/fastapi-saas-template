@@ -35,6 +35,11 @@ _FAILED_DSR_STATUSES = (
     DataSubjectRequestExecutionStatus.FAILED.value,
     DataSubjectRequestExecutionStatus.PARTIALLY_FULFILLED.value,
 )
+_STALE_EXPORT_ARTIFACT_STATUSES = (
+    ExportArtifactStatus.QUEUED.value,
+    ExportArtifactStatus.PROCESSING.value,
+    ExportArtifactStatus.READY.value,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +51,7 @@ class DsrExecutionHealthSnapshot:
     stale_request_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     failed_request_counts: dict[str, int] = field(default_factory=dict)
     export_artifact_counts: dict[str, int] = field(default_factory=dict)
+    stale_export_artifact_counts: dict[str, int] = field(default_factory=dict)
     stale_export_artifacts: int = 0
     failed_export_artifacts: int = 0
 
@@ -142,23 +148,24 @@ class DsrExecutionHealthSnapshot:
                     count=count,
                 )
             )
-        points.extend(
-            [
+        for artifact_status in _STALE_EXPORT_ARTIFACT_STATUSES:
+            points.append(
                 PrivacyDsrMetricPoint(
                     job_kind="export_artifact",
                     request_type=DataSubjectRequestType.EXPORT.value,
-                    execution_status=ExportArtifactStatus.PROCESSING.value,
+                    execution_status=artifact_status,
                     signal="stale",
-                    count=self.stale_export_artifacts,
-                ),
-                PrivacyDsrMetricPoint(
-                    job_kind="export_artifact",
-                    request_type=DataSubjectRequestType.EXPORT.value,
-                    execution_status=ExportArtifactStatus.FAILED.value,
-                    signal="failed",
-                    count=self.failed_export_artifacts,
-                ),
-            ]
+                    count=self.stale_export_artifact_counts.get(artifact_status, 0),
+                )
+            )
+        points.append(
+            PrivacyDsrMetricPoint(
+                job_kind="export_artifact",
+                request_type=DataSubjectRequestType.EXPORT.value,
+                execution_status=ExportArtifactStatus.FAILED.value,
+                signal="failed",
+                count=self.failed_export_artifacts,
+            )
         )
         return tuple(points)
 
@@ -196,10 +203,11 @@ async def get_privacy_dsr_execution_health(
     failed_request_counts = _failed_counts_from_request_counts(request_counts)
     export_artifact_counts = await repo.count_export_artifacts_by_status()
     failed_export_artifacts = await repo.count_current_failed_export_artifacts()
-    stale_export_artifacts = await repo.count_stale_export_artifacts(
+    stale_export_artifact_counts = await repo.count_stale_export_artifacts_by_status(
         checked_at=checked_at,
         stale_cutoff=stale_cutoff,
     )
+    stale_export_artifacts = sum(stale_export_artifact_counts.values())
     snapshot = DsrExecutionHealthSnapshot(
         checked_at=checked_at,
         status="degraded",
@@ -208,6 +216,7 @@ async def get_privacy_dsr_execution_health(
         stale_request_counts=stale_request_counts,
         failed_request_counts=failed_request_counts,
         export_artifact_counts=export_artifact_counts,
+        stale_export_artifact_counts=stale_export_artifact_counts,
         stale_export_artifacts=stale_export_artifacts,
         failed_export_artifacts=failed_export_artifacts,
     )
@@ -220,6 +229,7 @@ async def get_privacy_dsr_execution_health(
             stale_request_counts=snapshot.stale_request_counts,
             failed_request_counts=snapshot.failed_request_counts,
             export_artifact_counts=snapshot.export_artifact_counts,
+            stale_export_artifact_counts=snapshot.stale_export_artifact_counts,
             stale_export_artifacts=snapshot.stale_export_artifacts,
             failed_export_artifacts=snapshot.failed_export_artifacts,
         )

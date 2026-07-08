@@ -31,7 +31,8 @@ default Proactor event loop.
 | DSR requests | Current counts by request type and execution status. |
 | DSR requests | Failed and stale queued/processing counts. |
 | Export artifacts | Current counts by artifact status. |
-| Export artifacts | Current failed artifacts and stale queued/processing artifacts. |
+| Export artifacts | Current failed artifacts. |
+| Export artifacts | Stale queued/processing artifacts and expired ready artifacts. |
 
 Only `export` and `erase` DSR request types are included because those are the
 request types that currently have execution workflows.
@@ -53,7 +54,8 @@ The status is `degraded` when any of these conditions are present:
 - current failed export artifacts that have not been superseded by a newer
   artifact for the same DSR
 - stale queued export artifacts
-- processing export artifacts with an expired or missing stale lease
+- stale processing export artifacts with an expired or missing stale lease
+- current ready export artifacts with `expires_at` in the past
 
 Cancelled DSR requests, and export artifacts linked only to cancelled DSR
 requests, are excluded from degraded failed/stale signals. Artifact by-status
@@ -67,6 +69,10 @@ lease.
 Historical failed export artifacts remain visible in the by-status artifact
 counts, but they do not degrade the snapshot once a newer artifact for the same
 DSR becomes the current execution artifact.
+
+Expired ready artifacts degrade the snapshot only when they are still the current
+artifact for the DSR. If a newer artifact supersedes the expired row, the expired
+row remains visible in by-status counts but no longer affects health.
 
 ## Metrics
 
@@ -87,6 +93,10 @@ in, so periodic metric collection cannot observe a clear-then-update gap.
 Failed-signal DSR metric points preserve the underlying execution status. A
 `failed` job and a `partially_fulfilled` job are emitted as separate failed
 signals instead of being relabelled into one `failed` execution status.
+
+Stale export artifact metric points preserve the underlying artifact status.
+Queued backlog, processing lease failures and expired ready artifacts are emitted
+as separate stale signals instead of being collapsed under `processing`.
 
 Metric attributes are intentionally low-cardinality and do not include request
 IDs, user IDs, email addresses, storage keys, tokens, notes or free-form error
@@ -110,5 +120,6 @@ Run the focused regression suite after changing this area:
 ```bash
 uv run pytest tests/privacy/test_privacy_dsr_execution_health.py
 uv run pytest tests/privacy/test_privacy_dsr_execution_health_cancelled.py
+uv run pytest tests/privacy/test_privacy_dsr_execution_health_expired_artifacts.py
 uv run pytest tests/observability/test_metrics.py
 ```

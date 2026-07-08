@@ -43,7 +43,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
   export lease false positives, aggregate database read ownership, CLI
   observability initialization, current failed artifact scoping, atomic gauge
-  updates, failed metric status preservation and cancelled work exclusion.
+  updates, failed metric status preservation, cancelled work exclusion, expired
+  ready artifact degradation and stale artifact metric status preservation.
 
 ## Roadmap status
 
@@ -197,8 +198,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
 1. Added `get_privacy_dsr_execution_health()` for aggregate DSR execution health.
 2. Counted `export` and `erase` DSR jobs by execution status.
 3. Reported failed and stale queued/processing DSR jobs.
-4. Reported export artifact counts, current failed artifacts and stale
-   queued/processing artifacts.
+4. Reported export artifact counts, current failed artifacts, expired ready
+   artifacts and stale queued/processing artifacts.
 5. Added low-cardinality OpenTelemetry metrics for DSR health snapshots.
 6. Added structured health logs without request IDs, user IDs, emails, storage
    keys, tokens, notes or free-form error details.
@@ -214,6 +215,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
     preservation for `failed` and `partially_fulfilled` DSR states.
 13. Excluded cancelled DSR requests and artifacts linked only to cancelled DSRs
     from failed/stale degraded signals.
+14. Preserved export artifact status in stale metrics for `queued`, `processing`
+    and expired `ready` artifacts.
 
 ### Regression boundaries
 
@@ -241,6 +244,11 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
 - Cancelled DSR work is excluded from current, failed and stale DSR signals.
 - Export artifacts linked only to cancelled DSRs remain visible in by-status
   counts but do not degrade failed/stale health signals.
+- Current ready export artifacts with `expires_at <= checked_at` degrade health.
+- Superseded expired ready artifacts remain visible in by-status counts but do
+  not degrade the current health snapshot.
+- Stale export artifact metrics preserve `queued`, `processing` and `ready`
+  execution statuses instead of collapsing stale rows under `processing`.
 
 ### Codex review follow-up
 
@@ -268,6 +276,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
     degraded health signals.
 12. Added regression coverage for cancelled DSR work with stale and failed
     artifact history.
+13. Added degraded health coverage for current expired ready export artifacts.
+14. Preserved queued/processing/ready artifact status in stale metric points.
 
 ## Final #328 closure reconciliation
 
