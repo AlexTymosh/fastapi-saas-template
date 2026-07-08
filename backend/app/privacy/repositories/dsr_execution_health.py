@@ -5,10 +5,12 @@ from datetime import datetime
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
+    DataSubjectRequestStatus,
     DataSubjectRequestType,
 )
 from app.privacy.models.export_artifact import ExportArtifact, ExportArtifactStatus
@@ -36,7 +38,10 @@ class DsrExecutionHealthRepository:
                 DataSubjectRequest.execution_status,
                 func.count(),
             )
-            .where(DataSubjectRequest.request_type.in_(request_types))
+            .where(
+                DataSubjectRequest.request_type.in_(request_types),
+                _non_cancelled_dsr_predicate(),
+            )
             .group_by(
                 DataSubjectRequest.request_type,
                 DataSubjectRequest.execution_status,
@@ -88,6 +93,7 @@ class DsrExecutionHealthRepository:
             .where(
                 DataSubjectRequest.request_type.in_(request_types),
                 DataSubjectRequest.execution_status.in_(stale_statuses),
+                _non_cancelled_dsr_predicate(),
                 stale_since <= stale_cutoff,
                 not_active_export_processing,
             )
@@ -131,6 +137,7 @@ class DsrExecutionHealthRepository:
             .select_from(ExportArtifact)
             .where(
                 ExportArtifact.status == ExportArtifactStatus.FAILED.value,
+                _non_cancelled_export_dsr_exists(),
                 ~newer_for_same_dsr,
             )
         )
@@ -146,6 +153,7 @@ class DsrExecutionHealthRepository:
             select(func.count())
             .select_from(ExportArtifact)
             .where(
+                _non_cancelled_export_dsr_exists(),
                 or_(
                     and_(
                         ExportArtifact.status == ExportArtifactStatus.QUEUED.value,
@@ -161,10 +169,26 @@ class DsrExecutionHealthRepository:
                         ExportArtifact.processing_lease_expires_at.is_(None),
                         ExportArtifact.started_at <= stale_cutoff,
                     ),
-                )
+                ),
             )
         )
         return int((await self.session.execute(stmt)).scalar_one())
+
+
+def _non_cancelled_dsr_predicate() -> ColumnElement[bool]:
+    return DataSubjectRequest.status != DataSubjectRequestStatus.CANCELLED.value
+
+
+def _non_cancelled_export_dsr_exists() -> ColumnElement[bool]:
+    return (
+        select(DataSubjectRequest.id)
+        .where(
+            DataSubjectRequest.id == ExportArtifact.data_subject_request_id,
+            DataSubjectRequest.request_type == DataSubjectRequestType.EXPORT.value,
+            _non_cancelled_dsr_predicate(),
+        )
+        .exists()
+    )
 
 
 def _empty_request_counts(

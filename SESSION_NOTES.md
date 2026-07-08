@@ -43,7 +43,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
   export lease false positives, aggregate database read ownership, CLI
   observability initialization, current failed artifact scoping, atomic gauge
-  updates and failed metric status preservation.
+  updates, failed metric status preservation and cancelled work exclusion.
 
 ## Roadmap status
 
@@ -212,6 +212,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
     snapshots so OTLP metrics can be exported outside the FastAPI lifespan.
 12. Added atomic DSR gauge point swaps and failed-signal metric status
     preservation for `failed` and `partially_fulfilled` DSR states.
+13. Excluded cancelled DSR requests and artifacts linked only to cancelled DSRs
+    from failed/stale degraded signals.
 
 ### Regression boundaries
 
@@ -236,6 +238,9 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
   recording swaps in a complete replacement map.
 - Failed-signal DSR metric points preserve the underlying execution status;
   `partially_fulfilled` is not relabelled as `failed`.
+- Cancelled DSR work is excluded from current, failed and stale DSR signals.
+- Export artifacts linked only to cancelled DSRs remain visible in by-status
+  counts but do not degrade failed/stale health signals.
 
 ### Codex review follow-up
 
@@ -259,6 +264,10 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
    replacement map and reading gauge callbacks from a locked snapshot.
 10. Preserved `failed` and `partially_fulfilled` execution statuses in
     failed-signal DSR metrics instead of aggregating both as `failed`.
+11. Excluded cancelled DSR requests and linked export artifacts from failed/stale
+    degraded health signals.
+12. Added regression coverage for cancelled DSR work with stale and failed
+    artifact history.
 
 ## Final #328 closure reconciliation
 

@@ -36,6 +36,9 @@ default Proactor event loop.
 Only `export` and `erase` DSR request types are included because those are the
 request types that currently have execution workflows.
 
+Cancelled DSR requests are excluded from current, failed and stale DSR work
+signals because cancellation intentionally removes the work from execution.
+
 Aggregate database reads live in a dedicated privacy read-model repository so
 the service layer only orchestrates the health snapshot and observability side
 effects.
@@ -51,6 +54,10 @@ The status is `degraded` when any of these conditions are present:
   artifact for the same DSR
 - stale queued export artifacts
 - processing export artifacts with an expired or missing stale lease
+
+Cancelled DSR requests, and export artifacts linked only to cancelled DSR
+requests, are excluded from degraded failed/stale signals. Artifact by-status
+counts can still include historical artifacts for cancelled requests.
 
 Processing export DSR requests are not counted as stale while they have a
 processing export artifact with an active future lease. This avoids false alarms
@@ -102,5 +109,6 @@ Run the focused regression suite after changing this area:
 
 ```bash
 uv run pytest tests/privacy/test_privacy_dsr_execution_health.py
+uv run pytest tests/privacy/test_privacy_dsr_execution_health_cancelled.py
 uv run pytest tests/observability/test_metrics.py
 ```
