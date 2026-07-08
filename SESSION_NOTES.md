@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-07-07
+Date: 2026-07-08
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -36,8 +36,13 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   covered.
 - PR #436 is merged into `main`.
 - Runtime secret masking hardening is done.
-- PR #437 is open for PR-328-10A. Codex review follow-up is prepared for
-  invite/outbox batch starvation and audit legal-hold recheck gaps.
+- PR #437 is merged into `main`.
+- PR-328-10A is done: retention maintenance covers export artifacts, invite
+  lifecycle rows, delivered/failed outbox payloads, old audit context and
+  expired DSR idempotency metadata.
+- PR-328-10B is prepared in this patch: DSR execution health snapshots,
+  low-cardinality metrics, structured logs, an operator command and a Windows
+  selector-loop CLI fix are added.
 
 ## Roadmap status
 
@@ -52,8 +57,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 7 | PostgreSQL DSR provider integration tests | Yes | Done |
 | 8 | Streaming DSR export archive generation | Yes | Done |
 | 9 | Authorised representative DSR workflow | Yes | Done |
-| 10A | Expand retention beyond export artifacts | Yes | Prepared in this patch |
-| 10B | DSR operations visibility | Yes | Not started |
+| 10A | Expand retention beyond export artifacts | Yes | Done |
+| 10B | DSR operations visibility | Yes | PDone |
 | 10C | DSR permission contract cleanup | Yes | Not started |
 | 10D | Provider contract alignment | Yes | Not started |
 | 10E | Batched subject export providers | Yes | Not started |
@@ -131,7 +136,7 @@ Priority: P1
 Type: `feat(privacy)`
 Recommended branch: `privacy/dsr-retention-maintenance-hardening`
 Recommended PR title: `✨ feat(privacy): expand DSR retention maintenance`
-Status: Open in PR #437; Codex review follow-up patch prepared.
+Status: Done in merged PR #437.
 
 ### Delivered scope
 
@@ -178,19 +183,53 @@ Status: Open in PR #437; Codex review follow-up patch prepared.
 5. Fixed storage rollback inconsistency by running storage-deleting export
    artifact retention after database-only invite/outbox/audit/DSR steps.
 
+## PR-328-10B — DSR operations visibility
+
+Priority: P1
+Type: `feat(privacy)`
+Recommended branch: `privacy/dsr-ops-visibility`
+Recommended PR title: `✨ feat(privacy): add DSR execution health visibility`
+Status: Prepared in this patch; run focused tests before opening PR.
+
+### Delivered scope
+
+1. Added `get_privacy_dsr_execution_health()` for aggregate DSR execution health.
+2. Counted `export` and `erase` DSR jobs by execution status.
+3. Reported failed and stale queued/processing DSR jobs.
+4. Reported export artifact counts, failed artifacts and stale queued/processing
+   artifacts.
+5. Added low-cardinality OpenTelemetry metrics for DSR health snapshots.
+6. Added structured health logs without request IDs, user IDs, emails, storage
+   keys, tokens, notes or free-form error details.
+7. Added `app.commands.privacy_dsr_health` and `task privacy:dsr-health` for
+   operator checks.
+8. Added Windows-compatible selector-loop CLI execution for Psycopg async.
+9. Added `docs/privacy-dsr-operations.md` with command, metrics and log guidance.
+10. Added regression tests for degraded/healthy snapshots, metric attributes,
+    stale-threshold validation and Windows CLI loop selection.
+
+### Regression boundaries
+
+- Health snapshots are read-only and do not mutate DSR or export artifact rows.
+- Metrics use bounded attributes only: job kind, request type, execution status,
+  signal and health status.
+- Logs expose aggregate counts only and do not include per-subject identifiers.
+- The default stale threshold is one hour and can be overridden per command run.
+- Windows CLI execution uses a selector loop because Psycopg async does not
+  support the default Proactor loop.
+
 ## Final #328 closure reconciliation
 
-Status: Not ready. Continue with PR-328-10B through PR-328-10F.
+Status: Not ready. Continue with PR-328-10C through PR-328-10F.
 
 ### Remaining scope
 
-1. Add DSR operations visibility for failed/stale export and erasure execution.
-2. Resolve the legacy `GDPR_EXPORT` / `GDPR_ERASE` permission contract drift.
-3. Align provider inventory, runtime provider registries and erasure coverage.
-4. Remove high-cardinality eager `.all()` loading from subject export providers.
-5. Re-run full CI.
-6. Update the closure checklist.
-7. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+1. Resolve the legacy `GDPR_EXPORT` / `GDPR_ERASE` permission contract drift.
+2. Align provider inventory, runtime provider registries and erasure coverage.
+3. Remove high-cardinality eager `.all()` loading from subject export providers.
+4. Re-run full CI.
+5. Update the closure checklist.
+6. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 

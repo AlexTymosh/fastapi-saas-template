@@ -41,6 +41,12 @@ tasks:
         uv run --locked python -m app.commands.privacy_export_worker
         --dry-run --once
 
+  privacy:dsr-health:
+    desc: Print one privacy DSR execution health snapshot.
+    dir: backend
+    cmds:
+      - uv run --locked python -m app.commands.privacy_dsr_health
+
   privacy:retention:once:
     desc: Run one privacy retention pass across DSR-adjacent data.
     dir: backend
