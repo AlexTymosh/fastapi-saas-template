@@ -217,6 +217,7 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
     from failed/stale degraded signals.
 14. Preserved export artifact status in stale metrics for `queued`, `processing`
     and expired `ready` artifacts.
+15. Added an explicit CLI transaction boundary around the DSR health snapshot.
 
 ### Regression boundaries
 
@@ -249,6 +250,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
   not degrade the current health snapshot.
 - Stale export artifact metrics preserve `queued`, `processing` and `ready`
   execution statuses instead of collapsing stale rows under `processing`.
+- The standalone CLI owns an explicit transaction around the health snapshot and
+  exits the transaction before closing the session.
 
 ### Codex review follow-up
 
@@ -278,6 +281,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
     artifact history.
 13. Added degraded health coverage for current expired ready export artifacts.
 14. Preserved queued/processing/ready artifact status in stale metric points.
+15. Added an explicit `session.begin()` boundary around the CLI health snapshot.
+16. Added regression coverage for CLI transaction commit and rollback paths.
 
 ## Final #328 closure reconciliation
 

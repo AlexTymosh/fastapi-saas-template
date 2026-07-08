@@ -24,6 +24,10 @@ On Windows, the command uses a selector-based event loop for PostgreSQL async
 connections because Psycopg async connections are not compatible with the
 default Proactor event loop.
 
+The CLI owns an explicit database transaction around the read-only health
+snapshot. The transaction commits after a successful snapshot and rolls back if
+snapshot collection raises.
+
 ## Covered jobs
 
 | Area | Signals |

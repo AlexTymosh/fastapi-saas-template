@@ -44,10 +44,11 @@ async def run_once(*, stale_after_seconds: int) -> dict[str, object]:
 
     session_factory = get_session_factory()
     async with session_factory() as session:
-        snapshot = await get_privacy_dsr_execution_health(
-            session,
-            stale_after=timedelta(seconds=stale_after_seconds),
-        )
+        async with session.begin():
+            snapshot = await get_privacy_dsr_execution_health(
+                session,
+                stale_after=timedelta(seconds=stale_after_seconds),
+            )
     return snapshot.as_log_extra()
 
 
