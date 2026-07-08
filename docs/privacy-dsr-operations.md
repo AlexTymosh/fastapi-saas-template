@@ -73,6 +73,14 @@ The CLI initializes the configured observability provider before collecting the
 snapshot and shuts it down afterwards, which also runs the provider flush path.
 With metrics disabled or `OBSERVABILITY__EXPORTER=none`, this remains a no-op.
 
+The observable gauge reads a snapshot of the latest DSR job points under a lock.
+Health snapshot recording builds a complete replacement map before swapping it
+in, so periodic metric collection cannot observe a clear-then-update gap.
+
+Failed-signal DSR metric points preserve the underlying execution status. A
+`failed` job and a `partially_fulfilled` job are emitted as separate failed
+signals instead of being relabelled into one `failed` execution status.
+
 Metric attributes are intentionally low-cardinality and do not include request
 IDs, user IDs, email addresses, storage keys, tokens, notes or free-form error
 messages.

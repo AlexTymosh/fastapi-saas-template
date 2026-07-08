@@ -121,16 +121,17 @@ class DsrExecutionHealthSnapshot:
                         count=count,
                     )
                 )
-        for request_type, count in sorted(self.failed_request_counts.items()):
-            points.append(
-                PrivacyDsrMetricPoint(
-                    job_kind="dsr_request",
-                    request_type=request_type,
-                    execution_status=DataSubjectRequestExecutionStatus.FAILED.value,
-                    signal="failed",
-                    count=count,
+        for request_type, statuses in sorted(self.request_counts.items()):
+            for execution_status in _FAILED_DSR_STATUSES:
+                points.append(
+                    PrivacyDsrMetricPoint(
+                        job_kind="dsr_request",
+                        request_type=request_type,
+                        execution_status=execution_status,
+                        signal="failed",
+                        count=statuses.get(execution_status, 0),
+                    )
                 )
-            )
         for artifact_status, count in sorted(self.export_artifact_counts.items()):
             points.append(
                 PrivacyDsrMetricPoint(

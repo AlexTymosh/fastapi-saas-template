@@ -42,7 +42,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   expired DSR idempotency metadata.
 - PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
   export lease false positives, aggregate database read ownership, CLI
-  observability initialization and current failed artifact scoping.
+  observability initialization, current failed artifact scoping, atomic gauge
+  updates and failed metric status preservation.
 
 ## Roadmap status
 
@@ -209,6 +210,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
     stale-threshold validation and Windows CLI loop selection.
 11. Initialized and shut down the observability provider around CLI health
     snapshots so OTLP metrics can be exported outside the FastAPI lifespan.
+12. Added atomic DSR gauge point swaps and failed-signal metric status
+    preservation for `failed` and `partially_fulfilled` DSR states.
 
 ### Regression boundaries
 
@@ -229,6 +232,10 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
   successful observability initialization.
 - Superseded historical failed export artifacts remain visible in by-status
   counts but no longer degrade the current health snapshot.
+- Observable DSR gauge callbacks read a locked point snapshot while health
+  recording swaps in a complete replacement map.
+- Failed-signal DSR metric points preserve the underlying execution status;
+  `partially_fulfilled` is not relabelled as `failed`.
 
 ### Codex review follow-up
 
@@ -248,6 +255,10 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
    been superseded by a newer artifact for the same DSR.
 8. Added regression coverage for superseded failed artifacts and current failed
    artifact degradation.
+9. Made DSR observable gauge state updates atomic by building a complete
+   replacement map and reading gauge callbacks from a locked snapshot.
+10. Preserved `failed` and `partially_fulfilled` execution statuses in
+    failed-signal DSR metrics instead of aggregating both as `failed`.
 
 ## Final #328 closure reconciliation
 

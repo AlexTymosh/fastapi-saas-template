@@ -398,6 +398,70 @@ def test_privacy_dsr_health_metrics_use_low_cardinality_attributes(
     assert "user_id" not in observations[0].attributes
 
 
+def test_privacy_dsr_health_gauge_updates_are_atomic_swaps(
+    monkeypatch,
+) -> None:
+    counter = _FakeCounter()
+    monkeypatch.setattr(
+        privacy_dsr_metrics,
+        "privacy_dsr_health_checks_total",
+        counter,
+    )
+    privacy_dsr_metrics._last_privacy_dsr_job_points = {  # noqa: SLF001
+        ("dsr_request", "export", "queued", "current"): 1
+    }
+    previous_points = privacy_dsr_metrics._last_privacy_dsr_job_points  # noqa: SLF001
+    point = privacy_dsr_metrics.PrivacyDsrMetricPoint(
+        job_kind="dsr_request",
+        request_type="export",
+        execution_status="ready",
+        signal="current",
+        count=3,
+    )
+
+    privacy_dsr_metrics.record_privacy_dsr_health_snapshot(
+        status="ok",
+        points=[point],
+    )
+
+    current_points = privacy_dsr_metrics._last_privacy_dsr_job_points  # noqa: SLF001
+    observations = list(
+        privacy_dsr_metrics._observe_privacy_dsr_jobs(None)  # noqa: SLF001
+    )
+    assert current_points is not previous_points
+    assert previous_points == {("dsr_request", "export", "queued", "current"): 1}
+    assert len(observations) == 1
+    assert observations[0].value == 3
+
+
+def test_privacy_dsr_health_failed_metrics_preserve_partial_status() -> None:
+    failed = DataSubjectRequestExecutionStatus.FAILED.value
+    partial = DataSubjectRequestExecutionStatus.PARTIALLY_FULFILLED.value
+    snapshot = dsr_execution_health.DsrExecutionHealthSnapshot(
+        checked_at=datetime.now(UTC),
+        status="degraded",
+        stale_after_seconds=3600,
+        request_counts={
+            "erase": {failed: 0, partial: 1},
+            "export": {failed: 1, partial: 2},
+        },
+        failed_request_counts={"erase": 1, "export": 3},
+    )
+
+    failed_points = {
+        (point.request_type, point.execution_status): point.count
+        for point in snapshot.to_metric_points()
+        if point.job_kind == "dsr_request" and point.signal == "failed"
+    }
+
+    assert failed_points == {
+        ("erase", failed): 0,
+        ("erase", partial): 1,
+        ("export", failed): 1,
+        ("export", partial): 2,
+    }
+
+
 def test_privacy_dsr_health_rejects_invalid_stale_threshold(
     migrated_session_factory,
 ) -> None:

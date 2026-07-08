@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from threading import RLock
 from typing import Final
 
 from opentelemetry.metrics import CallbackOptions, Observation
@@ -45,6 +46,8 @@ ALLOWED_PRIVACY_DSR_HEALTH_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {PRIVACY_DSR_ATTRIBUTE_HEALTH_STATUS}
 )
 
+PrivacyDsrJobPointKey = tuple[str, str, str, str]
+
 
 @dataclass(frozen=True, slots=True)
 class PrivacyDsrMetricPoint:
@@ -63,19 +66,23 @@ class PrivacyDsrMetricPoint:
         }
 
 
-_last_privacy_dsr_job_points: dict[tuple[str, str, str, str], int] = {}
+_last_privacy_dsr_job_points: dict[PrivacyDsrJobPointKey, int] = {}
+_privacy_dsr_job_points_lock = RLock()
 
 
 def _observe_privacy_dsr_jobs(
     options: CallbackOptions,
 ) -> Iterable[Observation]:
     del options
+    with _privacy_dsr_job_points_lock:
+        points_snapshot = tuple(sorted(_last_privacy_dsr_job_points.items()))
+
     for (
         job_kind,
         request_type,
         execution_status,
         signal,
-    ), count in sorted(_last_privacy_dsr_job_points.items()):
+    ), count in points_snapshot:
         yield Observation(
             count,
             attributes={
@@ -106,6 +113,8 @@ def record_privacy_dsr_health_snapshot(
     status: str,
     points: Iterable[PrivacyDsrMetricPoint],
 ) -> None:
+    global _last_privacy_dsr_job_points
+
     try:
         _validate_health_status(status)
         normalised_points = tuple(points)
@@ -119,18 +128,18 @@ def record_privacy_dsr_health_snapshot(
         )
         return
 
-    _last_privacy_dsr_job_points.clear()
-    _last_privacy_dsr_job_points.update(
-        {
-            (
-                point.job_kind,
-                point.request_type,
-                point.execution_status,
-                point.signal,
-            ): point.count
-            for point in normalised_points
-        }
-    )
+    new_job_points = {
+        (
+            point.job_kind,
+            point.request_type,
+            point.execution_status,
+            point.signal,
+        ): point.count
+        for point in normalised_points
+    }
+    with _privacy_dsr_job_points_lock:
+        _last_privacy_dsr_job_points = new_job_points
+
     _safe_record_metric(
         privacy_dsr_health_checks_total.add,
         1,
