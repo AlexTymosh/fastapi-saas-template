@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-07-07
+Date: 2026-07-08
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -36,8 +36,15 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   covered.
 - PR #436 is merged into `main`.
 - Runtime secret masking hardening is done.
-- PR #437 is open for PR-328-10A. Codex review follow-up is prepared for
-  invite/outbox batch starvation and audit legal-hold recheck gaps.
+- PR #437 is merged into `main`.
+- PR-328-10A is done: retention maintenance covers export artifacts, invite
+  lifecycle rows, delivered/failed outbox payloads, old audit context and
+  expired DSR idempotency metadata.
+- PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
+  export lease false positives, aggregate database read ownership, CLI
+  observability initialization, current failed artifact scoping, atomic gauge
+  updates, failed metric status preservation, cancelled work exclusion, expired
+  ready artifact degradation and stale artifact metric status preservation.
 
 ## Roadmap status
 
@@ -52,8 +59,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 7 | PostgreSQL DSR provider integration tests | Yes | Done |
 | 8 | Streaming DSR export archive generation | Yes | Done |
 | 9 | Authorised representative DSR workflow | Yes | Done |
-| 10A | Expand retention beyond export artifacts | Yes | Prepared in this patch |
-| 10B | DSR operations visibility | Yes | Not started |
+| 10A | Expand retention beyond export artifacts | Yes | Done |
+| 10B | DSR operations visibility | Yes | Done |
 | 10C | DSR permission contract cleanup | Yes | Not started |
 | 10D | Provider contract alignment | Yes | Not started |
 | 10E | Batched subject export providers | Yes | Not started |
@@ -131,7 +138,7 @@ Priority: P1
 Type: `feat(privacy)`
 Recommended branch: `privacy/dsr-retention-maintenance-hardening`
 Recommended PR title: `✨ feat(privacy): expand DSR retention maintenance`
-Status: Open in PR #437; Codex review follow-up patch prepared.
+Status: Done in merged PR #437.
 
 ### Delivered scope
 
@@ -178,19 +185,123 @@ Status: Open in PR #437; Codex review follow-up patch prepared.
 5. Fixed storage rollback inconsistency by running storage-deleting export
    artifact retention after database-only invite/outbox/audit/DSR steps.
 
+## PR-328-10B — DSR operations visibility
+
+Priority: P1
+Type: `feat(privacy)`
+Recommended branch: `privacy/dsr-ops-visibility`
+Recommended PR title: `✨ feat(privacy): add DSR execution health visibility`
+Status: Open in PR #438; Codex review follow-up patch prepared.
+
+### Delivered scope
+
+1. Added `get_privacy_dsr_execution_health()` for aggregate DSR execution health.
+2. Counted `export` and `erase` DSR jobs by execution status.
+3. Reported failed and stale queued/processing DSR jobs.
+4. Reported export artifact counts, current failed artifacts, undelivered
+   expired ready artifacts and stale queued/processing artifacts.
+5. Added low-cardinality OpenTelemetry metrics for DSR health snapshots.
+6. Added structured health logs without request IDs, user IDs, emails, storage
+   keys, tokens, notes or free-form error details.
+7. Added `app.commands.privacy_dsr_health` and `task privacy:dsr-health` for
+   operator checks.
+8. Added Windows-compatible selector-loop CLI execution for Psycopg async.
+9. Added `docs/privacy-dsr-operations.md` with command, metrics and log guidance.
+10. Added regression tests for degraded/healthy snapshots, metric attributes,
+    stale-threshold validation and Windows CLI loop selection.
+11. Initialized and shut down the observability provider around CLI health
+    snapshots so OTLP metrics can be exported outside the FastAPI lifespan.
+12. Added atomic DSR gauge point swaps and failed-signal metric status
+    preservation for `failed` and `partially_fulfilled` DSR states.
+13. Excluded cancelled DSR requests and artifacts linked only to cancelled DSRs
+    from failed/stale degraded signals.
+14. Preserved export artifact status in stale metrics for `queued`, `processing`
+    and expired `ready` artifacts.
+15. Added an explicit CLI transaction boundary around the DSR health snapshot.
+
+### Regression boundaries
+
+- Health snapshots are read-only and do not mutate DSR or export artifact rows.
+- Metrics use bounded attributes only: job kind, request type, execution status,
+  signal and health status.
+- Logs expose aggregate counts only and do not include per-subject identifiers.
+- The default stale threshold is one hour and can be overridden per command run.
+- Windows CLI execution uses a selector loop because Psycopg async does not
+  support the default Proactor loop.
+- Actively leased processing export artifacts prevent their linked export DSRs
+  from being counted as stale.
+- Aggregate SQL reads live in `DsrExecutionHealthRepository`; the service layer
+  only orchestrates repository calls, logging and metric emission.
+- The standalone CLI initializes observability before recording DSR metrics and
+  shuts it down afterwards, including the provider flush path.
+- CLI observability shutdown still runs if the snapshot read fails after
+  successful observability initialization.
+- Superseded historical failed export artifacts remain visible in by-status
+  counts but no longer degrade the current health snapshot.
+- Observable DSR gauge callbacks read a locked point snapshot while health
+  recording swaps in a complete replacement map.
+- Failed-signal DSR metric points preserve the underlying execution status;
+  `partially_fulfilled` is not relabelled as `failed`.
+- Cancelled DSR work is excluded from current, failed and stale DSR signals.
+- Export artifacts linked only to cancelled DSRs remain visible in by-status
+  counts but do not degrade failed/stale health signals.
+- Current undelivered ready export artifacts with `expires_at <= checked_at`
+  degrade health.
+- Superseded expired ready artifacts remain visible in by-status counts but do
+  not degrade the current health snapshot.
+- Delivered ready artifacts remain fulfilled history after expiry and do not
+  degrade the current health snapshot.
+- Stale export artifact metrics preserve `queued`, `processing` and `ready`
+  execution statuses instead of collapsing stale rows under `processing`.
+- The standalone CLI owns an explicit transaction around the health snapshot and
+  exits the transaction before closing the session.
+
+### Codex review follow-up
+
+1. Fixed false degraded snapshots for long-running exports with active future
+   processing leases.
+2. Moved DSR/export artifact aggregate SQL reads out of the service layer into a
+   dedicated privacy read-model repository.
+3. Added regression coverage for active export leases and service/repository
+   boundary protection.
+4. Updated operator docs to describe active lease handling and read-model query
+   ownership.
+5. Fixed standalone CLI metrics export by initializing observability before the
+   DSR health snapshot and shutting it down afterwards.
+6. Added regression coverage for CLI observability lifecycle order and failure
+   cleanup.
+7. Limited failed-artifact degradation to current failed artifacts that have not
+   been superseded by a newer artifact for the same DSR.
+8. Added regression coverage for superseded failed artifacts and current failed
+   artifact degradation.
+9. Made DSR observable gauge state updates atomic by building a complete
+   replacement map and reading gauge callbacks from a locked snapshot.
+10. Preserved `failed` and `partially_fulfilled` execution statuses in
+    failed-signal DSR metrics instead of aggregating both as `failed`.
+11. Excluded cancelled DSR requests and linked export artifacts from failed/stale
+    degraded health signals.
+12. Added regression coverage for cancelled DSR work with stale and failed
+    artifact history.
+13. Added degraded health coverage for current expired ready export artifacts.
+14. Preserved queued/processing/ready artifact status in stale metric points.
+15. Added an explicit `session.begin()` boundary around the CLI health snapshot.
+16. Added regression coverage for CLI transaction commit and rollback paths.
+17. Excluded delivered ready artifacts from expired-artifact degraded health
+    after download confirmation.
+18. Added regression coverage for delivered ready artifacts after expiry.
+
 ## Final #328 closure reconciliation
 
-Status: Not ready. Continue with PR-328-10B through PR-328-10F.
+Status: Not ready. Continue with PR-328-10C through PR-328-10F.
 
 ### Remaining scope
 
-1. Add DSR operations visibility for failed/stale export and erasure execution.
-2. Resolve the legacy `GDPR_EXPORT` / `GDPR_ERASE` permission contract drift.
-3. Align provider inventory, runtime provider registries and erasure coverage.
-4. Remove high-cardinality eager `.all()` loading from subject export providers.
-5. Re-run full CI.
-6. Update the closure checklist.
-7. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+1. Resolve the legacy `GDPR_EXPORT` / `GDPR_ERASE` permission contract drift.
+2. Align provider inventory, runtime provider registries and erasure coverage.
+3. Remove high-cardinality eager `.all()` loading from subject export providers.
+4. Re-run full CI.
+5. Update the closure checklist.
+6. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 
