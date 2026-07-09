@@ -40,7 +40,13 @@ async def _create_dsr(
         submitted_at=old,
         due_at=now + timedelta(days=10),
         execution_completed_at=(
-            old if execution_status is DataSubjectRequestExecutionStatus.READY else None
+            old
+            if execution_status
+            in {
+                DataSubjectRequestExecutionStatus.READY,
+                DataSubjectRequestExecutionStatus.DELIVERED,
+            }
+            else None
         ),
         created_at=old,
         updated_at=old,
@@ -57,6 +63,8 @@ async def _create_export_artifact(
     status: ExportArtifactStatus,
     queued_at: datetime,
     expires_at: datetime,
+    downloaded_at: datetime | None = None,
+    download_count: int = 0,
 ) -> ExportArtifact:
     is_processing = status is ExportArtifactStatus.PROCESSING
     artifact = ExportArtifact(
@@ -73,6 +81,8 @@ async def _create_export_artifact(
             queued_at + timedelta(minutes=5) if is_processing else None
         ),
         expires_at=expires_at,
+        downloaded_at=downloaded_at,
+        download_count=download_count,
     )
     session.add(artifact)
     await session.flush()
@@ -112,6 +122,46 @@ def test_privacy_dsr_execution_health_degrades_for_expired_ready_artifact(
             assert snapshot.failed_export_artifacts == 0
             assert snapshot.stale_export_artifacts == 1
             assert snapshot.stale_export_artifact_counts["ready"] == 1
+
+    run_async(_run())
+
+
+def test_privacy_dsr_execution_health_ignores_delivered_expired_ready_artifact(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            old = now - timedelta(hours=2)
+            dsr = await _create_dsr(
+                session,
+                execution_status=DataSubjectRequestExecutionStatus.DELIVERED,
+                now=now,
+                old=old,
+            )
+            await _create_export_artifact(
+                session,
+                dsr=dsr,
+                status=ExportArtifactStatus.READY,
+                queued_at=old,
+                expires_at=now - timedelta(minutes=1),
+                downloaded_at=old + timedelta(minutes=10),
+                download_count=1,
+            )
+
+            snapshot = await get_privacy_dsr_execution_health(
+                session,
+                now=now,
+                stale_after=timedelta(hours=1),
+                emit_metrics=False,
+                emit_log=False,
+            )
+
+            assert snapshot.status == "ok"
+            assert snapshot.request_counts["export"]["delivered"] == 1
+            assert snapshot.export_artifact_counts["ready"] == 1
+            assert snapshot.stale_export_artifacts == 0
+            assert snapshot.stale_export_artifact_counts["ready"] == 0
 
     run_async(_run())
 

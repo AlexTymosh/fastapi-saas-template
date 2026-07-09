@@ -59,7 +59,7 @@ The status is `degraded` when any of these conditions are present:
   artifact for the same DSR
 - stale queued export artifacts
 - stale processing export artifacts with an expired or missing stale lease
-- current ready export artifacts with `expires_at` in the past
+- current undelivered ready export artifacts with `expires_at` in the past
 
 Cancelled DSR requests, and export artifacts linked only to cancelled DSR
 requests, are excluded from degraded failed/stale signals. Artifact by-status
@@ -75,8 +75,9 @@ counts, but they do not degrade the snapshot once a newer artifact for the same
 DSR becomes the current execution artifact.
 
 Expired ready artifacts degrade the snapshot only when they are still the current
-artifact for the DSR. If a newer artifact supersedes the expired row, the expired
-row remains visible in by-status counts but no longer affects health.
+undelivered artifact for the DSR. If the artifact was already downloaded, or if a
+newer artifact supersedes the expired row, the expired row remains visible in
+by-status counts but no longer affects health.
 
 ## Metrics
 
@@ -99,8 +100,9 @@ Failed-signal DSR metric points preserve the underlying execution status. A
 signals instead of being relabelled into one `failed` execution status.
 
 Stale export artifact metric points preserve the underlying artifact status.
-Queued backlog, processing lease failures and expired ready artifacts are emitted
-as separate stale signals instead of being collapsed under `processing`.
+Queued backlog, processing lease failures and undelivered expired ready artifacts
+are emitted as separate stale signals instead of being collapsed under
+`processing`.
 
 Metric attributes are intentionally low-cardinality and do not include request
 IDs, user IDs, email addresses, storage keys, tokens, notes or free-form error

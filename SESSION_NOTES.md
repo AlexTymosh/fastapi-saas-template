@@ -198,8 +198,8 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
 1. Added `get_privacy_dsr_execution_health()` for aggregate DSR execution health.
 2. Counted `export` and `erase` DSR jobs by execution status.
 3. Reported failed and stale queued/processing DSR jobs.
-4. Reported export artifact counts, current failed artifacts, expired ready
-   artifacts and stale queued/processing artifacts.
+4. Reported export artifact counts, current failed artifacts, undelivered
+   expired ready artifacts and stale queued/processing artifacts.
 5. Added low-cardinality OpenTelemetry metrics for DSR health snapshots.
 6. Added structured health logs without request IDs, user IDs, emails, storage
    keys, tokens, notes or free-form error details.
@@ -245,9 +245,12 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
 - Cancelled DSR work is excluded from current, failed and stale DSR signals.
 - Export artifacts linked only to cancelled DSRs remain visible in by-status
   counts but do not degrade failed/stale health signals.
-- Current ready export artifacts with `expires_at <= checked_at` degrade health.
+- Current undelivered ready export artifacts with `expires_at <= checked_at`
+  degrade health.
 - Superseded expired ready artifacts remain visible in by-status counts but do
   not degrade the current health snapshot.
+- Delivered ready artifacts remain fulfilled history after expiry and do not
+  degrade the current health snapshot.
 - Stale export artifact metrics preserve `queued`, `processing` and `ready`
   execution statuses instead of collapsing stale rows under `processing`.
 - The standalone CLI owns an explicit transaction around the health snapshot and
@@ -283,6 +286,9 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
 14. Preserved queued/processing/ready artifact status in stale metric points.
 15. Added an explicit `session.begin()` boundary around the CLI health snapshot.
 16. Added regression coverage for CLI transaction commit and rollback paths.
+17. Excluded delivered ready artifacts from expired-artifact degraded health
+    after download confirmation.
+18. Added regression coverage for delivered ready artifacts after expiry.
 
 ## Final #328 closure reconciliation
 

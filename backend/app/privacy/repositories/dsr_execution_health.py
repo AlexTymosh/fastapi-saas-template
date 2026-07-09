@@ -163,6 +163,8 @@ class DsrExecutionHealthRepository:
                     and_(
                         ExportArtifact.status == ExportArtifactStatus.READY.value,
                         ExportArtifact.expires_at <= checked_at,
+                        ExportArtifact.downloaded_at.is_(None),
+                        ExportArtifact.download_count == 0,
                         ~_newer_artifact_for_same_dsr_exists(),
                     ),
                 ),
