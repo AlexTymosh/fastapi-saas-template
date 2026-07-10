@@ -237,9 +237,11 @@ def test_platform_staff_access_does_not_require_tenant_membership(
     assert response.status_code == 200
 
 
-def test_compliance_officer_permissions_exclude_generic_gdpr_erase():
-    perms = ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
-    assert PlatformPermission.GDPR_ERASE not in perms
+def test_platform_permissions_exclude_legacy_gdpr_boundaries():
+    permission_values = {permission.value for permission in PlatformPermission}
+
+    assert "gdpr:export" not in permission_values
+    assert "gdpr:erase" not in permission_values
 
 
 def test_compliance_officer_can_execute_privacy_request_erasure():
@@ -247,11 +249,26 @@ def test_compliance_officer_can_execute_privacy_request_erasure():
     assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE in perms
 
 
+def test_compliance_officer_can_manage_privacy_export_artifacts():
+    perms = ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
+    assert PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE in perms
+
+
 def test_support_agent_cannot_execute_privacy_request_erasure():
     perms = ROLE_PERMISSIONS[PlatformRole.SUPPORT_AGENT]
     assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE not in perms
 
 
+def test_support_agent_cannot_manage_privacy_export_artifacts():
+    perms = ROLE_PERMISSIONS[PlatformRole.SUPPORT_AGENT]
+    assert PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE not in perms
+
+
 def test_platform_admin_can_execute_privacy_request_erasure():
     perms = ROLE_PERMISSIONS[PlatformRole.PLATFORM_ADMIN]
     assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE in perms
+
+
+def test_platform_admin_can_manage_privacy_export_artifacts():
+    perms = ROLE_PERMISSIONS[PlatformRole.PLATFORM_ADMIN]
+    assert PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE in perms

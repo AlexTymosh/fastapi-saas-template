@@ -27,6 +27,17 @@ def test_platform_export_artifact_read_permission_is_specific() -> None:
     )
 
 
+def test_platform_export_artifact_manage_permission_is_specific() -> None:
+    assert (
+        PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE
+        in ROLE_PERMISSIONS[PlatformRole.COMPLIANCE_OFFICER]
+    )
+    assert (
+        PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE
+        not in ROLE_PERMISSIONS[PlatformRole.SUPPORT_AGENT]
+    )
+
+
 def test_platform_export_artifact_read_routes_use_specific_permission() -> None:
     list_source = inspect.getsource(platform_api.list_platform_export_artifacts)
     detail_source = inspect.getsource(platform_api.get_platform_export_artifact)
@@ -37,16 +48,17 @@ def test_platform_export_artifact_read_routes_use_specific_permission() -> None:
     assert "PRIVACY_REQUESTS_READ" not in detail_source
 
 
-def test_platform_export_artifact_mutating_routes_keep_gdpr_export() -> None:
-    create_source = inspect.getsource(platform_api.create_platform_export_artifact)
-    download_source = inspect.getsource(
-        platform_api.create_platform_export_download_url
+def test_platform_export_artifact_mutating_routes_use_manage_permission() -> None:
+    route_sources = (
+        inspect.getsource(platform_api.create_platform_export_artifact),
+        inspect.getsource(platform_api.create_platform_export_download_url),
+        inspect.getsource(platform_api.confirm_platform_export_artifact_delivery),
     )
 
-    assert "GDPR_EXPORT" in create_source
-    assert "GDPR_EXPORT" in download_source
-    assert "PRIVACY_EXPORT_ARTIFACTS_READ" not in create_source
-    assert "PRIVACY_EXPORT_ARTIFACTS_READ" not in download_source
+    for route_source in route_sources:
+        assert "PRIVACY_EXPORT_ARTIFACTS_MANAGE" in route_source
+        assert "PRIVACY_EXPORT_ARTIFACTS_READ" not in route_source
+        assert "GDPR_EXPORT" not in route_source
 
 
 def test_local_storage_adapter_accepts_secretstr_signing_secret(tmp_path) -> None:

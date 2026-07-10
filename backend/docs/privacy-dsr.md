@@ -20,7 +20,7 @@ Implemented areas:
 - Optional requester details for self-service submissions, stored for platform
   review without echoing the note in user-facing DSR responses.
 - Platform permission boundaries for DSR read, review, export artifact metadata,
-  export generation, export download URL generation and erase execution.
+  export artifact management and erase execution.
 - Export artifact model, service, repository, user API, platform API and worker
   command.
 - Multi-artifact export history per DSR, where the newest artifact is the source
@@ -229,8 +229,7 @@ Platform permissions used by the DSR workflow:
 - `privacy_requests:review`
 - `privacy_requests:execute_erasure`
 - `privacy_export_artifacts:read`
-- `gdpr:export`
-- `gdpr:erase`
+- `privacy_export_artifacts:manage`
 
 Permission boundaries:
 
@@ -239,18 +238,20 @@ Permission boundaries:
 - `privacy_requests:execute_erasure` allows approved erase DSR execution.
 - `privacy_export_artifacts:read` allows platform export artifact metadata
   list/detail reads.
-- `gdpr:export` allows export artifact creation and download URL generation.
-- `gdpr:erase` is the GDPR erase permission; erase execution is exposed through
-  the dedicated `privacy_requests:execute_erasure` boundary.
+- `privacy_export_artifacts:manage` allows export artifact creation, platform
+  download URL generation and delivery confirmation for approved export DSRs.
 
 Role posture:
 
 - `platform_admin`: has the full permission set.
-- `compliance_officer`: can read/review DSRs, read export artifact metadata,
-  create/download export artifacts and execute approved erasure through the
-  dedicated erase execution boundary.
+- `compliance_officer`: can read/review DSRs, read and manage export artifacts,
+  and execute approved erasure through the dedicated erase execution boundary.
 - `support_agent`: denied by default for DSR read/review, export artifact and
   erasure execution operations.
+
+Legacy generic permissions are not part of the active platform permission
+contract. Export and erasure operations use workflow-specific privacy boundaries
+so role grants remain tied to concrete DSR capabilities.
 
 ## Lifecycle
 
@@ -290,7 +291,8 @@ Export artifacts are asynchronous and built from approved export DSRs only.
 
 Current behaviour:
 
-- Platform users with `gdpr:export` can create a queued export artifact.
+- Platform users with `privacy_export_artifacts:manage` can create a queued
+  export artifact.
 - The worker command claims queued artifacts and generates a subject data ZIP.
 - Export payloads are assembled from the current privacy inventory scope.
 - One export DSR can have multiple historical export artifacts; current DSR

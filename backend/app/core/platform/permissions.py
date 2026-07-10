@@ -24,12 +24,11 @@ class PlatformPermission(StrEnum):
     PLATFORM_STAFF_MANAGE = "platform_staff:manage"
     AUDIT_READ = "audit:read"
     AUDIT_READ_LIMITED = "audit:read_limited"
-    GDPR_EXPORT = "gdpr:export"
-    GDPR_ERASE = "gdpr:erase"
     PRIVACY_REQUESTS_READ = "privacy_requests:read"
     PRIVACY_REQUESTS_REVIEW = "privacy_requests:review"
     PRIVACY_REQUESTS_EXECUTE_ERASURE = "privacy_requests:execute_erasure"
     PRIVACY_EXPORT_ARTIFACTS_READ = "privacy_export_artifacts:read"
+    PRIVACY_EXPORT_ARTIFACTS_MANAGE = "privacy_export_artifacts:manage"
 
 
 ALL_PERMISSIONS = frozenset(PlatformPermission)
@@ -48,11 +47,11 @@ ROLE_PERMISSIONS = {
             PlatformPermission.ORGANISATIONS_READ_LIMITED,
             PlatformPermission.AUDIT_READ,
             PlatformPermission.AUDIT_READ_LIMITED,
-            PlatformPermission.GDPR_EXPORT,
             PlatformPermission.PRIVACY_REQUESTS_READ,
             PlatformPermission.PRIVACY_REQUESTS_REVIEW,
             PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE,
             PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_READ,
+            PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE,
         }
     ),
 }

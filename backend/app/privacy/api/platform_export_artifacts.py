@@ -48,7 +48,9 @@ async def create_platform_export_artifact(
     write_context: Annotated[
         PlatformWriteContext,
         Depends(
-            require_rate_limited_platform_write_context(PlatformPermission.GDPR_EXPORT),
+            require_rate_limited_platform_write_context(
+                PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE
+            ),
             scope="function",
         ),
     ],
@@ -129,7 +131,7 @@ async def create_platform_export_download_url(
         PlatformWriteContext,
         Depends(
             require_rate_limited_platform_write_context(
-                PlatformPermission.GDPR_EXPORT,
+                PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE,
                 policy=PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
             ),
             scope="function",
@@ -167,7 +169,7 @@ async def confirm_platform_export_artifact_delivery(
         PlatformWriteContext,
         Depends(
             require_rate_limited_platform_write_context(
-                PlatformPermission.GDPR_EXPORT,
+                PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE,
                 policy=PRIVACY_EXPORT_DOWNLOAD_URL_POLICY,
             ),
             scope="function",
