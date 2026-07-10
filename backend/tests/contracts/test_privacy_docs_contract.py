@@ -45,7 +45,10 @@ CURRENT_STATUS_DOCS = (
     PLATFORM_ACCESS_DOC,
     SESSION_NOTES_DOC,
 )
-
+CURRENT_PERMISSION_DOCS = (
+    PRIVACY_DSR_DOC,
+    PLATFORM_ACCESS_DOC,
+)
 ALL_RECONCILED_DOCS = CURRENT_STATUS_DOCS + HISTORICAL_SLICE_DOCS
 
 PLATFORM_PRIVACY_RATE_LIMIT_ROWS = (
@@ -130,7 +133,6 @@ def _documented_role_permissions(document: str, role_name: str) -> set[str]:
         permission = stripped.removeprefix("- ").strip()
         permission = permission.split(" ", maxsplit=1)[0]
         permissions.add(permission)
-
     return permissions
 
 
@@ -161,12 +163,25 @@ def test_privacy_dsr_docs_include_current_platform_permissions() -> None:
         PlatformPermission.PRIVACY_REQUESTS_REVIEW,
         PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE,
         PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_READ,
-        PlatformPermission.GDPR_EXPORT,
-        PlatformPermission.GDPR_ERASE,
+        PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE,
     )
 
     for permission in expected_permissions:
         assert f"`{permission.value}`" in document
+
+
+def test_current_privacy_permission_docs_do_not_reference_legacy_gdpr() -> None:
+    for path in CURRENT_PERMISSION_DOCS:
+        document = _read(path)
+        assert "`gdpr:export`" not in document
+        assert "`gdpr:erase`" not in document
+
+
+def test_platform_permission_contract_has_no_legacy_gdpr_permissions() -> None:
+    permission_values = {permission.value for permission in PlatformPermission}
+
+    assert "gdpr:export" not in permission_values
+    assert "gdpr:erase" not in permission_values
 
 
 def test_platform_access_docs_match_compliance_officer_permissions() -> None:
@@ -181,8 +196,12 @@ def test_platform_access_docs_match_compliance_officer_permissions() -> None:
     }
 
     assert documented_permissions == runtime_permissions
-    assert PlatformPermission.GDPR_ERASE.value not in documented_permissions
+    assert "gdpr:export" not in documented_permissions
+    assert "gdpr:erase" not in documented_permissions
     assert PlatformPermission.PRIVACY_REQUESTS_EXECUTE_ERASURE.value in (
+        documented_permissions
+    )
+    assert PlatformPermission.PRIVACY_EXPORT_ARTIFACTS_MANAGE.value in (
         documented_permissions
     )
 

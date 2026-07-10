@@ -84,12 +84,11 @@ platform_staff:manage
 audit:read
 audit:read_limited
 
-gdpr:export
-gdpr:erase
 privacy_requests:read
 privacy_requests:review
 privacy_requests:execute_erasure
 privacy_export_artifacts:read
+privacy_export_artifacts:manage
 ```
 
 Current role mapping:
@@ -108,17 +107,17 @@ compliance_officer:
 - organisations:read_limited
 - audit:read
 - audit:read_limited
-- gdpr:export
 - privacy_requests:read
 - privacy_requests:review
 - privacy_requests:execute_erasure
 - privacy_export_artifacts:read
+- privacy_export_artifacts:manage
 ```
 
-`compliance_officer` does not receive the generic `gdpr:erase` permission.
-Approved DSR erasure uses the dedicated `privacy_requests:execute_erasure`
-boundary instead. This keeps generic erase authority separate from the reviewed
-DSR execution flow used by the privacy API.
+Legacy generic GDPR permissions are not part of the active backend permission
+contract. Approved DSR erasure uses `privacy_requests:execute_erasure`; export
+artifact creation, platform download URL generation and delivery confirmation use
+`privacy_export_artifacts:manage`.
 
 ## 5. Platform actor resolution
 
@@ -260,14 +259,16 @@ Required permission boundaries:
 | DSR review/approve/reject/cancel | `privacy_requests:review` |
 | Approved erase execution | `privacy_requests:execute_erasure` |
 | Export artifact metadata list/detail | `privacy_export_artifacts:read` |
-| Export artifact creation | `gdpr:export` |
-| Export artifact download URL creation | `gdpr:export` |
+| Export artifact creation | `privacy_export_artifacts:manage` |
+| Export artifact download URL creation | `privacy_export_artifacts:manage` |
+| Export artifact delivery confirmation | `privacy_export_artifacts:manage` |
 
 `support_agent` has no DSR/export-artifact access by default.
 
 `compliance_officer` can read/review DSRs, execute approved erasure through the
-dedicated boundary, read export artifact metadata, and create export artifacts.
-The role does not receive generic `gdpr:erase`.
+explicit boundary, read export artifact metadata, create export artifacts,
+generate platform download URLs and confirm export delivery. The role does not
+receive legacy generic GDPR permissions.
 
 ## 10. Future admin frontend and OpenAPI contract
 

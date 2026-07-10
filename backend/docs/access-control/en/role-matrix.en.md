@@ -87,8 +87,11 @@ compliance_officer
 | `platform_staff:manage` | No | No | Yes |
 | `audit:read` | No | Yes | Yes |
 | `audit:read_limited` | Yes, redacted limited view only | Yes, redacted limited view available | Yes |
-| `gdpr:export` | No | Yes | Yes |
-| `gdpr:erase` | No | With approval / explicit workflow | Yes |
+| `privacy_requests:read` | No | Yes | Yes |
+| `privacy_requests:review` | No | Yes | Yes |
+| `privacy_requests:execute_erasure` | No | Yes | Yes |
+| `privacy_export_artifacts:read` | No | Yes | Yes |
+| `privacy_export_artifacts:manage` | No | Yes | Yes |
 
 ## 8. Critical separation rule
 

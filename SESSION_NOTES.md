@@ -1,6 +1,6 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-07-08
+Date: 2026-07-09
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
@@ -45,6 +45,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   observability initialization, current failed artifact scoping, atomic gauge
   updates, failed metric status preservation, cancelled work exclusion, expired
   ready artifact degradation and stale artifact metric status preservation.
+- PR-328-10C is done in this patch: legacy generic GDPR permissions were removed
+  from the runtime platform permission contract and current docs.
 
 ## Roadmap status
 
@@ -61,7 +63,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 9 | Authorised representative DSR workflow | Yes | Done |
 | 10A | Expand retention beyond export artifacts | Yes | Done |
 | 10B | DSR operations visibility | Yes | Done |
-| 10C | DSR permission contract cleanup | Yes | Not started |
+| 10C | DSR permission contract cleanup | Yes | Done |
 | 10D | Provider contract alignment | Yes | Not started |
 | 10E | Batched subject export providers | Yes | Not started |
 | 10F | Final #328 closure reconciliation | Yes | Not started |
@@ -290,18 +292,54 @@ Status: Open in PR #438; Codex review follow-up patch prepared.
     after download confirmation.
 18. Added regression coverage for delivered ready artifacts after expiry.
 
+## PR-328-10C — DSR permission contract cleanup
+
+Priority: P1
+Type: `security(privacy)`
+Recommended branch: `privacy/dsr-permission-contract-cleanup`
+Recommended PR title: `🛡️ security(privacy): remove legacy GDPR permissions`
+Status: Done in this patch.
+
+### Delivered scope
+
+1. Removed legacy generic GDPR permission values from `PlatformPermission`.
+2. Added `privacy_export_artifacts:manage` as the dedicated platform boundary for
+   export artifact creation, platform download URL generation and delivery
+   confirmation.
+3. Kept approved erase execution on the existing
+   `privacy_requests:execute_erasure` boundary.
+4. Updated compliance-officer role mapping to include the new export artifact
+   management permission and no generic GDPR permissions.
+5. Updated platform privacy routes to use the dedicated export artifact manage
+   permission for mutating export artifact operations.
+6. Updated current DSR and platform access docs to match the runtime permission
+   contract.
+7. Added regression tests proving the legacy GDPR values are absent from the
+   runtime permission enum, docs and export-artifact route dependencies.
+
+### Regression boundaries
+
+- Support agents still cannot read, manage or execute privacy DSR operations.
+- Compliance officers can still read/review DSRs, manage export artifacts and
+  execute approved erasure through explicit privacy boundaries.
+- Platform admins keep all current platform permissions via `ALL_PERMISSIONS`.
+- Legacy generic GDPR permission values are not part of the runtime permission
+  enum, so they cannot be granted through role mappings.
+- Export artifact read routes still require the read-specific permission.
+- Export artifact mutating routes use the manage-specific permission and do not
+  reuse the read boundary.
+
 ## Final #328 closure reconciliation
 
-Status: Not ready. Continue with PR-328-10C through PR-328-10F.
+Status: Not ready. Continue with PR-328-10D through PR-328-10F.
 
 ### Remaining scope
 
-1. Resolve the legacy `GDPR_EXPORT` / `GDPR_ERASE` permission contract drift.
-2. Align provider inventory, runtime provider registries and erasure coverage.
-3. Remove high-cardinality eager `.all()` loading from subject export providers.
-4. Re-run full CI.
-5. Update the closure checklist.
-6. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+1. Align provider inventory, runtime provider registries and erasure coverage.
+2. Remove high-cardinality eager `.all()` loading from subject export providers.
+3. Re-run full CI.
+4. Update the closure checklist.
+5. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 
