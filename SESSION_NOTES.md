@@ -48,8 +48,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR-328-10C is done in this patch: legacy generic GDPR permissions were removed
   from the runtime platform permission contract and current docs.
 - PR-328-10D is done in this patch: provider keys, inventory, runtime export
-  providers, provider registry, erasure coverage and erasure orchestration
-  order are covered by one alignment contract.
+  providers, provider registry, erasure coverage and the actual erasure
+  provider result order are covered by one alignment contract.
 
 ## Roadmap status
 
@@ -352,9 +352,11 @@ Status: Done in this patch.
 5. Added runtime export provider checks for provider order and table names.
 6. Added provider registry checks proving the derived registry contains only
    central catalogue keys.
-7. Added erasure coverage/orchestration checks proving runtime erasure order
-   still matches the central erasure provider catalogue.
-8. Added `backend/docs/privacy-provider-registry.md` with the provider alignment
+7. Added erasure coverage checks proving the coverage map still matches the
+   central erasure provider catalogue.
+8. Added a regression test that calls `_run_core_providers()` with patched
+   providers and asserts the actual emitted provider result order.
+9. Added `backend/docs/privacy-provider-registry.md` with the provider alignment
    contract and change rule.
 
 ### Regression boundaries
@@ -367,8 +369,10 @@ Status: Done in this patch.
 - Runtime export provider table names must match central table mapping.
 - The derived provider registry must not contain ad-hoc keys outside the central
   export/erasure catalogues.
-- Erasure coverage and runtime orchestration order must stay aligned with the
-  central erasure provider catalogue.
+- Erasure coverage must stay aligned with the central erasure provider
+  catalogue.
+- The actual `_run_core_providers()` emitted provider result order must match
+  the central erasure provider order; wrapper-only order checks are not enough.
 
 ## Final #328 closure reconciliation
 
