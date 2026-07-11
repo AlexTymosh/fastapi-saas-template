@@ -47,6 +47,9 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
   ready artifact degradation and stale artifact metric status preservation.
 - PR-328-10C is done in this patch: legacy generic GDPR permissions were removed
   from the runtime platform permission contract and current docs.
+- PR-328-10D is done in this patch: provider keys, inventory, runtime export
+  providers, provider registry, erasure coverage and erasure orchestration
+  order are covered by one alignment contract.
 
 ## Roadmap status
 
@@ -64,7 +67,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 10A | Expand retention beyond export artifacts | Yes | Done |
 | 10B | DSR operations visibility | Yes | Done |
 | 10C | DSR permission contract cleanup | Yes | Done |
-| 10D | Provider contract alignment | Yes | Not started |
+| 10D | Provider contract alignment | Yes | Done |
 | 10E | Batched subject export providers | Yes | Not started |
 | 10F | Final #328 closure reconciliation | Yes | Not started |
 
@@ -329,17 +332,54 @@ Status: Done in this patch.
 - Export artifact mutating routes use the manage-specific permission and do not
   reuse the read boundary.
 
+## PR-328-10D — Provider contract alignment
+
+Priority: P1
+Type: `test(privacy)`
+Recommended branch: `privacy/dsr-provider-registry-alignment`
+Recommended PR title: `🧹 chore(privacy): align DSR provider registries`
+Status: Done in this patch.
+
+### Delivered scope
+
+1. Added `export_provider_order()` to the central provider-key catalogue.
+2. Added regression coverage tying privacy inventory export keys to the central
+   export provider catalogue.
+3. Added regression coverage tying privacy inventory erasure keys to the central
+   erasure provider catalogue.
+4. Added table-mapping checks between inventory rows and central provider-key
+   table mappings.
+5. Added runtime export provider checks for provider order and table names.
+6. Added provider registry checks proving the derived registry contains only
+   central catalogue keys.
+7. Added erasure coverage/orchestration checks proving runtime erasure order
+   still matches the central erasure provider catalogue.
+8. Added `backend/docs/privacy-provider-registry.md` with the provider alignment
+   contract and change rule.
+
+### Regression boundaries
+
+- Adding an inventory export provider without a central provider-key entry fails
+  the provider alignment contract.
+- Adding an inventory erasure provider without a central provider-key entry fails
+  the provider alignment contract.
+- Runtime export provider order must match the central export provider order.
+- Runtime export provider table names must match central table mapping.
+- The derived provider registry must not contain ad-hoc keys outside the central
+  export/erasure catalogues.
+- Erasure coverage and runtime orchestration order must stay aligned with the
+  central erasure provider catalogue.
+
 ## Final #328 closure reconciliation
 
-Status: Not ready. Continue with PR-328-10D through PR-328-10F.
+Status: Not ready. Continue with PR-328-10E through PR-328-10F.
 
 ### Remaining scope
 
-1. Align provider inventory, runtime provider registries and erasure coverage.
-2. Remove high-cardinality eager `.all()` loading from subject export providers.
-3. Re-run full CI.
-4. Update the closure checklist.
-5. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+1. Remove high-cardinality eager `.all()` loading from subject export providers.
+2. Re-run full CI.
+3. Update the closure checklist.
+4. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 
