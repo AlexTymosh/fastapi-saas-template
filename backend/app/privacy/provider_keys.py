@@ -60,7 +60,7 @@ _EXPORT_PROVIDER_TABLES: dict[PrivacyExportProviderKey, str] = {
     PrivacyExportProviderKey.AUDIT_SUBJECT_ACTOR_OR_TARGET_JOIN_EVENTS: (
         "audit_events"
     ),
-    PrivacyExportProviderKey.PLATFORM_STAFF_BY_SUBJECT_OR_CREATOR: ("platform_staff"),
+    PrivacyExportProviderKey.PLATFORM_STAFF_BY_SUBJECT_OR_CREATOR: "platform_staff",
     PrivacyExportProviderKey.DSR_WORKFLOW_RECORDS: "data_subject_requests",
     PrivacyExportProviderKey.EXPORT_ARTIFACTS_SUBJECT_OR_ACTOR_METADATA: (
         "export_artifacts"
@@ -68,7 +68,7 @@ _EXPORT_PROVIDER_TABLES: dict[PrivacyExportProviderKey, str] = {
     PrivacyExportProviderKey.PRIVACY_GOVERNANCE_AUTHORIZATIONS: (
         "data_processing_authorizations"
     ),
-    PrivacyExportProviderKey.PRIVACY_GOVERNANCE_CONSENT_RECORDS: ("consent_records"),
+    PrivacyExportProviderKey.PRIVACY_GOVERNANCE_CONSENT_RECORDS: "consent_records",
     PrivacyExportProviderKey.PRIVACY_GOVERNANCE_NOTICE_ACCEPTANCES: (
         "privacy_notice_acceptances"
     ),
@@ -125,6 +125,10 @@ _ERASURE_ORCHESTRATION_ORDER: tuple[PrivacyErasureProviderKey, ...] = (
 
 def export_provider_keys() -> frozenset[str]:
     return frozenset(provider_key.value for provider_key in PrivacyExportProviderKey)
+
+
+def export_provider_order() -> tuple[str, ...]:
+    return tuple(provider_key.value for provider_key in PrivacyExportProviderKey)
 
 
 def erasure_provider_keys() -> frozenset[str]:
