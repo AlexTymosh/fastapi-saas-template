@@ -396,10 +396,15 @@ Status: Done in this patch.
 4. Preserved provider payload shape, provider ordering and redaction behaviour.
 5. Added regression coverage proving subject export provider source does not use
    eager `.all()` loading.
-6. Added a batching regression test that forces multiple membership export pages
-   and verifies deterministic ordering across page boundaries.
-7. Updated `backend/docs/privacy-dsr-export-providers.md` with the provider
-   iteration model and guardrails.
+6. Added a batching regression test that forces multiple authorization export
+   pages and verifies deterministic ordering across page boundaries.
+7. Normalised email-based invite subqueries used by audit/outbox lookup paths so
+   legacy mixed-case or padded subject emails keep matching subject-linked
+   invites.
+8. Added regression coverage for audit invite lookup with a non-normalised local
+   user email.
+9. Updated `backend/docs/privacy-dsr-export-providers.md` with the provider
+   iteration model, email normalisation and guardrails.
 
 ### Regression boundaries
 
@@ -409,6 +414,8 @@ Status: Done in this patch.
   rows are neither skipped nor duplicated across batch boundaries.
 - SQL helper lookups should avoid loading large ID lists into Python when a
   subquery can preserve the same predicate.
+- Email-based helper subqueries must use the same trim/lower normalisation as
+  direct provider lookups.
 - Existing export payload shape and redaction fields remain unchanged.
 
 ## Final #328 closure reconciliation

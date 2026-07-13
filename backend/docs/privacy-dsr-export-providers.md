@@ -71,7 +71,9 @@ provider ordering column and `id` tie-breaker, with a bounded batch size. This
 keeps export generation memory-bounded while preserving stable output order.
 
 Provider queries that need related IDs should prefer SQL subqueries over loading
-large ID lists into Python before the main export query.
+large ID lists into Python before the main export query. Email-based helper
+subqueries must preserve the same trim/lower normalisation used by direct
+provider lookups.
 
 The non-streaming `CrossTableSubjectDataExporter.export_subject_data()` still
 returns the existing in-memory export payload for compatibility. The provider

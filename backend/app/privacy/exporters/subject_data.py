@@ -161,7 +161,7 @@ class InvitesBySubjectExportProvider(_BaseSubjectExportProvider):
         conditions = [Invite.revoked_by_user_id == context.subject_user_id]
         subject_email = await _get_subject_email(self.session, context.subject_user_id)
         if subject_email is not None:
-            conditions.append(func.lower(Invite.email) == subject_email.lower())
+            conditions.append(func.lower(func.trim(Invite.email)) == subject_email)
 
         stmt = select(Invite).where(or_(*conditions))
         async for row in _iter_model_keyset(self.session, stmt, model=Invite):
@@ -235,7 +235,7 @@ class OutboxSubjectReferencesExportProvider(_BaseSubjectExportProvider):
         subject_email = await _get_subject_email(self.session, context.subject_user_id)
         if subject_email is not None:
             invite_ids = select(Invite.id).where(
-                func.lower(Invite.email) == subject_email.lower()
+                func.lower(func.trim(Invite.email)) == subject_email
             )
             conditions.extend(
                 (
@@ -1005,9 +1005,11 @@ def _subject_audit_target_dsr_conditions(subject_user_id: UUID) -> tuple[object,
 
 
 def _audit_subject_conditions(subject_user_id: UUID) -> list[object]:
-    subject_email = select(User.email).where(User.id == subject_user_id)
+    subject_email = select(func.lower(func.trim(User.email))).where(
+        User.id == subject_user_id
+    )
     subject_invite_ids = select(Invite.id).where(
-        func.lower(Invite.email) == func.lower(subject_email.scalar_subquery()),
+        func.lower(func.trim(Invite.email)) == subject_email.scalar_subquery(),
     )
     subject_membership_ids = select(Membership.id).where(
         Membership.user_id == subject_user_id
