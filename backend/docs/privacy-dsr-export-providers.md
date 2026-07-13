@@ -63,6 +63,21 @@ Audit rows are exported with allowlisted structured metadata only. Free-text
 reason fields are reported through redaction notices rather than copied into the
 subject export.
 
+## Provider iteration model
+
+Subject export providers must not materialise an unbounded provider result set
+with `.all()`. Multi-row providers use deterministic keyset pagination over the
+provider ordering column and `id` tie-breaker, with a bounded batch size. This
+keeps export generation memory-bounded while preserving stable output order.
+
+Provider queries that need related IDs should prefer SQL subqueries over loading
+large ID lists into Python before the main export query.
+
+The non-streaming `CrossTableSubjectDataExporter.export_subject_data()` still
+returns the existing in-memory export payload for compatibility. The provider
+layer beneath it is now batched so the same providers can feed streaming archive
+generation without eager provider-level result materialisation.
+
 ## PostgreSQL provider integration coverage
 
 SQLite-backed tests cover the default fast feedback loop. PostgreSQL-specific
@@ -92,7 +107,10 @@ Required checks:
 - every concrete subject export provider points to the same table as the
   matching inventory entry;
 - provider keys are unique;
-- concrete providers expose the async `iter_export_records()` contract.
+- concrete providers expose the async `iter_export_records()` contract;
+- multi-row providers do not use unbounded eager `.all()` result loading;
+- provider keyset pagination keeps deterministic ordering across batch
+  boundaries.
 
 A dedicated contract test enforces these rules so future personal-data models
 cannot silently enter the inventory without export-provider coverage.
@@ -105,6 +123,7 @@ follow-up categories.
 Current implemented scope includes:
 
 - provider-backed subject exports;
+- batched/keyset provider iteration for multi-row subject export providers;
 - PostgreSQL provider integration coverage for outbox JSON predicates;
 - S3-compatible export object storage;
 - erasure/anonymisation providers;
