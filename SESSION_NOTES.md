@@ -50,6 +50,8 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR-328-10D is done in this patch: provider keys, inventory, runtime export
   providers, provider registry, erasure coverage and the actual erasure
   provider result order are covered by one alignment contract.
+- PR-328-10E is done in this patch: subject export providers now use bounded
+  keyset/batched iteration instead of unbounded eager provider result loading.
 
 ## Roadmap status
 
@@ -68,7 +70,7 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 10B | DSR operations visibility | Yes | Done |
 | 10C | DSR permission contract cleanup | Yes | Done |
 | 10D | Provider contract alignment | Yes | Done |
-| 10E | Batched subject export providers | Yes | Not started |
+| 10E | Batched subject export providers | Yes | Done |
 | 10F | Final #328 closure reconciliation | Yes | Not started |
 
 ## PR-328-9A — Authorised representative DSR intake
@@ -374,16 +376,57 @@ Status: Done in this patch.
 - The actual `_run_core_providers()` emitted provider result order must match
   the central erasure provider order; wrapper-only order checks are not enough.
 
+
+## PR-328-10E — Batched subject export providers
+
+Priority: P1
+Type: `perf(privacy)`
+Recommended branch: `privacy/dsr-export-provider-keyset-batching`
+Recommended PR title: `⚡️ perf(privacy): batch DSR export providers`
+Status: Done in this patch.
+
+### Delivered scope
+
+1. Replaced unbounded multi-row subject export provider `.all()` calls with
+   bounded keyset page iteration.
+2. Added deterministic keyset ordering by provider ordering column and `id`
+   tie-breaker.
+3. Replaced Python-side ID materialisation for audit/outbox helper lookups with
+   SQL subqueries where possible.
+4. Preserved provider payload shape, provider ordering and redaction behaviour.
+5. Added regression coverage proving subject export provider source does not use
+   eager `.all()` loading.
+6. Added a batching regression test that forces multiple authorization export
+   pages and verifies deterministic ordering across page boundaries.
+7. Normalised email-based invite subqueries used by audit/outbox lookup paths so
+   legacy mixed-case or padded subject emails keep matching subject-linked
+   invites.
+8. Added regression coverage for audit invite lookup with a non-normalised local
+   user email.
+9. Updated `backend/docs/privacy-dsr-export-providers.md` with the provider
+   iteration model, email normalisation and guardrails.
+
+### Regression boundaries
+
+- Multi-row subject export providers must not use unbounded eager `.all()`
+  result loading.
+- Provider pagination must use deterministic ordering and an `id` tie-breaker so
+  rows are neither skipped nor duplicated across batch boundaries.
+- SQL helper lookups should avoid loading large ID lists into Python when a
+  subquery can preserve the same predicate.
+- Email-based helper subqueries must use the same trim/lower normalisation as
+  direct provider lookups.
+- Existing export payload shape and redaction fields remain unchanged.
+
 ## Final #328 closure reconciliation
 
-Status: Not ready. Continue with PR-328-10E through PR-328-10F.
+Status: Not ready. Continue with PR-328-10F.
 
 ### Remaining scope
 
-1. Remove high-cardinality eager `.all()` loading from subject export providers.
-2. Re-run full CI.
-3. Update the closure checklist.
-4. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+1. Re-run full CI.
+2. Update the closure checklist.
+3. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
 
 ## Notes for future agents
 

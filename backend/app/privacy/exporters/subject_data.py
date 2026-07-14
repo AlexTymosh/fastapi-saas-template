@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.models.audit_event import AuditEvent, AuditTargetType
@@ -32,6 +32,8 @@ from app.privacy.providers.base import (
     PrivacyProviderContext,
 )
 from app.users.models.user import User
+
+_EXPORT_PROVIDER_BATCH_SIZE = 500
 
 
 class SubjectDataExportError(ValueError):
@@ -106,13 +108,8 @@ class MembershipsBySubjectExportProvider(_BaseSubjectExportProvider):
     async def iter_export_records(
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
-        stmt = (
-            select(Membership)
-            .where(Membership.user_id == context.subject_user_id)
-            .order_by(Membership.created_at.asc(), Membership.id.asc())
-        )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        stmt = select(Membership).where(Membership.user_id == context.subject_user_id)
+        async for row in _iter_model_keyset(self.session, stmt, model=Membership):
             yield self._record(
                 {
                     "id": row.id,
@@ -133,14 +130,12 @@ class OrganisationsBySubjectMembershipExportProvider(_BaseSubjectExportProvider)
     async def iter_export_records(
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
-        stmt = (
-            select(Organisation)
-            .join(Membership, Membership.organisation_id == Organisation.id)
-            .where(Membership.user_id == context.subject_user_id)
-            .order_by(Organisation.created_at.asc(), Organisation.id.asc())
+        membership_subquery = select(Membership.id).where(
+            Membership.user_id == context.subject_user_id,
+            Membership.organisation_id == Organisation.id,
         )
-        rows = (await self.session.execute(stmt)).scalars().unique().all()
-        for row in rows:
+        stmt = select(Organisation).where(membership_subquery.exists())
+        async for row in _iter_model_keyset(self.session, stmt, model=Organisation):
             yield self._record(
                 {
                     "id": row.id,
@@ -166,15 +161,10 @@ class InvitesBySubjectExportProvider(_BaseSubjectExportProvider):
         conditions = [Invite.revoked_by_user_id == context.subject_user_id]
         subject_email = await _get_subject_email(self.session, context.subject_user_id)
         if subject_email is not None:
-            conditions.append(func.lower(Invite.email) == subject_email.lower())
+            conditions.append(func.lower(func.trim(Invite.email)) == subject_email)
 
-        stmt = (
-            select(Invite)
-            .where(or_(*conditions))
-            .order_by(Invite.created_at.asc(), Invite.id.asc())
-        )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        stmt = select(Invite).where(or_(*conditions))
+        async for row in _iter_model_keyset(self.session, stmt, model=Invite):
             if self._is_revoker_only_record(row, subject_email):
                 yield self._revoker_reference_record(row)
                 continue
@@ -242,28 +232,23 @@ class OutboxSubjectReferencesExportProvider(_BaseSubjectExportProvider):
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
         conditions = []
-        invite_ids = await _get_subject_invite_ids(
-            self.session, context.subject_user_id
-        )
-        if invite_ids:
-            conditions.append(OutboxEvent.aggregate_id.in_(invite_ids))
-
         subject_email = await _get_subject_email(self.session, context.subject_user_id)
         if subject_email is not None:
-            conditions.append(
-                OutboxEvent.payload_json["email"].as_string() == subject_email
+            invite_ids = select(Invite.id).where(
+                func.lower(func.trim(Invite.email)) == subject_email
+            )
+            conditions.extend(
+                (
+                    OutboxEvent.aggregate_id.in_(invite_ids),
+                    OutboxEvent.payload_json["email"].as_string() == subject_email,
+                )
             )
 
         if not conditions:
             return
 
-        stmt = (
-            select(OutboxEvent)
-            .where(or_(*conditions))
-            .order_by(OutboxEvent.created_at.asc(), OutboxEvent.id.asc())
-        )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        stmt = select(OutboxEvent).where(or_(*conditions))
+        async for row in _iter_model_keyset(self.session, stmt, model=OutboxEvent):
             payload_reference, redacted_payload_fields = _outbox_payload_reference(
                 row.payload_json
             )
@@ -296,16 +281,9 @@ class AuditSubjectEventsExportProvider(_BaseSubjectExportProvider):
     async def iter_export_records(
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
-        conditions = await _audit_subject_conditions(
-            self.session, context.subject_user_id
-        )
-        stmt = (
-            select(AuditEvent)
-            .where(or_(*conditions))
-            .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
-        )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        conditions = _audit_subject_conditions(context.subject_user_id)
+        stmt = select(AuditEvent).where(or_(*conditions))
+        async for row in _iter_model_keyset(self.session, stmt, model=AuditEvent):
             yield self._audit_record(row, context)
 
     def _audit_record(
@@ -346,18 +324,13 @@ class PlatformStaffBySubjectExportProvider(_BaseSubjectExportProvider):
     async def iter_export_records(
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
-        stmt = (
-            select(PlatformStaff)
-            .where(
-                or_(
-                    PlatformStaff.user_id == context.subject_user_id,
-                    PlatformStaff.created_by_user_id == context.subject_user_id,
-                )
+        stmt = select(PlatformStaff).where(
+            or_(
+                PlatformStaff.user_id == context.subject_user_id,
+                PlatformStaff.created_by_user_id == context.subject_user_id,
             )
-            .order_by(PlatformStaff.created_at.asc(), PlatformStaff.id.asc())
         )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        async for row in _iter_model_keyset(self.session, stmt, model=PlatformStaff):
             if self._is_creator_only_record(row, context):
                 yield self._creator_reference_record(row)
                 continue
@@ -421,13 +394,12 @@ class DsrWorkflowRecordsExportProvider(_BaseSubjectExportProvider):
     async def iter_export_records(
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
-        stmt = (
-            select(DataSubjectRequest)
-            .where(or_(*_subject_workflow_dsr_conditions(context.subject_user_id)))
-            .order_by(DataSubjectRequest.created_at.asc(), DataSubjectRequest.id.asc())
+        stmt = select(DataSubjectRequest).where(
+            or_(*_subject_workflow_dsr_conditions(context.subject_user_id))
         )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        async for row in _iter_model_keyset(
+            self.session, stmt, model=DataSubjectRequest
+        ):
             if self._is_reference_only_record(row, context):
                 yield self._reference_record(row, context)
                 continue
@@ -593,23 +565,18 @@ class ExportArtifactMetadataExportProvider(_BaseSubjectExportProvider):
     async def iter_export_records(
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
-        stmt = (
-            select(ExportArtifact)
-            .where(
-                and_(
-                    ExportArtifact.status == ExportArtifactStatus.READY.value,
-                    or_(
-                        ExportArtifact.subject_user_id == context.subject_user_id,
-                        ExportArtifact.requester_user_id == context.subject_user_id,
-                        ExportArtifact.requested_by_user_id == context.subject_user_id,
-                        ExportArtifact.generated_by_user_id == context.subject_user_id,
-                    ),
-                )
+        stmt = select(ExportArtifact).where(
+            and_(
+                ExportArtifact.status == ExportArtifactStatus.READY.value,
+                or_(
+                    ExportArtifact.subject_user_id == context.subject_user_id,
+                    ExportArtifact.requester_user_id == context.subject_user_id,
+                    ExportArtifact.requested_by_user_id == context.subject_user_id,
+                    ExportArtifact.generated_by_user_id == context.subject_user_id,
+                ),
             )
-            .order_by(ExportArtifact.created_at.asc(), ExportArtifact.id.asc())
         )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        async for row in _iter_model_keyset(self.session, stmt, model=ExportArtifact):
             if self._is_actor_only_record(row, context):
                 yield self._actor_reference_record(row, context)
                 continue
@@ -749,13 +716,13 @@ class ProcessingAuthorizationsExportProvider(_BaseSubjectExportProvider):
             .where(
                 DataProcessingAuthorization.subject_user_id == context.subject_user_id
             )
-            .order_by(
-                DataProcessingAuthorization.created_at.asc(),
-                DataProcessingAuthorization.id.asc(),
-            )
         )
-        rows = (await self.session.execute(stmt)).all()
-        for authorization, purpose in rows:
+        async for row in _iter_row_keyset(
+            self.session,
+            stmt,
+            model=DataProcessingAuthorization,
+        ):
+            authorization, purpose = row
             yield self._record(
                 {
                     "id": authorization.id,
@@ -788,10 +755,9 @@ class ConsentRecordsExportProvider(_BaseSubjectExportProvider):
             select(ConsentRecord, ProcessingPurpose)
             .join(ProcessingPurpose, ConsentRecord.purpose_id == ProcessingPurpose.id)
             .where(ConsentRecord.subject_user_id == context.subject_user_id)
-            .order_by(ConsentRecord.created_at.asc(), ConsentRecord.id.asc())
         )
-        rows = (await self.session.execute(stmt)).all()
-        for consent, purpose in rows:
+        async for row in _iter_row_keyset(self.session, stmt, model=ConsentRecord):
+            consent, purpose = row
             yield self._record(
                 {
                     "id": consent.id,
@@ -816,16 +782,15 @@ class PrivacyNoticeAcceptancesExportProvider(_BaseSubjectExportProvider):
     async def iter_export_records(
         self, context: PrivacyProviderContext
     ) -> AsyncIterator[PrivacyExportRecord]:
-        stmt = (
-            select(PrivacyNoticeAcceptance)
-            .where(PrivacyNoticeAcceptance.subject_user_id == context.subject_user_id)
-            .order_by(
-                PrivacyNoticeAcceptance.accepted_at.asc(),
-                PrivacyNoticeAcceptance.id.asc(),
-            )
+        stmt = select(PrivacyNoticeAcceptance).where(
+            PrivacyNoticeAcceptance.subject_user_id == context.subject_user_id
         )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
+        async for row in _iter_model_keyset(
+            self.session,
+            stmt,
+            model=PrivacyNoticeAcceptance,
+            sort_column=PrivacyNoticeAcceptance.accepted_at,
+        ):
             yield self._record(
                 {
                     "id": row.id,
@@ -921,6 +886,93 @@ class CrossTableSubjectDataExporter:
         return [provider_type(self.session) for provider_type in _EXPORT_PROVIDER_TYPES]
 
 
+async def _iter_model_keyset(
+    session: AsyncSession,
+    stmt: Select,
+    *,
+    model: object,
+    sort_column: object | None = None,
+    batch_size: int | None = None,
+) -> AsyncIterator[object]:
+    key_column = sort_column or model.created_at
+    effective_batch_size = batch_size or _EXPORT_PROVIDER_BATCH_SIZE
+    last_key: tuple[object, UUID] | None = None
+    while True:
+        page_stmt = _keyset_page_statement(
+            stmt,
+            model=model,
+            sort_column=key_column,
+            last_key=last_key,
+            batch_size=effective_batch_size,
+        )
+        result = await session.execute(page_stmt)
+        rows = result.scalars().fetchmany(effective_batch_size)
+        if not rows:
+            break
+        for row in rows:
+            yield row
+        last_row = rows[-1]
+        last_key = (_sort_value(last_row, key_column), last_row.id)
+
+
+async def _iter_row_keyset(
+    session: AsyncSession,
+    stmt: Select,
+    *,
+    model: object,
+    sort_column: object | None = None,
+    batch_size: int | None = None,
+) -> AsyncIterator[object]:
+    key_column = sort_column or model.created_at
+    effective_batch_size = batch_size or _EXPORT_PROVIDER_BATCH_SIZE
+    last_key: tuple[object, UUID] | None = None
+    while True:
+        page_stmt = _keyset_page_statement(
+            stmt,
+            model=model,
+            sort_column=key_column,
+            last_key=last_key,
+            batch_size=effective_batch_size,
+        )
+        result = await session.execute(page_stmt)
+        rows = result.fetchmany(effective_batch_size)
+        if not rows:
+            break
+        for row in rows:
+            yield row
+        last_entity = rows[-1][0]
+        last_key = (_sort_value(last_entity, key_column), last_entity.id)
+
+
+def _keyset_page_statement(
+    stmt: Select,
+    *,
+    model: object,
+    sort_column: object,
+    last_key: tuple[object, UUID] | None,
+    batch_size: int,
+) -> Select:
+    if last_key is not None:
+        stmt = stmt.where(_after_keyset(sort_column, model.id, last_key))
+    return stmt.order_by(sort_column.asc(), model.id.asc()).limit(batch_size)
+
+
+def _after_keyset(
+    sort_column: object,
+    id_column: object,
+    last_key: tuple[object, UUID],
+) -> object:
+    last_sort_value, last_id = last_key
+    return or_(
+        sort_column > last_sort_value,
+        and_(sort_column == last_sort_value, id_column > last_id),
+    )
+
+
+def _sort_value(row: object, sort_column: object) -> object:
+    return getattr(row, sort_column.key)
+
+
 async def _get_subject_user(
     session: AsyncSession, subject_user_id: UUID
 ) -> User | None:
@@ -933,37 +985,6 @@ async def _get_subject_email(
 ) -> str | None:
     user = await _get_subject_user(session, subject_user_id)
     return user.email.strip().lower() if user is not None and user.email else None
-
-
-async def _get_subject_invite_ids(
-    session: AsyncSession, subject_user_id: UUID
-) -> tuple[UUID, ...]:
-    subject_email = await _get_subject_email(session, subject_user_id)
-    if subject_email is None:
-        return ()
-
-    stmt = (
-        select(Invite.id)
-        .where(func.lower(Invite.email) == subject_email)
-        .order_by(Invite.created_at.asc())
-    )
-    return tuple((await session.execute(stmt)).scalars().all())
-
-
-async def _get_subject_membership_ids(
-    session: AsyncSession, subject_user_id: UUID
-) -> tuple[UUID, ...]:
-    stmt = select(Membership.id).where(Membership.user_id == subject_user_id)
-    return tuple((await session.execute(stmt)).scalars().all())
-
-
-async def _get_subject_dsr_ids(
-    session: AsyncSession, subject_user_id: UUID
-) -> tuple[UUID, ...]:
-    stmt = select(DataSubjectRequest.id).where(
-        or_(*_subject_audit_target_dsr_conditions(subject_user_id))
-    )
-    return tuple((await session.execute(stmt)).scalars().all())
 
 
 def _subject_workflow_dsr_conditions(subject_user_id: UUID) -> tuple[object, ...]:
@@ -983,10 +1004,20 @@ def _subject_audit_target_dsr_conditions(subject_user_id: UUID) -> tuple[object,
     )
 
 
-async def _get_subject_export_artifact_ids(
-    session: AsyncSession, subject_user_id: UUID
-) -> tuple[UUID, ...]:
-    stmt = select(ExportArtifact.id).where(
+def _audit_subject_conditions(subject_user_id: UUID) -> list[object]:
+    subject_email = select(func.lower(func.trim(User.email))).where(
+        User.id == subject_user_id
+    )
+    subject_invite_ids = select(Invite.id).where(
+        func.lower(func.trim(Invite.email)) == subject_email.scalar_subquery(),
+    )
+    subject_membership_ids = select(Membership.id).where(
+        Membership.user_id == subject_user_id
+    )
+    subject_dsr_ids = select(DataSubjectRequest.id).where(
+        or_(*_subject_audit_target_dsr_conditions(subject_user_id))
+    )
+    subject_export_artifact_ids = select(ExportArtifact.id).where(
         and_(
             ExportArtifact.status == ExportArtifactStatus.READY.value,
             or_(
@@ -995,20 +1026,11 @@ async def _get_subject_export_artifact_ids(
             ),
         )
     )
-    return tuple((await session.execute(stmt)).scalars().all())
+    subject_platform_staff_ids = select(PlatformStaff.id).where(
+        PlatformStaff.user_id == subject_user_id
+    )
 
-
-async def _get_subject_platform_staff_ids(
-    session: AsyncSession, subject_user_id: UUID
-) -> tuple[UUID, ...]:
-    stmt = select(PlatformStaff.id).where(PlatformStaff.user_id == subject_user_id)
-    return tuple((await session.execute(stmt)).scalars().all())
-
-
-async def _audit_subject_conditions(
-    session: AsyncSession, subject_user_id: UUID
-) -> list[object]:
-    conditions: list[object] = [
+    return [
         AuditEvent.actor_user_id == subject_user_id,
         and_(
             AuditEvent.target_type == AuditTargetType.USER.value,
@@ -1023,39 +1045,27 @@ async def _audit_subject_conditions(
             ),
             AuditEvent.target_id == subject_user_id,
         ),
+        and_(
+            AuditEvent.target_type == AuditTargetType.INVITE.value,
+            AuditEvent.target_id.in_(subject_invite_ids),
+        ),
+        and_(
+            AuditEvent.target_type == AuditTargetType.MEMBERSHIP.value,
+            AuditEvent.target_id.in_(subject_membership_ids),
+        ),
+        and_(
+            AuditEvent.target_type == AuditTargetType.DATA_SUBJECT_REQUEST.value,
+            AuditEvent.target_id.in_(subject_dsr_ids),
+        ),
+        and_(
+            AuditEvent.target_type == AuditTargetType.EXPORT_ARTIFACT.value,
+            AuditEvent.target_id.in_(subject_export_artifact_ids),
+        ),
+        and_(
+            AuditEvent.target_type == AuditTargetType.PLATFORM_STAFF.value,
+            AuditEvent.target_id.in_(subject_platform_staff_ids),
+        ),
     ]
-
-    target_sets = (
-        (
-            AuditTargetType.INVITE.value,
-            await _get_subject_invite_ids(session, subject_user_id),
-        ),
-        (
-            AuditTargetType.MEMBERSHIP.value,
-            await _get_subject_membership_ids(session, subject_user_id),
-        ),
-        (
-            AuditTargetType.DATA_SUBJECT_REQUEST.value,
-            await _get_subject_dsr_ids(session, subject_user_id),
-        ),
-        (
-            AuditTargetType.EXPORT_ARTIFACT.value,
-            await _get_subject_export_artifact_ids(session, subject_user_id),
-        ),
-        (
-            AuditTargetType.PLATFORM_STAFF.value,
-            await _get_subject_platform_staff_ids(session, subject_user_id),
-        ),
-    )
-    for target_type, target_ids in target_sets:
-        if target_ids:
-            conditions.append(
-                and_(
-                    AuditEvent.target_type == target_type,
-                    AuditEvent.target_id.in_(target_ids),
-                )
-            )
-    return conditions
 
 
 def _serialise_record(record: PrivacyExportRecord) -> dict[str, object]:
