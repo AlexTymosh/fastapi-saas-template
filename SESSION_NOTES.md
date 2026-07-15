@@ -11,8 +11,9 @@ Issue #328 is ready for project-owner closure after this final documentation
 reconciliation PR is merged and `task ci` passes on the resulting branch.
 
 The backend #328 scope now has no known P0-P2 implementation or documentation
-blocker. Future product/UI or storage-native evidence work should be tracked as
-separate follow-up issues, not as #328 blockers.
+blocker. Future `export.json` schema contract, product/UI or storage-native
+evidence work should be tracked as separate follow-up issues, not as #328
+blockers.
 
 ## Current verified state
 
@@ -326,8 +327,9 @@ Status: Done in this patch.
 2. Removed stale non-blocking follow-up entries that are now implemented:
    streaming archive generation, PostgreSQL provider integration coverage,
    explicit export delivery evidence and authorised representative workflow.
-3. Kept frontend/UI, storage-native delivery evidence and non-export execution
-   pipelines as separate post-#328 follow-up categories.
+3. Kept versioned export payload schema contract, frontend/UI, storage-native
+   delivery evidence and non-export execution pipelines as separate post-#328
+   follow-up categories.
 4. Updated `backend/docs/current-state.md` and `backend/docs/privacy-dsr.md` so
    they reflect DSR operations visibility, expanded retention, permission
    cleanup, provider alignment and batched export providers.
@@ -337,6 +339,8 @@ Status: Done in this patch.
    follow-up categories.
 7. Corrected current-state ops guide paths so retention and DSR health operator
    guides point to root `docs/`, where those files actually live.
+8. Kept the versioned `export.json` payload schema contract as a tracked
+   post-#328 follow-up rather than treating it as completed backend scope.
 
 ### Regression boundaries
 
@@ -344,8 +348,8 @@ Status: Done in this patch.
   `task ci` passes.
 - Documentation must not list already-implemented #328 backend work as a
   remaining blocker or non-blocking follow-up.
-- Documentation must keep frontend/UI and future storage-native evidence as
-  separate post-#328 follow-ups.
+- Documentation must keep the export schema contract, frontend/UI and future
+  storage-native evidence as separate post-#328 follow-ups.
 - Documentation must keep review-only DSR request types blocked from approval
   until concrete execution policies exist.
 - Current-state documentation must point to existing operator guide paths and

@@ -63,6 +63,7 @@ The current backend #328 scope may be closed when:
 
 The following categories are not #328 closure blockers:
 
+- versioned export payload schema contract for `export.json` compatibility;
 - frontend/UI for DSR workflows;
 - storage-native export delivery evidence ingestion;
 - representative evidence document storage and UI review;

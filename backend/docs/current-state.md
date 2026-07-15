@@ -115,6 +115,7 @@ should still be verified against code before extension:
   platform permission-matrix and feature-specific privacy permission tests.
 - DSR hardening items that are intentionally separate from the current #328
   backend closure scope:
+  - versioned export payload schema contract for `export.json` compatibility;
   - storage-native export delivery evidence ingestion, if formal object-store
     read evidence is needed later;
   - representative evidence document storage and UI review beyond the current

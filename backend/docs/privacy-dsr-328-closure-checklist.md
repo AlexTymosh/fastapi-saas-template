@@ -115,6 +115,11 @@ Final closure action:
 
 These are separate from #328 closure blockers:
 
+- Add a versioned export payload schema contract for `export.json`.
+  - Priority: P2.
+  - Rationale: current exports include `schema_version` and format spot checks;
+    a formal versioned contract can harden compatibility without blocking the
+    current backend DSR closure.
 - Add frontend/UI for DSR workflows.
   - Priority: P2.
   - Rationale: current project scope is backend-only.
@@ -165,5 +170,6 @@ Before closing #328, confirm:
 - [ ] This documentation reconciliation PR is merged.
 - [ ] `task ci` passes on the branch that includes this PR.
 - [ ] No new P0-P2 DSR/privacy regression was raised during review.
-- [ ] Any future frontend, storage-native evidence or non-export execution work
-      has a separate issue if the project owner wants it tracked.
+- [ ] Any future export schema contract, frontend, storage-native evidence or
+      non-export execution work has a separate issue if the project owner wants
+      it tracked.

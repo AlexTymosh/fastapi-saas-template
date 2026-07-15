@@ -405,6 +405,7 @@ def test_328_closure_checklist_records_final_backend_posture() -> None:
         "DSR operations visibility through read-only health snapshots",
         "Legacy generic GDPR permission values removed",
         "Post-#328 follow-up issues",
+        "versioned export payload schema contract",
         "storage-native delivery evidence ingestion",
         "frontend/UI",
         "execution pipelines for rectify/restrict/object/access/portability",
@@ -413,6 +414,20 @@ def test_328_closure_checklist_records_final_backend_posture() -> None:
 
     for text in required_text:
         assert text in document
+
+
+def test_328_docs_keep_export_schema_contract_follow_up_tracked() -> None:
+    documents = (
+        _read(CLOSURE_CHECKLIST_DOC),
+        _read(CURRENT_STATE_DOC),
+        _read(DOCS_ROOT / "privacy-dsr-328-followup-review.md"),
+        _read(DOCS_ROOT / "privacy-dsr-export-providers.md"),
+        _read(SESSION_NOTES_DOC),
+    )
+
+    for document in documents:
+        assert "versioned export payload schema contract" in document
+        assert "export.json" in document
 
 
 def test_session_notes_marks_final_reconciliation_ready() -> None:

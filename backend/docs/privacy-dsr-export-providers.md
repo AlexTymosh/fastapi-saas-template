@@ -144,6 +144,7 @@ Current implemented scope includes:
 
 Post-#328 follow-up categories include:
 
+- a versioned export payload schema contract for `export.json` compatibility;
 - frontend/UI for DSR workflows;
 - storage-native export delivery evidence ingestion;
 - representative evidence document storage and UI review;
