@@ -14,6 +14,7 @@ pytestmark = [pytest.mark.contract, pytest.mark.privacy]
 REPO_ROOT = Path(__file__).parents[3]
 BACKEND_ROOT = Path(__file__).parents[2]
 DOCS_ROOT = BACKEND_ROOT / "docs"
+ROOT_DOCS_ROOT = REPO_ROOT / "docs"
 
 PRIVACY_DSR_DOC = DOCS_ROOT / "privacy-dsr.md"
 CLOSURE_CHECKLIST_DOC = DOCS_ROOT / "privacy-dsr-328-closure-checklist.md"
@@ -22,6 +23,8 @@ RATE_LIMITING_DOC = DOCS_ROOT / "rate-limiting.md"
 ADMIN_FRONTEND_DOC = DOCS_ROOT / "admin-frontend-client-generation.md"
 PLATFORM_ACCESS_DOC = DOCS_ROOT / "access-control" / "en" / "platform-access.en.md"
 SESSION_NOTES_DOC = REPO_ROOT / "SESSION_NOTES.md"
+PRIVACY_RETENTION_OPS_DOC = ROOT_DOCS_ROOT / "privacy-dsr-retention.md"
+PRIVACY_DSR_OPERATIONS_DOC = ROOT_DOCS_ROOT / "privacy-dsr-operations.md"
 
 CURRENT_DSR_CONTRACT_DOC_NAMES = frozenset(
     {
@@ -258,6 +261,26 @@ def test_current_privacy_docs_do_not_list_done_work_as_follow_up() -> None:
         document = _read(path)
         for text in implemented_follow_ups:
             assert text not in document, f"{path} contains stale follow-up {text!r}"
+
+
+def test_current_state_docs_use_existing_ops_guide_paths() -> None:
+    document = _read(CURRENT_STATE_DOC)
+
+    expected_paths = (
+        "`docs/privacy-dsr-retention.md`",
+        "`docs/privacy-dsr-operations.md`",
+    )
+    stale_paths = (
+        "`backend/docs/privacy-dsr-retention.md`",
+        "`backend/docs/privacy-dsr-operations.md`",
+    )
+
+    assert PRIVACY_RETENTION_OPS_DOC.exists()
+    assert PRIVACY_DSR_OPERATIONS_DOC.exists()
+    for expected_path in expected_paths:
+        assert expected_path in document
+    for stale_path in stale_paths:
+        assert stale_path not in document
 
 
 def test_historical_slice_docs_are_discovered_by_glob() -> None:

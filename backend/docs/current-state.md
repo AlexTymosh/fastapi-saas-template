@@ -168,10 +168,10 @@ verification:
 - `backend/docs/privacy-dsr.md` contains the current DSR workflow summary.
 - `backend/docs/privacy-export-artifacts.md` contains export artifact storage,
   worker, download URL, delivery confirmation and retention operations details.
-- `backend/docs/privacy-dsr-retention.md` contains privacy retention maintenance
-  operator guidance.
-- `backend/docs/privacy-dsr-operations.md` contains DSR execution health
-  operator guidance.
+- `docs/privacy-dsr-retention.md` contains privacy retention maintenance operator
+  guidance.
+- `docs/privacy-dsr-operations.md` contains DSR execution health operator
+  guidance.
 - `backend/docs/privacy-provider-registry.md` contains provider registry and
   provider-key alignment rules.
 - `backend/docs/privacy-dsr-328-closure-checklist.md` tracks closure readiness

@@ -335,6 +335,8 @@ Status: Done in this patch.
    remaining #328 scope.
 6. Added docs-contract coverage for the final checklist and implemented
    follow-up categories.
+7. Corrected current-state ops guide paths so retention and DSR health operator
+   guides point to root `docs/`, where those files actually live.
 
 ### Regression boundaries
 
@@ -346,6 +348,8 @@ Status: Done in this patch.
   separate post-#328 follow-ups.
 - Documentation must keep review-only DSR request types blocked from approval
   until concrete execution policies exist.
+- Current-state documentation must point to existing operator guide paths and
+  must not index root `docs/` guides under `backend/docs/`.
 
 ## Final #328 closure reconciliation
 
