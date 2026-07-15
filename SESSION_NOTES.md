@@ -1,19 +1,24 @@
 # SESSION_NOTES — Issue #328 full-closure plan
 
-Date: 2026-07-09
+Date: 2026-07-14
 Repository: `AlexTymosh/fastapi-saas-template`
 Branch used for verification: `main`
 Parent issue: `#328`
 
 ## Current decision
 
-Do not close #328 yet. The project owner wants full closure after all known
-privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
+Issue #328 is ready for project-owner closure after this final documentation
+reconciliation PR is merged and `task ci` passes on the resulting branch.
+
+The backend #328 scope now has no known P0-P2 implementation or documentation
+blocker. Future product/UI or storage-native evidence work should be tracked as
+separate follow-up issues, not as #328 blockers.
 
 ## Current verified state
 
 - PR #426 is merged into `main`.
-- PR-328-1 is done: non-export/non-erase request types are review-only.
+- PR-328-1 is done: non-export/non-erase request types are review-only and
+  cannot be approved until a concrete execution policy exists.
 - PR #427 is merged into `main`.
 - PR-328-2 is done: self-service DSR submissions accept requester details.
 - PR #428 is merged into `main`.
@@ -40,18 +45,23 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 - PR-328-10A is done: retention maintenance covers export artifacts, invite
   lifecycle rows, delivered/failed outbox payloads, old audit context and
   expired DSR idempotency metadata.
-- PR #438 is open for PR-328-10B. Codex review follow-up is prepared for active
-  export lease false positives, aggregate database read ownership, CLI
-  observability initialization, current failed artifact scoping, atomic gauge
-  updates, failed metric status preservation, cancelled work exclusion, expired
-  ready artifact degradation and stale artifact metric status preservation.
-- PR-328-10C is done in this patch: legacy generic GDPR permissions were removed
-  from the runtime platform permission contract and current docs.
-- PR-328-10D is done in this patch: provider keys, inventory, runtime export
-  providers, provider registry, erasure coverage and the actual erasure
-  provider result order are covered by one alignment contract.
-- PR-328-10E is done in this patch: subject export providers now use bounded
-  keyset/batched iteration instead of unbounded eager provider result loading.
+- PR #438 is merged into `main`.
+- PR-328-10B is done: DSR execution health visibility, metrics, logs and CLI
+  operator checks are merged.
+- PR #439 is merged into `main`.
+- PR-328-10C is done: legacy generic GDPR permissions were removed from the
+  runtime platform permission contract and current docs.
+- PR #440 is merged into `main`.
+- PR-328-10D is done: provider keys, inventory, runtime export providers,
+  provider registry, erasure coverage and actual erasure provider result order
+  are covered by one alignment contract.
+- PR #441 is merged into `main`.
+- PR-328-10E is done: subject export providers use bounded keyset/batched
+  iteration instead of unbounded eager provider result loading, and email-based
+  invite helper subqueries use trim/lower normalisation.
+- PR-328-10F is done in this patch: final #328 documentation, current-state
+  notes, historical follow-up notes and closure checklist are reconciled against
+  the current backend implementation.
 
 ## Roadmap status
 
@@ -71,14 +81,12 @@ privacy/DSR P2 follow-up work is completed, not only backend-foundation closure.
 | 10C | DSR permission contract cleanup | Yes | Done |
 | 10D | Provider contract alignment | Yes | Done |
 | 10E | Batched subject export providers | Yes | Done |
-| 10F | Final #328 closure reconciliation | Yes | Not started |
+| 10F | Final #328 closure reconciliation | Yes | Done |
 
 ## PR-328-9A — Authorised representative DSR intake
 
 Priority: P2
 Type: `feat(privacy)`
-Branch: `feat/privacy-dsr-representative-intake`
-PR title: `✨ feat(privacy): add representative DSR intake guardrails`
 Status: Done in merged PR #434; re-verified after merge.
 
 ### Delivered scope
@@ -97,8 +105,6 @@ Status: Done in merged PR #434; re-verified after merge.
 
 Priority: P2
 Type: `feat(privacy)`
-Branch: `feat/privacy-dsr-representative-intake`
-PR title: `✨ feat(privacy): add representative DSR review workflow`
 Status: Done in merged PR #434; re-verified after merge.
 
 ### Delivered scope
@@ -116,35 +122,23 @@ Status: Done in merged PR #434; re-verified after merge.
 
 Priority: P2
 Type: `test(privacy)`
-Recommended branch: `test/privacy-dsr-representative-fulfilment`
-Recommended PR title: `🧹 chore(privacy): cover representative DSR fulfilment`
 Status: Done in merged PR #435; re-verified after merge.
 
 ### Delivered scope
 
-1. Add regression coverage proving verified representative export artifacts are
+1. Added regression coverage proving verified representative export artifacts are
    built from represented subject data.
-2. Prove representative export artifacts are requester-owned, not subject-owned.
-3. Prove represented subjects cannot read representative-owned artifacts through
+2. Proved representative export artifacts are requester-owned, not subject-owned.
+3. Proved represented subjects cannot read representative-owned artifacts through
    own-artifact endpoints.
-4. Prove representative erase DSRs erase the represented subject, not the
+4. Proved representative erase DSRs erase the represented subject, not the
    representative requester.
-5. Document fulfilment/export/erasure semantics for representative DSRs.
-
-### Failure cases to cover
-
-- Export generation accidentally uses representative requester data.
-- Export artifact ownership is accidentally changed from requester to subject.
-- Represented subject can download a representative-owned artifact.
-- Erasure execution accidentally erases the representative requester.
-- Fulfilment semantics drift without documentation.
+5. Documented fulfilment/export/erasure semantics for representative DSRs.
 
 ## PR-328-10A — Expand retention beyond export artifacts
 
 Priority: P1
 Type: `feat(privacy)`
-Recommended branch: `privacy/dsr-retention-maintenance-hardening`
-Recommended PR title: `✨ feat(privacy): expand DSR retention maintenance`
 Status: Done in merged PR #437.
 
 ### Delivered scope
@@ -171,8 +165,8 @@ Status: Done in merged PR #437.
 
 - The runner does not commit; transaction ownership stays with the caller.
 - Dry-run mode must not mutate DB rows or delete storage objects.
-- Invite retention filters already-retained rows before applying the batch cap.
-- Outbox retention filters already-scrubbed rows before applying the batch cap.
+- Invite and outbox retention filter already-retained rows before applying the
+  batch cap.
 - Outbox `pending` and `processing` rows are excluded to avoid delivery races.
 - Audit rows under active legal hold are excluded from retention minimisation.
 - Audit bulk updates recheck legal-hold eligibility at mutation time.
@@ -180,130 +174,41 @@ Status: Done in merged PR #437.
 - Storage-deleting export artifact retention runs after database-only retention
   steps to avoid rollback/storage inconsistency if a later DB step fails.
 
-### Codex review follow-up
-
-1. Fixed invite batch starvation by pushing the needs-retention predicate into
-   the SQL query before `LIMIT`.
-2. Fixed outbox batch starvation by pushing the already-scrubbed marker and
-   failed-error checks into the SQL query before `LIMIT`.
-3. Fixed the audit legal-hold race by reusing the audit eligibility predicates
-   in the bulk `UPDATE`, not only during ID selection.
-4. Added regression tests for all three failure cases.
-5. Fixed storage rollback inconsistency by running storage-deleting export
-   artifact retention after database-only invite/outbox/audit/DSR steps.
-
 ## PR-328-10B — DSR operations visibility
 
 Priority: P1
 Type: `feat(privacy)`
-Recommended branch: `privacy/dsr-ops-visibility`
-Recommended PR title: `✨ feat(privacy): add DSR execution health visibility`
-Status: Open in PR #438; Codex review follow-up patch prepared.
+Status: Done in merged PR #438.
 
 ### Delivered scope
 
-1. Added `get_privacy_dsr_execution_health()` for aggregate DSR execution health.
-2. Counted `export` and `erase` DSR jobs by execution status.
-3. Reported failed and stale queued/processing DSR jobs.
-4. Reported export artifact counts, current failed artifacts, undelivered
-   expired ready artifacts and stale queued/processing artifacts.
-5. Added low-cardinality OpenTelemetry metrics for DSR health snapshots.
-6. Added structured health logs without request IDs, user IDs, emails, storage
-   keys, tokens, notes or free-form error details.
-7. Added `app.commands.privacy_dsr_health` and `task privacy:dsr-health` for
-   operator checks.
-8. Added Windows-compatible selector-loop CLI execution for Psycopg async.
-9. Added `docs/privacy-dsr-operations.md` with command, metrics and log guidance.
-10. Added regression tests for degraded/healthy snapshots, metric attributes,
-    stale-threshold validation and Windows CLI loop selection.
-11. Initialized and shut down the observability provider around CLI health
-    snapshots so OTLP metrics can be exported outside the FastAPI lifespan.
-12. Added atomic DSR gauge point swaps and failed-signal metric status
-    preservation for `failed` and `partially_fulfilled` DSR states.
-13. Excluded cancelled DSR requests and artifacts linked only to cancelled DSRs
-    from failed/stale degraded signals.
-14. Preserved export artifact status in stale metrics for `queued`, `processing`
-    and expired `ready` artifacts.
-15. Added an explicit CLI transaction boundary around the DSR health snapshot.
+1. Added read-only DSR execution health snapshots.
+2. Counted export and erase DSR jobs by execution status.
+3. Reported current failed/stale DSR and export artifact signals.
+4. Added low-cardinality metrics, structured logs and `task privacy:dsr-health`.
+5. Moved aggregate database reads into a dedicated read-model repository.
+6. Added Windows-compatible CLI event-loop handling for Psycopg async.
+7. Preserved failed and partially fulfilled metric statuses.
+8. Excluded cancelled DSR work from current degraded signals.
+9. Added explicit CLI transaction, observability initialization and shutdown
+   coverage.
+10. Documented operator usage in `docs/privacy-dsr-operations.md`.
 
 ### Regression boundaries
 
 - Health snapshots are read-only and do not mutate DSR or export artifact rows.
-- Metrics use bounded attributes only: job kind, request type, execution status,
-  signal and health status.
+- Metrics use bounded attributes only.
 - Logs expose aggregate counts only and do not include per-subject identifiers.
-- The default stale threshold is one hour and can be overridden per command run.
-- Windows CLI execution uses a selector loop because Psycopg async does not
-  support the default Proactor loop.
-- Actively leased processing export artifacts prevent their linked export DSRs
-  from being counted as stale.
-- Aggregate SQL reads live in `DsrExecutionHealthRepository`; the service layer
-  only orchestrates repository calls, logging and metric emission.
-- The standalone CLI initializes observability before recording DSR metrics and
-  shuts it down afterwards, including the provider flush path.
-- CLI observability shutdown still runs if the snapshot read fails after
-  successful observability initialization.
-- Superseded historical failed export artifacts remain visible in by-status
-  counts but no longer degrade the current health snapshot.
-- Observable DSR gauge callbacks read a locked point snapshot while health
-  recording swaps in a complete replacement map.
-- Failed-signal DSR metric points preserve the underlying execution status;
-  `partially_fulfilled` is not relabelled as `failed`.
-- Cancelled DSR work is excluded from current, failed and stale DSR signals.
-- Export artifacts linked only to cancelled DSRs remain visible in by-status
-  counts but do not degrade failed/stale health signals.
-- Current undelivered ready export artifacts with `expires_at <= checked_at`
-  degrade health.
-- Superseded expired ready artifacts remain visible in by-status counts but do
-  not degrade the current health snapshot.
-- Delivered ready artifacts remain fulfilled history after expiry and do not
-  degrade the current health snapshot.
-- Stale export artifact metrics preserve `queued`, `processing` and `ready`
-  execution statuses instead of collapsing stale rows under `processing`.
-- The standalone CLI owns an explicit transaction around the health snapshot and
-  exits the transaction before closing the session.
-
-### Codex review follow-up
-
-1. Fixed false degraded snapshots for long-running exports with active future
-   processing leases.
-2. Moved DSR/export artifact aggregate SQL reads out of the service layer into a
-   dedicated privacy read-model repository.
-3. Added regression coverage for active export leases and service/repository
-   boundary protection.
-4. Updated operator docs to describe active lease handling and read-model query
-   ownership.
-5. Fixed standalone CLI metrics export by initializing observability before the
-   DSR health snapshot and shutting it down afterwards.
-6. Added regression coverage for CLI observability lifecycle order and failure
-   cleanup.
-7. Limited failed-artifact degradation to current failed artifacts that have not
-   been superseded by a newer artifact for the same DSR.
-8. Added regression coverage for superseded failed artifacts and current failed
-   artifact degradation.
-9. Made DSR observable gauge state updates atomic by building a complete
-   replacement map and reading gauge callbacks from a locked snapshot.
-10. Preserved `failed` and `partially_fulfilled` execution statuses in
-    failed-signal DSR metrics instead of aggregating both as `failed`.
-11. Excluded cancelled DSR requests and linked export artifacts from failed/stale
-    degraded health signals.
-12. Added regression coverage for cancelled DSR work with stale and failed
-    artifact history.
-13. Added degraded health coverage for current expired ready export artifacts.
-14. Preserved queued/processing/ready artifact status in stale metric points.
-15. Added an explicit `session.begin()` boundary around the CLI health snapshot.
-16. Added regression coverage for CLI transaction commit and rollback paths.
-17. Excluded delivered ready artifacts from expired-artifact degraded health
-    after download confirmation.
-18. Added regression coverage for delivered ready artifacts after expiry.
+- Cancelled, superseded and delivered historical rows do not degrade current
+  snapshots.
+- CLI observability shutdown still runs after snapshot failures when
+  initialization succeeded.
 
 ## PR-328-10C — DSR permission contract cleanup
 
 Priority: P1
 Type: `security(privacy)`
-Recommended branch: `privacy/dsr-permission-contract-cleanup`
-Recommended PR title: `🛡️ security(privacy): remove legacy GDPR permissions`
-Status: Done in this patch.
+Status: Done in merged PR #439.
 
 ### Delivered scope
 
@@ -311,16 +216,15 @@ Status: Done in this patch.
 2. Added `privacy_export_artifacts:manage` as the dedicated platform boundary for
    export artifact creation, platform download URL generation and delivery
    confirmation.
-3. Kept approved erase execution on the existing
-   `privacy_requests:execute_erasure` boundary.
+3. Kept approved erase execution on `privacy_requests:execute_erasure`.
 4. Updated compliance-officer role mapping to include the new export artifact
    management permission and no generic GDPR permissions.
 5. Updated platform privacy routes to use the dedicated export artifact manage
    permission for mutating export artifact operations.
 6. Updated current DSR and platform access docs to match the runtime permission
    contract.
-7. Added regression tests proving the legacy GDPR values are absent from the
-   runtime permission enum, docs and export-artifact route dependencies.
+7. Added regression tests proving legacy GDPR values are absent from the runtime
+   permission enum, docs and export-artifact route dependencies.
 
 ### Regression boundaries
 
@@ -328,8 +232,6 @@ Status: Done in this patch.
 - Compliance officers can still read/review DSRs, manage export artifacts and
   execute approved erasure through explicit privacy boundaries.
 - Platform admins keep all current platform permissions via `ALL_PERMISSIONS`.
-- Legacy generic GDPR permission values are not part of the runtime permission
-  enum, so they cannot be granted through role mappings.
 - Export artifact read routes still require the read-specific permission.
 - Export artifact mutating routes use the manage-specific permission and do not
   reuse the read boundary.
@@ -338,9 +240,7 @@ Status: Done in this patch.
 
 Priority: P1
 Type: `test(privacy)`
-Recommended branch: `privacy/dsr-provider-registry-alignment`
-Recommended PR title: `🧹 chore(privacy): align DSR provider registries`
-Status: Done in this patch.
+Status: Done in merged PR #440.
 
 ### Delivered scope
 
@@ -371,19 +271,14 @@ Status: Done in this patch.
 - Runtime export provider table names must match central table mapping.
 - The derived provider registry must not contain ad-hoc keys outside the central
   export/erasure catalogues.
-- Erasure coverage must stay aligned with the central erasure provider
-  catalogue.
 - The actual `_run_core_providers()` emitted provider result order must match
   the central erasure provider order; wrapper-only order checks are not enough.
-
 
 ## PR-328-10E — Batched subject export providers
 
 Priority: P1
 Type: `perf(privacy)`
-Recommended branch: `privacy/dsr-export-provider-keyset-batching`
-Recommended PR title: `⚡️ perf(privacy): batch DSR export providers`
-Status: Done in this patch.
+Status: Done in merged PR #441.
 
 ### Delivered scope
 
@@ -418,23 +313,58 @@ Status: Done in this patch.
   direct provider lookups.
 - Existing export payload shape and redaction fields remain unchanged.
 
+## PR-328-10F — Final #328 closure reconciliation
+
+Priority: P1
+Type: `docs(privacy)`
+Status: Done in this patch.
+
+### Delivered scope
+
+1. Reconciled `backend/docs/privacy-dsr-328-closure-checklist.md` with the actual
+   merged backend state after PRs #426 through #441.
+2. Removed stale non-blocking follow-up entries that are now implemented:
+   streaming archive generation, PostgreSQL provider integration coverage,
+   explicit export delivery evidence and authorised representative workflow.
+3. Kept frontend/UI, storage-native delivery evidence and non-export execution
+   pipelines as separate post-#328 follow-up categories.
+4. Updated `backend/docs/current-state.md` and `backend/docs/privacy-dsr.md` so
+   they reflect DSR operations visibility, expanded retention, permission
+   cleanup, provider alignment and batched export providers.
+5. Updated historical follow-up notes so they do not present implemented work as
+   remaining #328 scope.
+6. Added docs-contract coverage for the final checklist and implemented
+   follow-up categories.
+
+### Regression boundaries
+
+- Documentation must not claim #328 is closed before this PR is merged and
+  `task ci` passes.
+- Documentation must not list already-implemented #328 backend work as a
+  remaining blocker or non-blocking follow-up.
+- Documentation must keep frontend/UI and future storage-native evidence as
+  separate post-#328 follow-ups.
+- Documentation must keep review-only DSR request types blocked from approval
+  until concrete execution policies exist.
+
 ## Final #328 closure reconciliation
 
-Status: Not ready. Continue with PR-328-10F.
+Status: Ready after this PR and a green `task ci` run.
 
-### Remaining scope
+### Remaining closure action
 
-1. Re-run full CI.
-2. Update the closure checklist.
-3. Close #328 only if no P0-P2 privacy/DSR implementation gaps remain.
+1. Merge this documentation reconciliation PR.
+2. Run `task ci` on the resulting branch.
+3. Close #328 if no new P0-P2 regression appears during CI or review.
 
 ## Notes for future agents
 
-- Keep PRs small and do not combine unrelated privacy, invite, ops and runtime
-  hardening work.
-- Documentation can lag code; always verify `main` before changing scope.
+- Keep future privacy work out of #328 unless the project owner explicitly
+  reopens the issue scope.
 - Use backend-relative pytest paths when commands start from the `backend`
   directory.
 - Keep code lines within 88 characters.
-- Do not close #328 until every roadmap item is done or explicitly removed from
-  #328 scope by a documented decision.
+- Treat historical implementation-slice notes as context only; current closure
+  truth is in `backend/docs/privacy-dsr.md`,
+  `backend/docs/privacy-dsr-328-closure-checklist.md`,
+  `backend/docs/current-state.md` and this file.

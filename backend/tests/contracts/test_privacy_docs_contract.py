@@ -236,6 +236,30 @@ def test_current_privacy_docs_do_not_keep_stale_328_blockers() -> None:
             assert stale_claim not in document, f"{path} contains {stale_claim!r}"
 
 
+def test_current_privacy_docs_do_not_list_done_work_as_follow_up() -> None:
+    implemented_follow_ups = (
+        "Add streaming archive generation for DSR exports",
+        "streaming archive generation for very large exports",
+        "Add PostgreSQL export-provider integration coverage",
+        "PostgreSQL-specific export-provider integration coverage",
+        "Add explicit delivery evidence events",
+        "explicit export delivery evidence semantics",
+        "Add authorised representative workflows",
+    )
+    final_reconciliation_docs = (
+        CLOSURE_CHECKLIST_DOC,
+        CURRENT_STATE_DOC,
+        DOCS_ROOT / "privacy-dsr-328-followup-review.md",
+        DOCS_ROOT / "privacy-dsr-export-providers.md",
+        SESSION_NOTES_DOC,
+    )
+
+    for path in final_reconciliation_docs:
+        document = _read(path)
+        for text in implemented_follow_ups:
+            assert text not in document, f"{path} contains stale follow-up {text!r}"
+
+
 def test_historical_slice_docs_are_discovered_by_glob() -> None:
     discovered_names = {path.name for path in HISTORICAL_SLICE_DOCS}
 
@@ -344,6 +368,38 @@ def test_328_closure_checklist_preserves_policy_based_rows() -> None:
         "policy-based",
         "No current implementation or documentation blocker remains",
         "task ci",
+    )
+
+    for text in required_text:
+        assert text in document
+
+
+def test_328_closure_checklist_records_final_backend_posture() -> None:
+    document = _read(CLOSURE_CHECKLIST_DOC)
+
+    required_text = (
+        "Batched/keyset subject export provider iteration",
+        "DSR operations visibility through read-only health snapshots",
+        "Legacy generic GDPR permission values removed",
+        "Post-#328 follow-up issues",
+        "storage-native delivery evidence ingestion",
+        "frontend/UI",
+        "execution pipelines for rectify/restrict/object/access/portability",
+        "Issue #328 is ready to close after this documentation reconciliation PR",
+    )
+
+    for text in required_text:
+        assert text in document
+
+
+def test_session_notes_marks_final_reconciliation_ready() -> None:
+    document = _read(SESSION_NOTES_DOC)
+
+    required_text = (
+        "10F | Final #328 closure reconciliation | Yes | Done",
+        "PR-328-10F is done in this patch",
+        "Status: Ready after this PR and a green `task ci` run.",
+        "PR #441 is merged into `main`.",
     )
 
     for text in required_text:

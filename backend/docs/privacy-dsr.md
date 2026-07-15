@@ -25,11 +25,18 @@ Implemented areas:
   command.
 - Multi-artifact export history per DSR, where the newest artifact is the source
   of truth for current export execution state.
-- Dedicated export download URL rate limits, including an authorised
-  artifact-scoped bucket after ownership/platform permission succeeds.
+- Dedicated export download URL and delivery confirmation rate limits, including
+  an authorised artifact-scoped bucket after ownership/platform permission
+  succeeds.
 - S3-compatible export artifact storage for staging/production and local signed
   references for development/tests only.
 - Cross-table subject export providers for the current privacy inventory scope.
+- Batched/keyset subject export provider iteration with deterministic ordering
+  and `id` tie-breaker.
+- Trim/lower normalisation for email-based invite helper subqueries used by
+  export, outbox and audit lookup paths.
+- Streaming JSON ZIP archive generation through temporary files.
+- PostgreSQL/Testcontainers integration coverage for provider JSON predicates.
 - Erasure provider planning, preview, decision preservation and
   inventory-aligned coverage contracts.
 - Executable erasure providers for audit, outbox, invites, platform staff,
@@ -42,10 +49,14 @@ Implemented areas:
 - Audit minimisation before destructive erasure providers run.
 - Self-erasure execution rejection before provider orchestration.
 - Automatic fulfilment after successful approved erase execution.
-- Export artifact retention runner that removes expired archive objects from
-  storage and clears storage metadata.
-- Contract tests for privacy inventory, export provider keys, erasure coverage,
-  provider decisions, rate-limit policy coverage and platform permissions.
+- Expanded privacy retention maintenance for export artifacts, invite lifecycle
+  rows, delivered/failed outbox payloads, old audit context and expired DSR
+  idempotency metadata.
+- Read-only DSR execution health snapshots, aggregate logs, low-cardinality
+  metrics and `task privacy:dsr-health`.
+- Contract tests for privacy inventory, export provider keys, runtime export
+  provider order, erasure coverage, provider decisions, actual erasure execution
+  order, rate-limit policy coverage and platform permissions.
 - Opt-in MinIO/Testcontainers coverage for S3-compatible export storage.
 
 Known erasure posture:
@@ -102,15 +113,16 @@ Endpoints:
 - `GET /{artifact_id}` read own export artifact status and metadata.
 - `POST /{artifact_id}/download-url` create a short-lived download URL for an
   own ready artifact.
+- `POST /{artifact_id}/confirm-delivery` confirm that the requester received the
+  export artifact.
 
 Current user API constraints:
 
-- Submission defaults to self-service: requester and subject are the same
-  local user unless the requester explicitly declares an authorised
-  representative flow.
-- Representative submissions are intake-only in this PR slice. They are visible
-  to platform reviewers but blocked from approval while their authority remains
-  `pending_verification` or `rejected`.
+- Submission defaults to self-service: requester and subject are the same local
+  user unless the requester explicitly declares an authorised representative
+  flow.
+- Representative submissions are visible to platform reviewers but blocked from
+  approval while their authority remains `pending_verification` or `rejected`.
 - Request types without an implemented execution policy may be submitted for
   platform review, but they cannot be approved until a concrete policy exists.
 - Requester notes are stored for platform review but are not returned in
@@ -129,8 +141,8 @@ authorised representative. The requester can identify another local user as the
 subject only when `requester_role=authorised_representative` is declared and
 relationship plus authority details are provided.
 
-Representative verification endpoints let platform reviewers mark authority
-as `verified` or `rejected`. Approval remains blocked while authority is
+Representative verification endpoints let platform reviewers mark authority as
+`verified` or `rejected`. Approval remains blocked while authority is
 `pending_verification` or `rejected`. The verification endpoints store only
 structured status/reason metadata and rely on audit events for the reviewing
 actor, rather than storing copies of evidence documents.
@@ -140,9 +152,9 @@ exports include DSR rows where the exporting subject is only
 `representative_verified_by_user_id` as reference records, while requester,
 subject and unrelated reviewer identifiers stay minimised. Audit exports also
 include audit rows whose target DSR is linked to the subject only through the
-representative verifier field. Erasure impact previews, DSR workflow erasure
-and audit erasure use the same verifier predicate so platform reviewers see
-the same row count that execution will minimise.
+representative verifier field. Erasure impact previews, DSR workflow erasure and
+audit erasure use the same verifier predicate so platform reviewers see the same
+row count that execution will minimise.
 
 Represented subject existence checks are routed through `UserRepository` before
 DSR insert, so the service layer does not own SQL for the users aggregate.
@@ -218,8 +230,6 @@ Endpoints:
   download URL for a ready artifact.
 - `POST /export-artifacts/{artifact_id}/confirm-delivery` confirm export
   delivery evidence for an artifact.
-- `POST /{artifact_id}/confirm-delivery` confirm that the requester received
-  the export artifact.
 
 ## Permissions
 
@@ -295,6 +305,8 @@ Current behaviour:
   export artifact.
 - The worker command claims queued artifacts and generates a subject data ZIP.
 - Export payloads are assembled from the current privacy inventory scope.
+- Subject export providers use bounded keyset iteration below the export payload
+  assembly layer.
 - One export DSR can have multiple historical export artifacts; current DSR
   export execution state follows the newest artifact.
 - Local storage is for development and tests only.
@@ -302,8 +314,8 @@ Current behaviour:
   are enabled.
 - Ready artifacts remain downloadable after export DSR fulfilment until expiry.
 - S3-compatible downloads use short-lived presigned GET URLs.
-- URL issuance is tracked separately from delivery evidence; confirmed
-  delivery is recorded only through the delivery confirmation endpoint.
+- URL issuance is tracked separately from delivery evidence; confirmed delivery
+  is recorded only through the delivery confirmation endpoint.
 - Local download references use signed `local://privacy-export/...` values and
   must not be treated as production HTTP download URLs.
 - Download URL generation and delivery confirmation use a dedicated privacy
@@ -313,12 +325,42 @@ Current behaviour:
 - Audit metadata is minimised and does not include export payloads, signed URLs,
   storage keys, local paths or processing tokens.
 
+## Operations visibility
+
+DSR operations visibility is read-only. The snapshot service reports aggregate
+DSR execution status, current failed or stale DSR jobs, export artifact status,
+current failed artifacts, stale queued/processing artifacts and current
+undelivered expired ready artifacts.
+
+Operator access is exposed through `task privacy:dsr-health`. Metrics and logs
+use bounded attributes and aggregate counts only. They do not include request
+IDs, user IDs, emails, storage keys, processing tokens, notes or free-form error
+details.
+
 ## Erasure workflow
 
 Approved erase DSRs execute through the platform erasure API and the internal
-command-layer boundary.
+command-layer boundary. Runtime provider order is covered by the central provider
+catalogue and a contract that calls the actual core provider execution path.
 
-### Export URL issuance migration
+## Retention workflow
+
+Privacy retention maintenance is run through `privacy:retention:*` Taskfile
+commands and `run_privacy_retention_maintenance()`.
+
+Current retention coverage includes:
+
+- expired ready export artifacts and storage metadata cleanup;
+- accepted, expired and revoked invite lifecycle rows;
+- delivered/failed outbox payload scrubbing;
+- old audit actor/free-text/network context minimisation outside active legal
+  hold;
+- expired DSR idempotency metadata cleanup.
+
+The retention runner does not commit; transaction ownership stays with the
+caller. Dry-run mode must not mutate database rows or delete storage objects.
+
+## Export URL issuance migration
 
 Legacy export rows created before explicit delivery confirmation used download
 metadata as URL issuance metadata. The delivery-evidence migration reclassifies
@@ -326,12 +368,12 @@ those values into URL issuance columns and clears confirmed-delivery columns.
 After the migration, `delivered` execution state is reserved for explicit
 confirmation evidence only.
 
-During the PR #428 migration, legacy URL-issued export DSR rows are
-reclassified from their latest export artifact. Ready legacy artifacts remain
-ready for confirmation, while expired legacy artifacts become failed with
+During the PR #428 migration, legacy URL-issued export DSR rows are reclassified
+from their latest export artifact. Ready legacy artifacts remain ready for
+confirmation, while expired legacy artifacts become failed with
 `artifact_expired` evidence.
 
-### Export delivery evidence migration guardrails
+## Export delivery evidence migration guardrails
 
 The export delivery evidence migration reclassifies legacy URL-issued export DSRs
 from the latest artifact state. Latest ready artifacts return to `ready`, latest
