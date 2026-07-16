@@ -15,8 +15,9 @@
 
 This review captured the project state after PR #405, before the final
 inventory-aligned erasure coverage, provider decision preservation, platform
-execution API, export retention, and documentation reconciliation work were
-completed.
+execution API, export retention, operations visibility, provider alignment,
+batched export-provider iteration and final documentation reconciliation work
+were completed.
 
 The findings in this file are retained only as historical implementation
 context. They must not be used to decide whether #328 can be closed.
@@ -28,16 +29,24 @@ privacy inventory areas. That status has been superseded.
 
 Current documentation now records that the backend DSR scope includes:
 
-- DSR persistence, repository, service lifecycle, and user/platform APIs;
+- DSR persistence, repository, service lifecycle and user/platform APIs;
+- authorised representative intake, authority review and fulfilment semantics;
 - export artifacts, local development storage, S3-compatible storage, worker
-  operations, download URL generation, and retention;
+  operations, download URL generation, explicit delivery confirmation and
+  retention;
+- streaming archive generation and batched/keyset subject export providers;
 - cross-table subject export providers for the current privacy inventory;
+- PostgreSQL integration coverage for provider JSON predicates;
 - inventory-aligned erasure orchestration;
-- provider decisions for executable, retained-by-policy, and manual-review
+- provider decisions for executable, retained-by-policy and manual-review
   records;
+- provider-key catalogues tying inventory, registry, runtime providers, erasure
+  coverage and actual erasure execution order together;
 - platform erase execution and automatic fulfilment after successful execution;
+- retention maintenance beyond export artifacts;
+- DSR execution operations visibility;
 - contract tests for inventory, export providers, erasure coverage, provider
-  decisions, platform permissions, and privacy documentation.
+  decisions, platform permissions and privacy documentation.
 
 ## Current closure rule
 
@@ -47,17 +56,17 @@ The current backend #328 scope may be closed when:
 
 1. the documentation reconciliation is merged;
 2. `task ci` passes;
-3. any remaining non-blocking hardening work is tracked as separate follow-up
-   issues.
+3. any new review finding is either fixed or tracked separately when it is not a
+   #328 backend blocker.
 
-## Remaining follow-up categories
+## Post-#328 follow-up categories
 
 The following categories are not #328 closure blockers:
 
-- streaming archive generation for very large exports;
-- PostgreSQL-specific export-provider integration coverage;
-- explicit export delivery evidence semantics;
-- authorised representative workflows;
-- frontend/UI;
+- versioned export payload schema contract for `export.json` compatibility;
+- frontend/UI for DSR workflows;
+- storage-native export delivery evidence ingestion;
+- representative evidence document storage and UI review;
+- deployment-specific runtime hardening manifests;
 - execution pipelines for rectify/restrict/object/access/portability request
   types.

@@ -16,6 +16,11 @@
 This slice replaced the metadata-only DSR export payload with a provider-based
 JSON export for the current DSR inventory tables.
 
+The original slice has since been extended by later PRs. Current implementation
+includes streaming archive generation, batched/keyset provider iteration,
+PostgreSQL provider integration coverage, S3-compatible storage, erasure
+providers and retention maintenance.
+
 ## Provider coverage introduced by this slice
 
 Implemented provider coverage:
@@ -68,16 +73,18 @@ subject export.
 Subject export providers must not materialise an unbounded provider result set
 with `.all()`. Multi-row providers use deterministic keyset pagination over the
 provider ordering column and `id` tie-breaker, with a bounded batch size. This
-keeps export generation memory-bounded while preserving stable output order.
+keeps provider execution memory-bounded while preserving stable output order.
 
 Provider queries that need related IDs should prefer SQL subqueries over loading
-large ID lists into Python before the main export query. Email-based helper
-subqueries must preserve the same trim/lower normalisation used by direct
-provider lookups.
+large ID lists into Python before the main export query.
+
+Email-based helper subqueries must use the same trim/lower normalisation as the
+direct invite provider lookup. This keeps legacy local user emails with padding
+or mixed case aligned across invite, outbox and audit subject-link predicates.
 
 The non-streaming `CrossTableSubjectDataExporter.export_subject_data()` still
 returns the existing in-memory export payload for compatibility. The provider
-layer beneath it is now batched so the same providers can feed streaming archive
+layer beneath it is batched so the same providers can feed streaming archive
 generation without eager provider-level result materialisation.
 
 ## PostgreSQL provider integration coverage
@@ -112,26 +119,34 @@ Required checks:
 - concrete providers expose the async `iter_export_records()` contract;
 - multi-row providers do not use unbounded eager `.all()` result loading;
 - provider keyset pagination keeps deterministic ordering across batch
-  boundaries.
+  boundaries;
+- email-based helper subqueries keep trim/lower normalisation aligned across
+  direct provider and audit/outbox lookup paths.
 
 A dedicated contract test enforces these rules so future personal-data models
 cannot silently enter the inventory without export-provider coverage.
 
 ## Superseded follow-up status
 
-The original follow-up list has been completed or moved into non-blocking
-follow-up categories.
+The original follow-up list has been completed or moved into post-#328 follow-up
+categories.
 
 Current implemented scope includes:
 
 - provider-backed subject exports;
+- streaming archive generation through temporary files;
 - batched/keyset provider iteration for multi-row subject export providers;
 - PostgreSQL provider integration coverage for outbox JSON predicates;
 - S3-compatible export object storage;
 - erasure/anonymisation providers;
-- retention purge for expired export objects.
+- retention purge for expired export objects;
+- expanded privacy retention maintenance beyond export objects.
 
-Non-blocking follow-up categories include:
+Post-#328 follow-up categories include:
 
-- streaming archive generation for very large exports;
-- a versioned export payload schema contract.
+- a versioned export payload schema contract for `export.json` compatibility;
+- frontend/UI for DSR workflows;
+- storage-native export delivery evidence ingestion;
+- representative evidence document storage and UI review;
+- execution pipelines for rectify/restrict/object/access/portability request
+  types.

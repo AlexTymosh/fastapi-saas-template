@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-07-01
+2026-07-14
 
 ## Project Phase
 
@@ -46,8 +46,13 @@ should still be verified against code before extension:
     blocked unless authority is verified;
   - pre-upgrade self-service idempotency retry compatibility during the TTL;
   - conditional representative authority review writes;
+  - representative fulfilment semantics for export ownership and erasure target
+    selection;
   - approval restricted to request types with concrete execution policies;
   - cross-table subject export providers;
+  - batched/keyset subject export provider iteration with deterministic ordering;
+  - email-normalised invite helper subqueries for export, outbox and audit
+    lookups;
   - PostgreSQL provider integration coverage for outbox JSON predicates used by
     subject export, erasure impact preview and outbox erasure scrubbing;
   - streaming JSON ZIP archive generation for export artifacts;
@@ -56,6 +61,7 @@ should still be verified against code before extension:
   - opt-in MinIO/Testcontainers coverage for S3-compatible export storage;
   - dedicated export artifact download URL and delivery confirmation rate
     limits;
+  - explicit user and platform delivery confirmation endpoints;
   - platform erasure execution API;
   - executable erasure providers for audit, outbox, invites, platform staff,
     export-artifact metadata, privacy-governance minimisation, DSR workflow
@@ -63,11 +69,18 @@ should still be verified against code before extension:
   - explicit retain/manual-review policy entries for membership, organisation
     and consent records where automatic mutation would break tenant,
     access-control or compliance integrity;
+  - provider-key catalogues and contracts for export providers, erasure
+    providers, provider registry, runtime export order and actual erasure
+    provider execution order;
   - provider decision preservation in erasure orchestration results;
   - audit minimisation before destructive erasure;
   - self-erasure execution rejection;
   - automatic fulfilment after successful approved erase execution;
-  - export artifact retention runner with Taskfile ops commands;
+  - expanded privacy retention maintenance for export artifacts, invite rows,
+    delivered/failed outbox payloads, old audit context and expired DSR
+    idempotency metadata;
+  - read-only DSR execution health snapshots, low-cardinality metrics,
+    aggregate logs and `task privacy:dsr-health`;
   - erasure coverage contract tests that keep inventory, runtime coverage and
     impact preview aligned, including DSR workflow rows linked only through a
     representative verifier.
@@ -76,7 +89,7 @@ should still be verified against code before extension:
   settings-aware policy resolution, authenticated reads, tenant flows, invite
   anti-abuse flows, platform read/audit reads, privacy export download URL
   limits and fail-closed platform write policies.
-- Observability/OpenTelemetry foundation.
+- Observability/OpenTelemetry foundation, including DSR execution health metrics.
 - pytest/Testcontainers foundation.
 - `uv` dependency workflow:
   - `.python-version` pins Python 3.12;
@@ -90,22 +103,23 @@ should still be verified against code before extension:
 
 ## Partially Implemented
 
-- Production hardening beyond the current non-root backend image and
-  documented runtime secret handling baseline.
+- Production hardening beyond the current non-root backend image and documented
+  runtime secret handling baseline.
 - Platform workflows beyond the current platform staff/user/organisation/audit
   and privacy DSR scope.
 - Additional invite delivery providers and product-specific invite email
   template customisation beyond the current SMTP sink.
-- Observability integration beyond the current foundation.
+- Observability integration beyond the current foundation and DSR execution
+  health signal set.
 - Full BOLA/BFLA security test matrix outside the currently covered tenant BOLA,
   platform permission-matrix and feature-specific privacy permission tests.
 - DSR hardening items that are intentionally separate from the current #328
   backend closure scope:
-  - explicit delivery evidence semantics; done for URL issuance vs user or
-    platform delivery confirmation, but future storage-native evidence can
-    still extend it;
-  - representative evidence document storage, UI review and execution semantics
-    beyond the current backend verification metadata;
+  - versioned export payload schema contract for `export.json` compatibility;
+  - storage-native export delivery evidence ingestion, if formal object-store
+    read evidence is needed later;
+  - representative evidence document storage and UI review beyond the current
+    backend verification metadata;
   - frontend/UI;
   - concrete execution pipelines for access, rectify, restrict, object and
     portability request types. These review-only types are blocked from approval
@@ -127,8 +141,8 @@ verification:
 - Documentation may lag code.
 - Documentation must not claim planned features as implemented.
 - Very large DSR exports still need deployment-level writable temporary storage
-  capacity planning even though archive generation now streams through a
-  temporary file instead of materialising the ZIP in memory.
+  capacity planning even though archive generation streams through a temporary
+  file and providers use bounded keyset iteration.
 - Soft-deleted organisations are operational/audit records: platform admin
   workflows may request explicit visibility for support, compliance, audit or
   recovery, but tenant APIs must not accidentally expose them.
@@ -155,10 +169,16 @@ verification:
 - `backend/docs/privacy-dsr.md` contains the current DSR workflow summary.
 - `backend/docs/privacy-export-artifacts.md` contains export artifact storage,
   worker, download URL, delivery confirmation and retention operations details.
+- `docs/privacy-dsr-retention.md` contains privacy retention maintenance operator
+  guidance.
+- `docs/privacy-dsr-operations.md` contains DSR execution health operator
+  guidance.
+- `backend/docs/privacy-provider-registry.md` contains provider registry and
+  provider-key alignment rules.
 - `backend/docs/privacy-dsr-328-closure-checklist.md` tracks closure readiness
   and final verification for issue #328.
 - `backend/docs/privacy-dsr-export-providers.md` records the historical export
-  provider slice and PostgreSQL provider integration coverage.
+  provider slice and current provider iteration guardrails.
 - `backend/docs/runtime-hardening.md` documents runtime secret handling and
   backend container hardening guidance.
 - `SESSION_NOTES.md` contains short live handoff notes for AI-agent sessions.
