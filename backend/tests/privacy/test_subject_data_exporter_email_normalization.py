@@ -14,6 +14,7 @@ from app.audit.models.audit_event import (
 from app.invites.models.invite import Invite, InviteStatus
 from app.memberships.models.membership import MembershipRole
 from app.organisations.models.organisation import Organisation
+from app.outbox.models.outbox_event import OutboxEvent, OutboxStatus
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data import CrossTableSubjectDataExporter
 from app.privacy.models.data_subject_request import DataSubjectRequestStatus
@@ -87,6 +88,69 @@ def test_audit_invite_lookup_normalises_subject_email(
             )
             assert any(
                 record["payload"]["id"] == str(audit.id) for record in audit_records
+            )
+
+    run_async(_run())
+
+
+def test_outbox_payload_email_lookup_normalises_subject_email(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            now = datetime.now(UTC)
+            email_token = uuid4().hex
+            legacy_email = f"  Payload-{email_token}@Example.COM  "
+            user = User(
+                external_auth_id=f"kc|{uuid4()}",
+                email=legacy_email,
+                email_verified=True,
+            )
+            session.add(user)
+            await session.flush()
+
+            outbox_event = OutboxEvent(
+                event_type="invite.created",
+                aggregate_type="invite",
+                aggregate_id=uuid4(),
+                payload_json={
+                    "email": legacy_email,
+                    "invite_id": str(uuid4()),
+                    "encrypted_raw_token": "encrypted-secret-token",
+                    "purpose": "invite_delivery",
+                },
+                status=OutboxStatus.PENDING.value,
+            )
+            session.add(outbox_event)
+            await session.flush()
+
+            payload = await CrossTableSubjectDataExporter(session).export_subject_data(
+                ExportContext(
+                    artifact_id=uuid4(),
+                    data_subject_request_id=uuid4(),
+                    subject_user_id=user.id,
+                    requester_user_id=user.id,
+                    request_type="export",
+                    request_status=DataSubjectRequestStatus.APPROVED.value,
+                    generated_at=now,
+                    schema_version="1.0",
+                )
+            )
+
+            records = payload["data"]["outbox.subject_references"]
+            matching_record = next(
+                record
+                for record in records
+                if record["payload"]["id"] == str(outbox_event.id)
+            )
+
+            assert matching_record["payload"]["payload_reference"] == {
+                "invite_id": outbox_event.payload_json["invite_id"],
+                "purpose": "invite_delivery",
+            }
+            assert "payload_json.email" in matching_record["redacted_fields"]
+            assert (
+                "payload_json.encrypted_raw_token" in matching_record["redacted_fields"]
             )
 
     run_async(_run())

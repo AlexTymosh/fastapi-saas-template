@@ -237,10 +237,11 @@ class OutboxSubjectReferencesExportProvider(_BaseSubjectExportProvider):
             invite_ids = select(Invite.id).where(
                 func.lower(func.trim(Invite.email)) == subject_email
             )
+            payload_email = OutboxEvent.payload_json["email"].as_string()
             conditions.extend(
                 (
                     OutboxEvent.aggregate_id.in_(invite_ids),
-                    OutboxEvent.payload_json["email"].as_string() == subject_email,
+                    func.lower(func.trim(payload_email)) == subject_email,
                 )
             )
 

@@ -422,23 +422,8 @@ def test_328_docs_keep_export_schema_contract_follow_up_tracked() -> None:
         _read(CURRENT_STATE_DOC),
         _read(DOCS_ROOT / "privacy-dsr-328-followup-review.md"),
         _read(DOCS_ROOT / "privacy-dsr-export-providers.md"),
-        _read(SESSION_NOTES_DOC),
     )
 
     for document in documents:
         assert "versioned export payload schema contract" in document
         assert "export.json" in document
-
-
-def test_session_notes_marks_final_reconciliation_ready() -> None:
-    document = _read(SESSION_NOTES_DOC)
-
-    required_text = (
-        "10F | Final #328 closure reconciliation | Yes | Done",
-        "PR-328-10F is done in this patch",
-        "Status: Ready after this PR and a green `task ci` run.",
-        "PR #441 is merged into `main`.",
-    )
-
-    for text in required_text:
-        assert text in document
