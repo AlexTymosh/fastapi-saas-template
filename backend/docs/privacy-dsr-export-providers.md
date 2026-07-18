@@ -78,9 +78,10 @@ keeps provider execution memory-bounded while preserving stable output order.
 Provider queries that need related IDs should prefer SQL subqueries over loading
 large ID lists into Python before the main export query.
 
-Email-based helper subqueries must use the same trim/lower normalisation as the
+Email-based helper predicates must use the same trim/lower normalisation as the
 direct invite provider lookup. This keeps legacy local user emails with padding
-or mixed case aligned across invite, outbox and audit subject-link predicates.
+or mixed case aligned across invite, outbox JSON payload and audit subject-link
+predicates.
 
 The non-streaming `CrossTableSubjectDataExporter.export_subject_data()` still
 returns the existing in-memory export payload for compatibility. The provider
@@ -96,7 +97,8 @@ operators rather than SQLite's JSON helpers.
 
 Current PostgreSQL provider coverage exercises:
 
-- subject export lookup through `outbox_events.payload_json["email"]`;
+- subject export lookup through normalised
+  `outbox_events.payload_json["email"]` predicates;
 - erasure impact counts through the same outbox JSON email predicate;
 - erasure outbox scrubbing through the PostgreSQL JSON predicate plus
   `SELECT ... FOR UPDATE` locking path.
@@ -120,8 +122,8 @@ Required checks:
 - multi-row providers do not use unbounded eager `.all()` result loading;
 - provider keyset pagination keeps deterministic ordering across batch
   boundaries;
-- email-based helper subqueries keep trim/lower normalisation aligned across
-  direct provider and audit/outbox lookup paths.
+- email-based helper predicates keep trim/lower normalisation aligned across
+  direct provider, outbox JSON payload and audit lookup paths.
 
 A dedicated contract test enforces these rules so future personal-data models
 cannot silently enter the inventory without export-provider coverage.
