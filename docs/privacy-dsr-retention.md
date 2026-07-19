@@ -27,7 +27,7 @@ and DSR idempotency rows.
 
 | Area | Retention action |
 |---|---|
-| Export artifacts | Expire ready artifacts and purge stored archive objects. |
+| Export artifacts | Expire ready artifacts first; purge stored archive objects only from already non-downloadable retry rows. |
 | Invites | Replace retained invite email/token values with deterministic tombstones. |
 | Outbox events | Scrub delivered/failed delivery payloads after the retention window. |
 | Audit events | Remove old actor, free-form, network and user-agent context. |
@@ -45,9 +45,13 @@ and DSR idempotency rows.
 - Audit rows with an active legal hold are excluded from retention minimisation.
 - Audit minimisation rechecks age, legal-hold and mutable-field predicates in the
   bulk `UPDATE`, not only during the initial ID selection.
-- Database-only retention steps run before the storage-deleting export artifact
-  cleanup. A later database-only failure must not leave export rows restored by
-  rollback while their archive object has already been purged.
+- Retention must not delete a stored export object while rollback could restore
+  the artifact to `ready`.
+- READY export artifacts first transition to `expired` while keeping
+  `storage_key` as a purge retry marker. A later pass may delete the object and
+  clear storage metadata once the row is already non-downloadable.
+- Erasure-cancelled artifacts use the same retry-marker model: object deletion
+  is retried only after the row is already `cancelled` for subject erasure.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so
   DB state and object storage cleanup stay consistent.
 
@@ -71,4 +75,5 @@ Run the focused regression suite after changing this area:
 ```bash
 uv run pytest tests/privacy/test_privacy_retention_maintenance.py
 uv run pytest tests/privacy/test_privacy_data_inventory_contract.py
+uv run pytest tests/contracts/test_privacy_docs_contract.py
 ```

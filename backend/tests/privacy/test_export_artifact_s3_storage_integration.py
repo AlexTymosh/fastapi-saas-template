@@ -226,7 +226,7 @@ def test_s3_compatible_storage_adapter_round_trips_with_minio(
     adapter.delete(storage_key)
 
 
-def test_export_artifact_retention_deletes_minio_object_and_clears_metadata(
+def test_export_artifact_retention_expires_before_purging_minio_object(
     migrated_session_factory,
     minio_export_storage: MinioExportStorage,
     monkeypatch: pytest.MonkeyPatch,
@@ -261,17 +261,30 @@ def test_export_artifact_retention_deletes_minio_object_and_clears_metadata(
             artifact.expires_at = expired_at
             await service.repo.save(artifact)
 
-            processed = await service.mark_expired_artifacts(now=datetime.now(UTC))
-            persisted = await service.repo.get_by_id(artifact.id)
+            expired_count = await service.mark_expired_artifacts(now=datetime.now(UTC))
+            expired = await service.repo.get_by_id(artifact.id)
 
-            assert processed == 1
-            assert persisted is not None
-            assert persisted.status == ExportArtifactStatus.EXPIRED.value
-            assert persisted.storage_key is None
-            assert persisted.filename is None
-            assert persisted.content_type is None
-            assert persisted.size_bytes is None
-            assert persisted.checksum_sha256 is None
+            assert expired_count == 1
+            assert expired is not None
+            assert expired.status == ExportArtifactStatus.EXPIRED.value
+            assert expired.storage_key == storage_key
+            assert expired.filename == "retention.zip"
+            assert expired.content_type == "application/zip"
+            assert expired.size_bytes == 17
+            assert expired.checksum_sha256 == "0" * 64
+            assert minio_export_storage.adapter.exists(storage_key)
+
+            purged_count = await service.mark_expired_artifacts(now=datetime.now(UTC))
+            purged = await service.repo.get_by_id(artifact.id)
+
+            assert purged_count == 1
+            assert purged is not None
+            assert purged.status == ExportArtifactStatus.EXPIRED.value
+            assert purged.storage_key is None
+            assert purged.filename is None
+            assert purged.content_type is None
+            assert purged.size_bytes is None
+            assert purged.checksum_sha256 is None
             assert not minio_export_storage.adapter.exists(storage_key)
 
     try:

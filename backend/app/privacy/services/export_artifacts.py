@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import AuditContext
@@ -16,6 +17,9 @@ from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTarget
 from app.audit.services.audit_events import AuditEventService
 from app.core.config.settings import get_settings
 from app.core.errors import ConflictError, NotFoundError
+from app.privacy.export_artifact_lifecycle import (
+    clear_export_artifact_storage_metadata,
+)
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data_stream import iter_subject_export_json_chunks
 from app.privacy.models.data_subject_request import (
@@ -51,6 +55,7 @@ _EXPORT_GENERATION_FAILURE_CODES = frozenset(
         "dsr_not_export_eligible",
     }
 )
+_SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
 
 
 def _ensure_aware_utc(value: datetime) -> datetime:
@@ -815,11 +820,18 @@ class ExportArtifactService:
         if remaining_limit <= 0:
             return len(cancelled_erasure)
 
+        expired_storage_retry = await self._list_expired_storage_purge_retry(
+            limit=remaining_limit,
+        )
+        remaining_limit -= len(expired_storage_retry)
+        if remaining_limit <= 0:
+            return len(cancelled_erasure) + len(expired_storage_retry)
+
         expired_ready = await self.repo.list_expired_ready(
             now=now_value,
             limit=remaining_limit,
         )
-        return len(cancelled_erasure) + len(expired_ready)
+        return len(cancelled_erasure) + len(expired_storage_retry) + len(expired_ready)
 
     async def mark_expired_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
@@ -827,15 +839,14 @@ class ExportArtifactService:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
 
-        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
-            limit=limit,
-        )
-        processed = 0
-        for artifact in cancelled_erasure:
-            self._purge_export_artifact_storage_object(artifact)
-            await self.repo.save(artifact)
-            processed += 1
+        processed = await self._purge_cancelled_erasure_retry_artifacts(limit=limit)
+        remaining_limit = limit - processed
+        if remaining_limit <= 0:
+            return processed
 
+        processed += await self._purge_expired_storage_retry_artifacts(
+            limit=remaining_limit,
+        )
         remaining_limit = limit - processed
         if remaining_limit <= 0:
             return processed
@@ -845,7 +856,6 @@ class ExportArtifactService:
             limit=remaining_limit,
         )
         for artifact in expired_ready:
-            self._purge_export_artifact_storage_object(artifact)
             expired_artifact = await self.repo.mark_expired(artifact)
             processed += 1
             (
@@ -869,6 +879,46 @@ class ExportArtifactService:
 
         return processed
 
+    async def _purge_cancelled_erasure_retry_artifacts(self, *, limit: int) -> int:
+        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
+            limit=limit,
+        )
+        processed = 0
+        for artifact in cancelled_erasure:
+            self._purge_export_artifact_storage_object(artifact)
+            await self.repo.save(artifact)
+            processed += 1
+        return processed
+
+    async def _purge_expired_storage_retry_artifacts(self, *, limit: int) -> int:
+        expired_artifacts = await self._list_expired_storage_purge_retry(limit=limit)
+        processed = 0
+        for artifact in expired_artifacts:
+            self._purge_export_artifact_storage_object(artifact)
+            await self.repo.save(artifact)
+            processed += 1
+        return processed
+
+    async def _list_expired_storage_purge_retry(
+        self, *, limit: int
+    ) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.status == ExportArtifactStatus.EXPIRED.value,
+                ExportArtifact.storage_key.is_not(None),
+            )
+            .order_by(
+                ExportArtifact.expires_at.asc(),
+                ExportArtifact.created_at.asc(),
+                ExportArtifact.id.asc(),
+            )
+            .limit(limit)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     @staticmethod
     def _validate_positive_limit(limit: int) -> None:
         if limit < 1:
@@ -878,14 +928,14 @@ class ExportArtifactService:
         storage_key = artifact.storage_key
         if storage_key is None:
             return
+        if not _is_non_downloadable_storage_purge_retry(artifact):
+            raise ConflictError(
+                detail="Export artifact storage purge requires non-downloadable state"
+            )
 
         storage = self._storage_for_backend(artifact.storage_backend)
         storage.delete(storage_key)
-        artifact.storage_key = None
-        artifact.filename = None
-        artifact.content_type = None
-        artifact.size_bytes = None
-        artifact.checksum_sha256 = None
+        clear_export_artifact_storage_metadata(artifact)
 
     async def _record_event(
         self, audit_context: AuditContext, action: AuditAction, artifact: ExportArtifact
@@ -898,3 +948,12 @@ class ExportArtifactService:
             target_id=artifact.id,
             metadata_json={"status": artifact.status, "format": artifact.format},
         )
+
+
+def _is_non_downloadable_storage_purge_retry(artifact: ExportArtifact) -> bool:
+    if artifact.status == ExportArtifactStatus.EXPIRED.value:
+        return True
+    return (
+        artifact.status == ExportArtifactStatus.CANCELLED.value
+        and artifact.failure_reason_code == _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON
+    )

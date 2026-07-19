@@ -85,7 +85,11 @@ def mark_export_artifact_failed(
 def mark_export_artifact_expired(
     artifact: ExportArtifact,
 ) -> tuple[str, ...]:
-    """Apply the expired terminal transition after storage purge succeeds."""
+    """Make the artifact non-downloadable before storage purge is allowed.
+
+    Retention cleanup keeps storage metadata as a retry marker until a later
+    pass can purge the stored object from a committed non-downloadable DB state.
+    """
 
     changed_fields: list[str] = []
     _set_if_changed(
