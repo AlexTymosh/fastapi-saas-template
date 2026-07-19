@@ -202,6 +202,26 @@ class ExportArtifactRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_expired_storage_purge_retry(
+        self, *, limit: int
+    ) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.status == ExportArtifactStatus.EXPIRED.value,
+                ExportArtifact.storage_key.is_not(None),
+            )
+            .order_by(
+                ExportArtifact.expires_at.asc(),
+                ExportArtifact.created_at.asc(),
+                ExportArtifact.id.asc(),
+            )
+            .limit(limit)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def mark_ready(self, artifact: ExportArtifact) -> ExportArtifact:
         mark_export_artifact_ready(artifact)
         await self.session.flush()

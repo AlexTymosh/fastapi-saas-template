@@ -9,7 +9,6 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import AuditContext
@@ -820,7 +819,7 @@ class ExportArtifactService:
         if remaining_limit <= 0:
             return len(cancelled_erasure)
 
-        expired_storage_retry = await self._list_expired_storage_purge_retry(
+        expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
             limit=remaining_limit,
         )
         remaining_limit -= len(expired_storage_retry)
@@ -891,33 +890,15 @@ class ExportArtifactService:
         return processed
 
     async def _purge_expired_storage_retry_artifacts(self, *, limit: int) -> int:
-        expired_artifacts = await self._list_expired_storage_purge_retry(limit=limit)
+        expired_artifacts = await self.repo.list_expired_storage_purge_retry(
+            limit=limit,
+        )
         processed = 0
         for artifact in expired_artifacts:
             self._purge_export_artifact_storage_object(artifact)
             await self.repo.save(artifact)
             processed += 1
         return processed
-
-    async def _list_expired_storage_purge_retry(
-        self, *, limit: int
-    ) -> list[ExportArtifact]:
-        stmt = (
-            select(ExportArtifact)
-            .where(
-                ExportArtifact.status == ExportArtifactStatus.EXPIRED.value,
-                ExportArtifact.storage_key.is_not(None),
-            )
-            .order_by(
-                ExportArtifact.expires_at.asc(),
-                ExportArtifact.created_at.asc(),
-                ExportArtifact.id.asc(),
-            )
-            .limit(limit)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        return list((await self.session.execute(stmt)).scalars().all())
 
     @staticmethod
     def _validate_positive_limit(limit: int) -> None:
