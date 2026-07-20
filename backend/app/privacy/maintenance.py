@@ -68,8 +68,8 @@ async def run_privacy_retention_maintenance(
 
     Dry-run mode performs a non-mutating database/storage preview. Each step is
     capped by ``limit`` so operators can safely run repeated maintenance passes.
-    Database-only retention steps run before storage-deleting export cleanup so
-    later database failures cannot leave export rows pointing at purged objects.
+    Export artifacts first enter a durable non-downloadable DB state. Storage
+    object purge only runs for already non-downloadable retry rows.
     """
 
     if limit < 1:
@@ -123,13 +123,14 @@ async def expire_ready_export_artifacts(
     limit: int = 1000,
     dry_run: bool = False,
 ) -> int:
-    """Expire ready exports and retry cancelled erasure export purges.
+    """Expire ready exports and purge already non-downloadable objects.
 
     Transaction ownership remains with the caller so this helper can be reused
     by a CLI command, scheduled worker, or explicit maintenance job.
 
     Dry-run mode performs a non-mutating database preview and deliberately does
-    not touch external storage.
+    not touch external storage. Non-dry-run mode does not delete stored objects
+    while a rollback could restore an artifact to ``ready``.
     """
 
     reference_now = _normalise_utc(now)

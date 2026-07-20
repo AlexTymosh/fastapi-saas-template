@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -199,6 +200,30 @@ class ExportArtifactRepository:
                 ExportArtifact.id.asc(),
             )
             .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_expired_storage_purge_retry(
+        self, *, limit: int, exclude_ids: Collection[UUID] | None = None
+    ) -> list[ExportArtifact]:
+        filters = [
+            ExportArtifact.status == ExportArtifactStatus.EXPIRED.value,
+            ExportArtifact.storage_key.is_not(None),
+        ]
+        if exclude_ids:
+            filters.append(~ExportArtifact.id.in_(tuple(exclude_ids)))
+
+        stmt = (
+            select(ExportArtifact)
+            .where(*filters)
+            .order_by(
+                ExportArtifact.expires_at.asc(),
+                ExportArtifact.created_at.asc(),
+                ExportArtifact.id.asc(),
+            )
+            .limit(limit)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return list((await self.session.execute(stmt)).scalars().all())
 

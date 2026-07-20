@@ -27,7 +27,7 @@ and DSR idempotency rows.
 
 | Area | Retention action |
 |---|---|
-| Export artifacts | Expire ready artifacts and purge stored archive objects. |
+| Export artifacts | Prioritise erasure retries, then expire READY rows. |
 | Invites | Replace retained invite email/token values with deterministic tombstones. |
 | Outbox events | Scrub delivered/failed delivery payloads after the retention window. |
 | Audit events | Remove old actor, free-form, network and user-agent context. |
@@ -45,9 +45,25 @@ and DSR idempotency rows.
 - Audit rows with an active legal hold are excluded from retention minimisation.
 - Audit minimisation rechecks age, legal-hold and mutable-field predicates in the
   bulk `UPDATE`, not only during the initial ID selection.
-- Database-only retention steps run before the storage-deleting export artifact
-  cleanup. A later database-only failure must not leave export rows restored by
-  rollback while their archive object has already been purged.
+- Retention must not delete a stored export object while rollback could restore
+  the artifact to `ready`.
+- Erasure-cancelled purge retries keep first priority under small batches. If a
+  retry purge succeeds and consumes the batch, unrelated READY rows wait for the
+  next retention pass.
+- READY export artifacts transition to `expired` while keeping `storage_key` as
+  a purge retry marker. This transition is independent of retry purge failures,
+  so a temporary object-store outage must not keep unrelated expired READY
+  exports downloadable. A later pass may delete the object and clear storage
+  metadata only after the caller commits the expiry transition. Repeated passes
+  inside the same caller-owned transaction must skip artifacts expired by that
+  transaction. Expiry markers are cleared on commit or rollback, not by polling
+  session state, because reads may autobegin a new transaction. Eligible expired
+  retry rows must exclude those markers before applying the batch limit.
+- Storage purge failures remain retryable. When a failure prevents all useful
+  retention work in the pass, the original storage exception is surfaced so
+  operators and tests still observe the outage.
+- Erasure-cancelled artifacts use the same retry-marker model: object deletion
+  is retried only after the row is already `cancelled` for subject erasure.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so
   DB state and object storage cleanup stay consistent.
 
@@ -70,5 +86,7 @@ Run the focused regression suite after changing this area:
 
 ```bash
 uv run pytest tests/privacy/test_privacy_retention_maintenance.py
+uv run pytest tests/privacy/test_export_artifact_service.py
 uv run pytest tests/privacy/test_privacy_data_inventory_contract.py
+uv run pytest tests/contracts/test_privacy_docs_contract.py
 ```

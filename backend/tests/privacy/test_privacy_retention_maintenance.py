@@ -102,6 +102,31 @@ async def _create_expired_ready_artifact(session):
     return artifact.id, storage_key, dsr.id
 
 
+async def _create_cancelled_erasure_retry_artifact(session):
+    user, dsr = await _create_approved_export_dsr(session)
+    service = ExportArtifactService(session)
+    artifact = await service.request_export_artifact(
+        request_id=dsr.id,
+        requested_by_user_id=user.id,
+        audit_context=AuditContext(actor_user_id=user.id),
+    )
+    storage_key = f"exports/{artifact.id}/subject-erasure.zip"
+    artifact.status = ExportArtifactStatus.CANCELLED.value
+    artifact.failure_reason_code = "subject_erasure_requested"
+    artifact.storage_key = storage_key
+    artifact.filename = "subject-erasure.zip"
+    artifact.content_type = "application/zip"
+    artifact.size_bytes = 7
+    artifact.checksum_sha256 = "1" * 64
+    artifact.subject_user_id = None
+    artifact.requester_user_id = None
+    artifact.requested_by_user_id = None
+    artifact.generated_by_user_id = None
+    await service.repo.save(artifact)
+    service.storage.put_bytes(storage_key, b"payload", "application/zip")
+    return artifact.id, storage_key
+
+
 async def _create_retention_subject(session, *, old: datetime):
     user = User(
         external_auth_id=f"kc|{uuid4()}",
@@ -222,7 +247,7 @@ def test_privacy_retention_dry_run_does_not_mutate_or_delete_storage(
     run_async(_run())
 
 
-def test_privacy_retention_expires_and_purges_storage_object(
+def test_privacy_retention_expires_before_purging_storage_object(
     migrated_session_factory,
 ) -> None:
     async def _run() -> None:
@@ -230,7 +255,33 @@ def test_privacy_retention_expires_and_purges_storage_object(
             artifact_id, storage_key, dsr_id = await _create_expired_ready_artifact(
                 session
             )
+            await session.commit()
             service = ExportArtifactService(session)
+
+            count = await expire_ready_export_artifacts(session)
+
+            assert count == 1
+            persisted_artifact = await service.repo.get_by_id(artifact_id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_artifact.storage_key == storage_key
+            assert persisted_artifact.filename == "artifact.zip"
+            assert persisted_artifact.content_type == "application/zip"
+            assert persisted_artifact.size_bytes == 7
+            assert persisted_artifact.checksum_sha256 == "0" * 64
+            assert service.storage.exists(storage_key) is True
+            persisted_dsr = await service.dsr_repo.get_by_id(dsr_id)
+            assert persisted_dsr is not None
+            assert (
+                persisted_dsr.execution_status
+                == DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert persisted_dsr.execution_failure_reason_code == "artifact_expired"
+
+            await session.commit()
+            post_commit_artifact = await service.repo.get_by_id(artifact_id)
+            assert post_commit_artifact is not None
+            assert post_commit_artifact.status == ExportArtifactStatus.EXPIRED.value
 
             count = await expire_ready_export_artifacts(session)
 
@@ -244,7 +295,238 @@ def test_privacy_retention_expires_and_purges_storage_object(
             assert persisted_artifact.size_bytes is None
             assert persisted_artifact.checksum_sha256 is None
             assert service.storage.exists(storage_key) is False
+
+    run_async(_run())
+
+
+def test_privacy_retention_rollback_keeps_ready_artifact_storage_valid(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            artifact_id, storage_key, dsr_id = await _create_expired_ready_artifact(
+                session
+            )
+            await session.commit()
+            service = ExportArtifactService(session)
+
+            count = await expire_ready_export_artifacts(session)
+            assert count == 1
+            await session.rollback()
+            session.expire_all()
+
+            persisted_artifact = await service.repo.get_by_id(artifact_id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.status == ExportArtifactStatus.READY.value
+            assert persisted_artifact.storage_key == storage_key
+            assert service.storage.exists(storage_key) is True
             persisted_dsr = await service.dsr_repo.get_by_id(dsr_id)
+            assert persisted_dsr is not None
+            assert (
+                persisted_dsr.execution_status
+                == DataSubjectRequestExecutionStatus.READY.value
+            )
+
+    run_async(_run())
+
+
+def test_privacy_retention_requires_commit_before_new_expiry_purge(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            artifact_id, storage_key, dsr_id = await _create_expired_ready_artifact(
+                session
+            )
+            await session.commit()
+            service = ExportArtifactService(session)
+
+            first_count = await expire_ready_export_artifacts(session)
+            second_count = await expire_ready_export_artifacts(session)
+
+            assert first_count == 1
+            assert second_count == 0
+            persisted_artifact = await service.repo.get_by_id(artifact_id)
+            assert persisted_artifact is not None
+            assert persisted_artifact.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_artifact.storage_key == storage_key
+            assert service.storage.exists(storage_key) is True
+            persisted_dsr = await service.dsr_repo.get_by_id(dsr_id)
+            assert persisted_dsr is not None
+            assert (
+                persisted_dsr.execution_status
+                == DataSubjectRequestExecutionStatus.FAILED.value
+            )
+
+            await session.rollback()
+            session.expire_all()
+            restored_artifact = await service.repo.get_by_id(artifact_id)
+            assert restored_artifact is not None
+            assert restored_artifact.status == ExportArtifactStatus.READY.value
+            assert restored_artifact.storage_key == storage_key
+            assert service.storage.exists(storage_key) is True
+
+    run_async(_run())
+
+
+def test_privacy_retention_excludes_markers_before_retry_limit(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            (
+                committed_retry_id,
+                committed_retry_storage_key,
+                _,
+            ) = await _create_expired_ready_artifact(session)
+            (
+                marker_artifact_id,
+                marker_storage_key,
+                _,
+            ) = await _create_expired_ready_artifact(session)
+            service = ExportArtifactService(session)
+            committed_retry = await service.repo.get_by_id(committed_retry_id)
+            marker_artifact = await service.repo.get_by_id(marker_artifact_id)
+            assert committed_retry is not None
+            assert marker_artifact is not None
+
+            committed_retry.status = ExportArtifactStatus.EXPIRED.value
+            committed_retry.expires_at = datetime.now(UTC) - timedelta(days=1)
+            marker_artifact.expires_at = datetime.now(UTC) - timedelta(days=2)
+            await service.repo.save(committed_retry)
+            await service.repo.save(marker_artifact)
+            await session.commit()
+
+            first_count = await expire_ready_export_artifacts(session, limit=1)
+            second_count = await expire_ready_export_artifacts(session, limit=1)
+
+            assert first_count == 1
+            assert second_count == 1
+
+            persisted_committed_retry = await service.repo.get_by_id(committed_retry_id)
+            assert persisted_committed_retry is not None
+            assert (
+                persisted_committed_retry.status == ExportArtifactStatus.EXPIRED.value
+            )
+            assert persisted_committed_retry.storage_key is None
+            assert service.storage.exists(committed_retry_storage_key) is False
+
+            persisted_marker = await service.repo.get_by_id(marker_artifact_id)
+            assert persisted_marker is not None
+            assert persisted_marker.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_marker.storage_key == marker_storage_key
+            assert service.storage.exists(marker_storage_key) is True
+
+    run_async(_run())
+
+
+def test_privacy_retention_expires_ready_when_retry_purge_fails(
+    monkeypatch,
+    migrated_session_factory,
+) -> None:
+    class StoragePurgeFailure(RuntimeError):
+        pass
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            (
+                retry_artifact_id,
+                retry_storage_key,
+                _,
+            ) = await _create_expired_ready_artifact(session)
+            (
+                ready_artifact_id,
+                ready_storage_key,
+                ready_dsr_id,
+            ) = await _create_expired_ready_artifact(session)
+            service = ExportArtifactService(session)
+            retry_artifact = await service.repo.get_by_id(retry_artifact_id)
+            assert retry_artifact is not None
+            retry_artifact.status = ExportArtifactStatus.EXPIRED.value
+            await service.repo.save(retry_artifact)
+            await session.commit()
+
+            service = ExportArtifactService(session)
+            storage = service.storage
+
+            def _raise_storage_failure(storage_key: str) -> None:
+                del storage_key
+                raise StoragePurgeFailure("storage unavailable")
+
+            monkeypatch.setattr(storage, "delete", _raise_storage_failure)
+
+            processed = await service.mark_expired_artifacts(now=datetime.now(UTC))
+
+            assert processed == 1
+            persisted_retry = await service.repo.get_by_id(retry_artifact_id)
+            assert persisted_retry is not None
+            assert persisted_retry.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_retry.storage_key == retry_storage_key
+            assert service.storage.exists(retry_storage_key) is True
+
+            persisted_ready = await service.repo.get_by_id(ready_artifact_id)
+            assert persisted_ready is not None
+            assert persisted_ready.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_ready.storage_key == ready_storage_key
+            assert service.storage.exists(ready_storage_key) is True
+            persisted_dsr = await service.dsr_repo.get_by_id(ready_dsr_id)
+            assert persisted_dsr is not None
+            assert (
+                persisted_dsr.execution_status
+                == DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert persisted_dsr.execution_failure_reason_code == "artifact_expired"
+
+    run_async(_run())
+
+
+def test_privacy_retention_expires_ready_when_erasure_retry_purge_fails(
+    monkeypatch,
+    migrated_session_factory,
+) -> None:
+    class StoragePurgeFailure(RuntimeError):
+        pass
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            (
+                retry_artifact_id,
+                retry_storage_key,
+            ) = await _create_cancelled_erasure_retry_artifact(session)
+            (
+                ready_artifact_id,
+                ready_storage_key,
+                ready_dsr_id,
+            ) = await _create_expired_ready_artifact(session)
+            await session.commit()
+
+            service = ExportArtifactService(session)
+            storage = service.storage
+
+            def _raise_storage_failure(storage_key: str) -> None:
+                del storage_key
+                raise StoragePurgeFailure("storage unavailable")
+
+            monkeypatch.setattr(storage, "delete", _raise_storage_failure)
+
+            processed = await service.mark_expired_artifacts(
+                now=datetime.now(UTC),
+                limit=1,
+            )
+
+            assert processed == 1
+            persisted_retry = await service.repo.get_by_id(retry_artifact_id)
+            assert persisted_retry is not None
+            assert persisted_retry.status == ExportArtifactStatus.CANCELLED.value
+            assert persisted_retry.storage_key == retry_storage_key
+            assert service.storage.exists(retry_storage_key) is True
+
+            persisted_ready = await service.repo.get_by_id(ready_artifact_id)
+            assert persisted_ready is not None
+            assert persisted_ready.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_ready.storage_key == ready_storage_key
+            assert service.storage.exists(ready_storage_key) is True
+            persisted_dsr = await service.dsr_repo.get_by_id(ready_dsr_id)
             assert persisted_dsr is not None
             assert (
                 persisted_dsr.execution_status

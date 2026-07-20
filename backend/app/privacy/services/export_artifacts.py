@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -9,13 +10,18 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session, SessionTransaction
 
 from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditCategory, AuditTargetType
 from app.audit.services.audit_events import AuditEventService
 from app.core.config.settings import get_settings
 from app.core.errors import ConflictError, NotFoundError
+from app.privacy.export_artifact_lifecycle import (
+    clear_export_artifact_storage_metadata,
+)
 from app.privacy.exporters.base import ExportContext
 from app.privacy.exporters.subject_data_stream import iter_subject_export_json_chunks
 from app.privacy.models.data_subject_request import (
@@ -51,6 +57,19 @@ _EXPORT_GENERATION_FAILURE_CODES = frozenset(
         "dsr_not_export_eligible",
     }
 )
+_SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
+_UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY = (
+    "privacy_uncommitted_expired_export_artifact_ids"
+)
+_logger = logging.getLogger(__name__)
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _clear_export_artifact_expiry_markers(
+    session: Session, transaction: SessionTransaction
+) -> None:
+    if transaction.parent is None:
+        session.info.pop(_UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY, None)
 
 
 def _ensure_aware_utc(value: datetime) -> datetime:
@@ -819,7 +838,15 @@ class ExportArtifactService:
             now=now_value,
             limit=remaining_limit,
         )
-        return len(cancelled_erasure) + len(expired_ready)
+        remaining_limit -= len(expired_ready)
+        if remaining_limit <= 0:
+            return len(cancelled_erasure) + len(expired_ready)
+
+        expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
+            limit=remaining_limit,
+            exclude_ids=self._uncommitted_expired_artifact_ids(),
+        )
+        return len(cancelled_erasure) + len(expired_ready) + len(expired_storage_retry)
 
     async def mark_expired_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
@@ -830,11 +857,19 @@ class ExportArtifactService:
         cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
             limit=limit,
         )
+        expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
+            limit=limit,
+            exclude_ids=self._uncommitted_expired_artifact_ids(),
+        )
+
         processed = 0
-        for artifact in cancelled_erasure:
-            self._purge_export_artifact_storage_object(artifact)
-            await self.repo.save(artifact)
-            processed += 1
+        purge_failures: list[Exception] = []
+        purge_count, failures = await self._purge_storage_retry_artifacts(
+            cancelled_erasure,
+            limit=limit,
+        )
+        processed += purge_count
+        purge_failures.extend(failures)
 
         remaining_limit = limit - processed
         if remaining_limit <= 0:
@@ -845,8 +880,8 @@ class ExportArtifactService:
             limit=remaining_limit,
         )
         for artifact in expired_ready:
-            self._purge_export_artifact_storage_object(artifact)
             expired_artifact = await self.repo.mark_expired(artifact)
+            self._remember_uncommitted_expiry_transition(expired_artifact)
             processed += 1
             (
                 execution_status,
@@ -867,7 +902,69 @@ class ExportArtifactService:
                 expired_artifact,
             )
 
+        remaining_limit = limit - processed
+        if remaining_limit <= 0:
+            return processed
+
+        purge_count, failures = await self._purge_storage_retry_artifacts(
+            expired_storage_retry,
+            limit=remaining_limit,
+        )
+        processed += purge_count
+        purge_failures.extend(failures)
+        if processed == 0 and purge_failures:
+            raise purge_failures[0]
         return processed
+
+    def _remember_uncommitted_expiry_transition(self, artifact: ExportArtifact) -> None:
+        marker_ids = self.session.info.setdefault(
+            _UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY,
+            set(),
+        )
+        marker_ids.add(artifact.id)
+
+    def _uncommitted_expired_artifact_ids(self) -> set[UUID]:
+        marker_ids = self.session.info.get(_UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY)
+        if isinstance(marker_ids, set):
+            return marker_ids
+        return set()
+
+    async def _purge_storage_retry_artifacts(
+        self, artifacts: list[ExportArtifact], *, limit: int
+    ) -> tuple[int, list[Exception]]:
+        processed = 0
+        failures: list[Exception] = []
+        for artifact in artifacts[:limit]:
+            failure = self._try_purge_export_artifact_storage_object(artifact)
+            if failure is not None:
+                failures.append(failure)
+                continue
+            await self.repo.save(artifact)
+            processed += 1
+        return processed, failures
+
+    def _try_purge_export_artifact_storage_object(
+        self, artifact: ExportArtifact
+    ) -> Exception | None:
+        if artifact.storage_key is None:
+            return None
+        if not _is_non_downloadable_storage_purge_retry(artifact):
+            raise ConflictError(
+                detail="Export artifact storage purge requires non-downloadable state"
+            )
+
+        try:
+            self._purge_export_artifact_storage_object(artifact)
+        except Exception as exc:
+            _logger.exception(
+                "Failed to purge export artifact storage object",
+                extra={
+                    "artifact_id": str(artifact.id),
+                    "storage_backend": artifact.storage_backend,
+                },
+            )
+            return exc
+        return None
 
     @staticmethod
     def _validate_positive_limit(limit: int) -> None:
@@ -878,14 +975,14 @@ class ExportArtifactService:
         storage_key = artifact.storage_key
         if storage_key is None:
             return
+        if not _is_non_downloadable_storage_purge_retry(artifact):
+            raise ConflictError(
+                detail="Export artifact storage purge requires non-downloadable state"
+            )
 
         storage = self._storage_for_backend(artifact.storage_backend)
         storage.delete(storage_key)
-        artifact.storage_key = None
-        artifact.filename = None
-        artifact.content_type = None
-        artifact.size_bytes = None
-        artifact.checksum_sha256 = None
+        clear_export_artifact_storage_metadata(artifact)
 
     async def _record_event(
         self, audit_context: AuditContext, action: AuditAction, artifact: ExportArtifact
@@ -898,3 +995,12 @@ class ExportArtifactService:
             target_id=artifact.id,
             metadata_json={"status": artifact.status, "format": artifact.format},
         )
+
+
+def _is_non_downloadable_storage_purge_retry(artifact: ExportArtifact) -> bool:
+    if artifact.status == ExportArtifactStatus.EXPIRED.value:
+        return True
+    return (
+        artifact.status == ExportArtifactStatus.CANCELLED.value
+        and artifact.failure_reason_code == _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON
+    )
