@@ -27,7 +27,7 @@ and DSR idempotency rows.
 
 | Area | Retention action |
 |---|---|
-| Export artifacts | Expire READY rows first; purge only retry rows. |
+| Export artifacts | Prioritise erasure retries, then expire READY rows. |
 | Invites | Replace retained invite email/token values with deterministic tombstones. |
 | Outbox events | Scrub delivered/failed delivery payloads after the retention window. |
 | Audit events | Remove old actor, free-form, network and user-agent context. |
@@ -47,11 +47,17 @@ and DSR idempotency rows.
   bulk `UPDATE`, not only during the initial ID selection.
 - Retention must not delete a stored export object while rollback could restore
   the artifact to `ready`.
-- READY export artifacts first transition to `expired` while keeping
-  `storage_key` as a purge retry marker. This transition is independent of
-  storage retry purge failures, so a temporary object-store outage must not keep
-  unrelated expired READY exports downloadable. A later pass may delete the
-  object and clear storage metadata once the row is already non-downloadable.
+- Erasure-cancelled purge retries keep first priority under small batches. If a
+  retry purge succeeds and consumes the batch, unrelated READY rows wait for the
+  next retention pass.
+- READY export artifacts transition to `expired` while keeping `storage_key` as
+  a purge retry marker. This transition is independent of retry purge failures,
+  so a temporary object-store outage must not keep unrelated expired READY
+  exports downloadable. A later pass may delete the object and clear storage
+  metadata once the row is already non-downloadable.
+- Storage purge failures remain retryable. When a failure prevents all useful
+  retention work in the pass, the original storage exception is surfaced so
+  operators and tests still observe the outage.
 - Erasure-cancelled artifacts use the same retry-marker model: object deletion
   is retried only after the row is already `cancelled` for subject erasure.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so
@@ -76,6 +82,7 @@ Run the focused regression suite after changing this area:
 
 ```bash
 uv run pytest tests/privacy/test_privacy_retention_maintenance.py
+uv run pytest tests/privacy/test_export_artifact_service.py
 uv run pytest tests/privacy/test_privacy_data_inventory_contract.py
 uv run pytest tests/contracts/test_privacy_docs_contract.py
 ```
