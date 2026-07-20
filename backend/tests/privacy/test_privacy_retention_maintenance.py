@@ -279,6 +279,10 @@ def test_privacy_retention_expires_before_purging_storage_object(
             assert persisted_dsr.execution_failure_reason_code == "artifact_expired"
 
             await session.commit()
+            post_commit_artifact = await service.repo.get_by_id(artifact_id)
+            assert post_commit_artifact is not None
+            assert post_commit_artifact.status == ExportArtifactStatus.EXPIRED.value
+
             count = await expire_ready_export_artifacts(session)
 
             assert count == 1
@@ -361,6 +365,57 @@ def test_privacy_retention_requires_commit_before_new_expiry_purge(
             assert restored_artifact.status == ExportArtifactStatus.READY.value
             assert restored_artifact.storage_key == storage_key
             assert service.storage.exists(storage_key) is True
+
+    run_async(_run())
+
+
+def test_privacy_retention_excludes_markers_before_retry_limit(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            (
+                committed_retry_id,
+                committed_retry_storage_key,
+                _,
+            ) = await _create_expired_ready_artifact(session)
+            (
+                marker_artifact_id,
+                marker_storage_key,
+                _,
+            ) = await _create_expired_ready_artifact(session)
+            service = ExportArtifactService(session)
+            committed_retry = await service.repo.get_by_id(committed_retry_id)
+            marker_artifact = await service.repo.get_by_id(marker_artifact_id)
+            assert committed_retry is not None
+            assert marker_artifact is not None
+
+            committed_retry.status = ExportArtifactStatus.EXPIRED.value
+            committed_retry.expires_at = datetime.now(UTC) - timedelta(days=1)
+            marker_artifact.expires_at = datetime.now(UTC) - timedelta(days=2)
+            await service.repo.save(committed_retry)
+            await service.repo.save(marker_artifact)
+            await session.commit()
+
+            first_count = await expire_ready_export_artifacts(session, limit=1)
+            second_count = await expire_ready_export_artifacts(session, limit=1)
+
+            assert first_count == 1
+            assert second_count == 1
+
+            persisted_committed_retry = await service.repo.get_by_id(committed_retry_id)
+            assert persisted_committed_retry is not None
+            assert (
+                persisted_committed_retry.status == ExportArtifactStatus.EXPIRED.value
+            )
+            assert persisted_committed_retry.storage_key is None
+            assert service.storage.exists(committed_retry_storage_key) is False
+
+            persisted_marker = await service.repo.get_by_id(marker_artifact_id)
+            assert persisted_marker is not None
+            assert persisted_marker.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_marker.storage_key == marker_storage_key
+            assert service.storage.exists(marker_storage_key) is True
 
     run_async(_run())
 

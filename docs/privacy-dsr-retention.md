@@ -56,7 +56,9 @@ and DSR idempotency rows.
   exports downloadable. A later pass may delete the object and clear storage
   metadata only after the caller commits the expiry transition. Repeated passes
   inside the same caller-owned transaction must skip artifacts expired by that
-  transaction.
+  transaction. Expiry markers are cleared on commit or rollback, not by polling
+  session state, because reads may autobegin a new transaction. Eligible expired
+  retry rows must exclude those markers before applying the batch limit.
 - Storage purge failures remain retryable. When a failure prevents all useful
   retention work in the pass, the original storage exception is surfaced so
   operators and tests still observe the outage.
