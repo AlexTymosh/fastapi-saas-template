@@ -54,7 +54,9 @@ and DSR idempotency rows.
   a purge retry marker. This transition is independent of retry purge failures,
   so a temporary object-store outage must not keep unrelated expired READY
   exports downloadable. A later pass may delete the object and clear storage
-  metadata once the row is already non-downloadable.
+  metadata only after the caller commits the expiry transition. Repeated passes
+  inside the same caller-owned transaction must skip artifacts expired by that
+  transaction.
 - Storage purge failures remain retryable. When a failure prevents all useful
   retention work in the pass, the original storage exception is surfaced so
   operators and tests still observe the outage.

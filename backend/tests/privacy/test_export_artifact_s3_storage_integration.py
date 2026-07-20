@@ -274,6 +274,9 @@ def test_export_artifact_retention_expires_before_purging_minio_object(
             assert expired.checksum_sha256 == "0" * 64
             assert minio_export_storage.adapter.exists(storage_key)
 
+            await session.commit()
+            service = ExportArtifactService(session)
+
             purged_count = await service.mark_expired_artifacts(now=datetime.now(UTC))
             purged = await service.repo.get_by_id(artifact.id)
 

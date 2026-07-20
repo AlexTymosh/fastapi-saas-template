@@ -56,6 +56,9 @@ _EXPORT_GENERATION_FAILURE_CODES = frozenset(
     }
 )
 _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
+_UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY = (
+    "privacy_uncommitted_expired_export_artifact_ids"
+)
 _logger = logging.getLogger(__name__)
 
 
@@ -812,6 +815,7 @@ class ExportArtifactService:
         self, *, now: datetime | None = None, limit: int = 1000
     ) -> int:
         self._validate_positive_limit(limit)
+        self._clear_uncommitted_expiry_markers_if_transaction_finished()
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
 
         cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
@@ -832,12 +836,16 @@ class ExportArtifactService:
         expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
             limit=remaining_limit,
         )
-        return len(cancelled_erasure) + len(expired_ready) + len(expired_storage_retry)
+        committed_retry = self._committed_storage_retry_artifacts(
+            expired_storage_retry,
+        )
+        return len(cancelled_erasure) + len(expired_ready) + len(committed_retry)
 
     async def mark_expired_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
     ) -> int:
         self._validate_positive_limit(limit)
+        self._clear_uncommitted_expiry_markers_if_transaction_finished()
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
 
         cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
@@ -845,6 +853,9 @@ class ExportArtifactService:
         )
         expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
             limit=limit,
+        )
+        expired_storage_retry = self._committed_storage_retry_artifacts(
+            expired_storage_retry,
         )
 
         processed = 0
@@ -866,6 +877,7 @@ class ExportArtifactService:
         )
         for artifact in expired_ready:
             expired_artifact = await self.repo.mark_expired(artifact)
+            self._remember_uncommitted_expiry_transition(expired_artifact)
             processed += 1
             (
                 execution_status,
@@ -899,6 +911,25 @@ class ExportArtifactService:
         if processed == 0 and purge_failures:
             raise purge_failures[0]
         return processed
+
+    def _clear_uncommitted_expiry_markers_if_transaction_finished(self) -> None:
+        if not self.session.in_transaction():
+            self.session.info.pop(_UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY, None)
+
+    def _remember_uncommitted_expiry_transition(self, artifact: ExportArtifact) -> None:
+        marker_ids = self.session.info.setdefault(
+            _UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY,
+            set(),
+        )
+        marker_ids.add(artifact.id)
+
+    def _committed_storage_retry_artifacts(
+        self, artifacts: list[ExportArtifact]
+    ) -> list[ExportArtifact]:
+        marker_ids = self.session.info.get(_UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY)
+        if not marker_ids:
+            return artifacts
+        return [artifact for artifact in artifacts if artifact.id not in marker_ids]
 
     async def _purge_storage_retry_artifacts(
         self, artifacts: list[ExportArtifact], *, limit: int
