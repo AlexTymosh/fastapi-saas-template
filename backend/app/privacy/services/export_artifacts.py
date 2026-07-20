@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -55,6 +56,7 @@ _EXPORT_GENERATION_FAILURE_CODES = frozenset(
     }
 )
 _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
+_logger = logging.getLogger(__name__)
 
 
 def _ensure_aware_utc(value: datetime) -> datetime:
@@ -812,25 +814,25 @@ class ExportArtifactService:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
 
-        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
+        expired_ready = await self.repo.list_expired_ready(
+            now=now_value,
             limit=limit,
         )
-        remaining_limit = limit - len(cancelled_erasure)
+        remaining_limit = limit - len(expired_ready)
         if remaining_limit <= 0:
-            return len(cancelled_erasure)
+            return len(expired_ready)
+
+        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
+            limit=remaining_limit,
+        )
+        remaining_limit -= len(cancelled_erasure)
+        if remaining_limit <= 0:
+            return len(expired_ready) + len(cancelled_erasure)
 
         expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
             limit=remaining_limit,
         )
-        remaining_limit -= len(expired_storage_retry)
-        if remaining_limit <= 0:
-            return len(cancelled_erasure) + len(expired_storage_retry)
-
-        expired_ready = await self.repo.list_expired_ready(
-            now=now_value,
-            limit=remaining_limit,
-        )
-        return len(cancelled_erasure) + len(expired_storage_retry) + len(expired_ready)
+        return len(expired_ready) + len(cancelled_erasure) + len(expired_storage_retry)
 
     async def mark_expired_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
@@ -838,22 +840,18 @@ class ExportArtifactService:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
 
-        processed = await self._purge_cancelled_erasure_retry_artifacts(limit=limit)
-        remaining_limit = limit - processed
-        if remaining_limit <= 0:
-            return processed
-
-        processed += await self._purge_expired_storage_retry_artifacts(
-            limit=remaining_limit,
+        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
+            limit=limit,
         )
-        remaining_limit = limit - processed
-        if remaining_limit <= 0:
-            return processed
+        expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
+            limit=limit,
+        )
 
         expired_ready = await self.repo.list_expired_ready(
             now=now_value,
-            limit=remaining_limit,
+            limit=limit,
         )
+        processed = 0
         for artifact in expired_ready:
             expired_artifact = await self.repo.mark_expired(artifact)
             processed += 1
@@ -876,29 +874,57 @@ class ExportArtifactService:
                 expired_artifact,
             )
 
+        remaining_limit = limit - processed
+        if remaining_limit <= 0:
+            return processed
+
+        processed += await self._purge_storage_retry_artifacts(
+            cancelled_erasure,
+            limit=remaining_limit,
+        )
+        remaining_limit = limit - processed
+        if remaining_limit <= 0:
+            return processed
+
+        processed += await self._purge_storage_retry_artifacts(
+            expired_storage_retry,
+            limit=remaining_limit,
+        )
         return processed
 
-    async def _purge_cancelled_erasure_retry_artifacts(self, *, limit: int) -> int:
-        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
-            limit=limit,
-        )
+    async def _purge_storage_retry_artifacts(
+        self, artifacts: list[ExportArtifact], *, limit: int
+    ) -> int:
         processed = 0
-        for artifact in cancelled_erasure:
-            self._purge_export_artifact_storage_object(artifact)
+        for artifact in artifacts[:limit]:
+            if not self._try_purge_export_artifact_storage_object(artifact):
+                continue
             await self.repo.save(artifact)
             processed += 1
         return processed
 
-    async def _purge_expired_storage_retry_artifacts(self, *, limit: int) -> int:
-        expired_artifacts = await self.repo.list_expired_storage_purge_retry(
-            limit=limit,
-        )
-        processed = 0
-        for artifact in expired_artifacts:
+    def _try_purge_export_artifact_storage_object(
+        self, artifact: ExportArtifact
+    ) -> bool:
+        if artifact.storage_key is None:
+            return True
+        if not _is_non_downloadable_storage_purge_retry(artifact):
+            raise ConflictError(
+                detail="Export artifact storage purge requires non-downloadable state"
+            )
+
+        try:
             self._purge_export_artifact_storage_object(artifact)
-            await self.repo.save(artifact)
-            processed += 1
-        return processed
+        except Exception:
+            _logger.exception(
+                "Failed to purge export artifact storage object",
+                extra={
+                    "artifact_id": str(artifact.id),
+                    "storage_backend": artifact.storage_backend,
+                },
+            )
+            return False
+        return True
 
     @staticmethod
     def _validate_positive_limit(limit: int) -> None:

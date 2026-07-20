@@ -301,6 +301,66 @@ def test_privacy_retention_rollback_keeps_ready_artifact_storage_valid(
     run_async(_run())
 
 
+def test_privacy_retention_expires_ready_when_retry_purge_fails(
+    monkeypatch,
+    migrated_session_factory,
+) -> None:
+    class StoragePurgeFailure(RuntimeError):
+        pass
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            (
+                retry_artifact_id,
+                retry_storage_key,
+                _,
+            ) = await _create_expired_ready_artifact(session)
+            (
+                ready_artifact_id,
+                ready_storage_key,
+                ready_dsr_id,
+            ) = await _create_expired_ready_artifact(session)
+            service = ExportArtifactService(session)
+            retry_artifact = await service.repo.get_by_id(retry_artifact_id)
+            assert retry_artifact is not None
+            retry_artifact.status = ExportArtifactStatus.EXPIRED.value
+            await service.repo.save(retry_artifact)
+            await session.commit()
+
+            service = ExportArtifactService(session)
+            storage = service.storage
+
+            def _raise_storage_failure(storage_key: str) -> None:
+                del storage_key
+                raise StoragePurgeFailure("storage unavailable")
+
+            monkeypatch.setattr(storage, "delete", _raise_storage_failure)
+
+            processed = await service.mark_expired_artifacts(now=datetime.now(UTC))
+
+            assert processed == 1
+            persisted_retry = await service.repo.get_by_id(retry_artifact_id)
+            assert persisted_retry is not None
+            assert persisted_retry.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_retry.storage_key == retry_storage_key
+            assert service.storage.exists(retry_storage_key) is True
+
+            persisted_ready = await service.repo.get_by_id(ready_artifact_id)
+            assert persisted_ready is not None
+            assert persisted_ready.status == ExportArtifactStatus.EXPIRED.value
+            assert persisted_ready.storage_key == ready_storage_key
+            assert service.storage.exists(ready_storage_key) is True
+            persisted_dsr = await service.dsr_repo.get_by_id(ready_dsr_id)
+            assert persisted_dsr is not None
+            assert (
+                persisted_dsr.execution_status
+                == DataSubjectRequestExecutionStatus.FAILED.value
+            )
+            assert persisted_dsr.execution_failure_reason_code == "artifact_expired"
+
+    run_async(_run())
+
+
 def test_privacy_retention_summary_dry_run_covers_non_export_tables(
     migrated_session_factory,
 ) -> None:

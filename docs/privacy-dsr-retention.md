@@ -27,7 +27,7 @@ and DSR idempotency rows.
 
 | Area | Retention action |
 |---|---|
-| Export artifacts | Expire ready artifacts first; purge stored archive objects only from already non-downloadable retry rows. |
+| Export artifacts | Expire READY rows first; purge only retry rows. |
 | Invites | Replace retained invite email/token values with deterministic tombstones. |
 | Outbox events | Scrub delivered/failed delivery payloads after the retention window. |
 | Audit events | Remove old actor, free-form, network and user-agent context. |
@@ -48,8 +48,10 @@ and DSR idempotency rows.
 - Retention must not delete a stored export object while rollback could restore
   the artifact to `ready`.
 - READY export artifacts first transition to `expired` while keeping
-  `storage_key` as a purge retry marker. A later pass may delete the object and
-  clear storage metadata once the row is already non-downloadable.
+  `storage_key` as a purge retry marker. This transition is independent of
+  storage retry purge failures, so a temporary object-store outage must not keep
+  unrelated expired READY exports downloadable. A later pass may delete the
+  object and clear storage metadata once the row is already non-downloadable.
 - Erasure-cancelled artifacts use the same retry-marker model: object deletion
   is retried only after the row is already `cancelled` for subject erasure.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so
