@@ -146,6 +146,63 @@ class ExportArtifactRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def ensure_processing_upload_intent(
+        self,
+        *,
+        artifact_id: UUID,
+        processing_token: str,
+        candidate_storage_key: str,
+        now: datetime,
+    ) -> ExportArtifact | None:
+        await self.session.execute(
+            update(ExportArtifact)
+            .where(
+                ExportArtifact.id == artifact_id,
+                ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
+                ExportArtifact.processing_token == processing_token,
+                ExportArtifact.processing_lease_expires_at.is_not(None),
+                ExportArtifact.processing_lease_expires_at > now,
+                ExportArtifact.storage_key.is_(None),
+            )
+            .values(storage_key=candidate_storage_key)
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.flush()
+        return await self.get_active_processing_upload_intent(
+            artifact_id=artifact_id,
+            processing_token=processing_token,
+            now=now,
+        )
+
+    async def get_active_processing_upload_intent(
+        self,
+        *,
+        artifact_id: UUID,
+        processing_token: str,
+        now: datetime,
+        storage_backend: str | None = None,
+        storage_key: str | None = None,
+    ) -> ExportArtifact | None:
+        filters = [
+            ExportArtifact.id == artifact_id,
+            ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
+            ExportArtifact.processing_token == processing_token,
+            ExportArtifact.processing_lease_expires_at.is_not(None),
+            ExportArtifact.processing_lease_expires_at > now,
+            ExportArtifact.storage_key.is_not(None),
+        ]
+        if storage_backend is not None:
+            filters.append(ExportArtifact.storage_backend == storage_backend)
+        if storage_key is not None:
+            filters.append(ExportArtifact.storage_key == storage_key)
+
+        stmt = (
+            select(ExportArtifact)
+            .where(*filters)
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def recover_stale_processing(
         self, *, now: datetime, limit: int
     ) -> list[ExportArtifact]:
@@ -202,6 +259,41 @@ class ExportArtifactRepository:
             .limit(limit)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_failed_storage_purge_retry(
+        self, *, limit: int
+    ) -> list[ExportArtifact]:
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.status == ExportArtifactStatus.FAILED.value,
+                ExportArtifact.storage_key.is_not(None),
+            )
+            .order_by(
+                ExportArtifact.failed_at.asc().nulls_last(),
+                ExportArtifact.created_at.asc(),
+                ExportArtifact.id.asc(),
+            )
+            .limit(limit)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_failed_storage_purge_target(
+        self, *, artifact_id: UUID, storage_key: str
+    ) -> ExportArtifact | None:
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.id == artifact_id,
+                ExportArtifact.status == ExportArtifactStatus.FAILED.value,
+                ExportArtifact.storage_key == storage_key,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_expired_storage_purge_retry(
         self, *, limit: int, exclude_ids: Collection[UUID] | None = None

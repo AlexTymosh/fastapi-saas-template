@@ -19,6 +19,9 @@ from app.privacy.models.export_artifact import ExportArtifactStatus
 from app.privacy.services.export_artifacts import ExportArtifactService
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
+from tests.helpers.privacy_exports import (
+    generate_export_artifact_in_committed_phases,
+)
 
 pytestmark = [pytest.mark.privacy]
 
@@ -80,14 +83,12 @@ def test_worker_generated_archive_uses_cross_table_subject_exporter(
                 audit_context=AuditContext(actor_user_id=user.id),
             )
 
-            processed = await service.claim_and_generate_next_batch(
-                batch_size=1,
+            ready = await generate_export_artifact_in_committed_phases(
+                session,
+                artifact=artifact,
                 generated_by_user_id=user.id,
             )
 
-            assert processed == 1
-            ready = await service.repo.get_by_id(artifact.id)
-            assert ready is not None
             assert ready.status == ExportArtifactStatus.READY.value
             assert ready.storage_key is not None
 

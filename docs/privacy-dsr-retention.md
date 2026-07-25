@@ -27,7 +27,7 @@ and DSR idempotency rows.
 
 | Area | Retention action |
 |---|---|
-| Export artifacts | Prioritise erasure retries, then expire READY rows. |
+| Export artifacts | Prioritise erasure and failed-upload retries, then expire READY rows. |
 | Invites | Replace retained invite email/token values with deterministic tombstones. |
 | Outbox events | Scrub delivered/failed delivery payloads after the retention window. |
 | Audit events | Remove old actor, free-form, network and user-agent context. |
@@ -50,6 +50,10 @@ and DSR idempotency rows.
 - Erasure-cancelled purge retries keep first priority under small batches. If a
   retry purge succeeds and consumes the batch, unrelated READY rows wait for the
   next retention pass.
+- Failed export generation/upload rows retain their committed `storage_key`
+  until object deletion succeeds. They are non-downloadable and have second
+  cleanup priority, before new READY expiry work. Missing objects are accepted
+  as an idempotent cleanup success.
 - READY export artifacts transition to `expired` while keeping `storage_key` as
   a purge retry marker. This transition is independent of retry purge failures,
   so a temporary object-store outage must not keep unrelated expired READY
@@ -62,6 +66,9 @@ and DSR idempotency rows.
 - Storage purge failures remain retryable. When a failure prevents all useful
   retention work in the pass, the original storage exception is surfaced so
   operators and tests still observe the outage.
+- S3-compatible cleanup is key-level deletion. A versioning-enabled production
+  bucket must permanently expire noncurrent versions and expired delete markers
+  within the retention SLA, or use a dedicated unversioned bucket/prefix.
 - Erasure-cancelled artifacts use the same retry-marker model: object deletion
   is retried only after the row is already `cancelled` for subject erasure.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so

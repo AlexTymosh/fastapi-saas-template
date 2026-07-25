@@ -22,6 +22,9 @@ Export artifacts are generated asynchronously from approved export DSRs.
   temporary archive file and uploads the prepared file to the selected storage
   backend. It must not materialise the full JSON payload string or ZIP archive
   bytes in memory before storage.
+- Before storage upload, the worker commits a stable `storage_key` upload intent
+  on the still-active processing lease. Retries reuse that key instead of
+  creating an untracked object.
 - Audit metadata is intentionally minimised and does not include payload/storage
   paths/tokens.
 - `--dry-run` worker mode performs one non-mutating count pass and then exits
@@ -44,6 +47,24 @@ The generated archive metadata is derived from the completed temporary file:
 - `max_artifact_size_bytes` is checked after the ZIP has been closed and before
   the file is uploaded to storage;
 - temporary files are removed after upload, and also after generation failures.
+
+Archive preparation, upload and the `ready` transition use separate transaction
+phases. The preparation phase records or reuses the upload intent. The worker
+commits it, revalidates the processing token, lease, backend and key, and only
+then calls storage outside the database transaction. The final transaction
+stores file metadata, marks the artifact `ready`, synchronises the DSR execution
+state and records the audit event.
+
+If upload or final persistence fails, the worker first commits the artifact as
+non-downloadable `failed` while retaining `storage_key`. It then attempts object
+deletion outside a database transaction and clears storage metadata in a later
+transaction only after deletion succeeds. A failed or interrupted cleanup keeps
+the key for the retention runner. Deleting a missing object is treated as an
+idempotent success.
+
+A stale processing lease keeps its recorded upload intent. Recovery requeues the
+artifact and the next lease reuses the same key. An old lease must fail the
+pre-upload validation and cannot transition the row to `ready`.
 
 Deployment environments must provide writable temporary storage for export
 workers. For large exports, size the writable path for at least the configured
@@ -79,6 +100,16 @@ The local backend exists for development and tests only. It is intentionally not
 a production delivery mechanism and must not be treated as a public browser
 URL. Production-like environments must use the `s3_compatible` backend so the
 storage provider issues short-lived SigV4 presigned HTTP GET URLs.
+
+## S3 versioning and permanent deletion
+
+The S3-compatible adapter performs key-level `DeleteObject` cleanup. In a
+versioning-enabled bucket, a key-level delete can create a delete marker while
+retaining older object versions. Before enabling privacy exports, operators must
+therefore use a dedicated unversioned bucket/prefix or configure and verify a
+lifecycle policy that permanently expires noncurrent versions and removes
+expired delete markers within the required retention SLA. Object Lock or
+replication policy must not extend personal-export retention unintentionally.
 
 ## Worker operations
 
@@ -162,6 +193,8 @@ The runner:
 - finds ready export artifacts whose `expires_at` is in the past;
 - retries storage-object purges for cancelled export artifacts created before a
   subject erasure request;
+- retries storage-object purges for failed generation or upload attempts that
+  still retain an upload-intent key;
 - deletes the stored local/S3-compatible archive object;
 - clears `storage_key`, filename, content type, size, and checksum metadata;
 - marks expired ready artifacts as `expired`;
@@ -171,6 +204,11 @@ The runner:
 Use `--dry-run` to preview the number of artifacts that would be processed
 without mutating the database or deleting storage objects. Use `--batch-size` to
 bound a scheduled pass.
+
+Cleanup priority within the export-artifact batch is subject-erasure retries,
+failed generation/upload retries, READY-to-EXPIRED transitions, and previously
+expired object retries. A storage failure does not prevent unrelated READY rows
+from becoming non-downloadable when useful work remains in the pass.
 
 ### Production scheduling guidance
 

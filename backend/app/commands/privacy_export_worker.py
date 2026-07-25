@@ -3,14 +3,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import logging
 
 from app.core.db.session import get_session_factory
 from app.privacy.services.export_artifacts import (
     DEFAULT_PROCESSING_LEASE_SECONDS,
     ExportArtifactService,
+    FailedExportStorageCleanup,
     PreparedExportArchive,
     ProcessingExportLease,
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def _count_queued_artifacts(*, batch_size: int) -> int:
@@ -46,20 +50,45 @@ async def _prepare_export_archive(
     *, lease: ProcessingExportLease
 ) -> PreparedExportArchive:
     session_factory = get_session_factory()
-    async with session_factory() as session:
-        async with session.begin():
-            return await ExportArtifactService(session).prepare_export_archive(
-                artifact_id=lease.artifact_id,
-                processing_token=lease.processing_token,
+    prepared: PreparedExportArchive | None = None
+    try:
+        async with session_factory() as session:
+            async with session.begin():
+                prepared = await ExportArtifactService(session).prepare_export_archive(
+                    artifact_id=lease.artifact_id,
+                    processing_token=lease.processing_token,
+                )
+        return prepared
+    except Exception:
+        if prepared is not None:
+            await asyncio.to_thread(
+                ExportArtifactService.discard_prepared_export_archive,
+                prepared,
             )
+        raise
 
 
-async def _write_export_archive(prepared: PreparedExportArchive) -> None:
-    """Write the archive outside of any database transaction."""
+async def _write_export_archive(
+    *, lease: ProcessingExportLease, prepared: PreparedExportArchive
+) -> None:
+    """Validate committed upload intent, then write outside the transaction."""
+
     session_factory = get_session_factory()
-    async with session_factory() as session:
-        service = ExportArtifactService(session)
+    service: ExportArtifactService
+    try:
+        async with session_factory() as session:
+            service = ExportArtifactService(session)
+            async with session.begin():
+                await service.validate_prepared_export_upload(
+                    prepared=prepared,
+                    processing_token=lease.processing_token,
+                )
         await asyncio.to_thread(service.write_prepared_export_archive, prepared)
+    finally:
+        await asyncio.to_thread(
+            ExportArtifactService.discard_prepared_export_archive,
+            prepared,
+        )
 
 
 async def _mark_export_ready(
@@ -75,15 +104,73 @@ async def _mark_export_ready(
             )
 
 
-async def _mark_export_failed(*, lease: ProcessingExportLease, exc: Exception) -> None:
+async def _mark_export_failed(
+    *, lease: ProcessingExportLease, exc: Exception
+) -> FailedExportStorageCleanup | None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         async with session.begin():
-            await ExportArtifactService(session).mark_export_artifact_failed(
+            service = ExportArtifactService(session)
+            failed = await service.mark_export_artifact_failed(
                 artifact_id=lease.artifact_id,
                 exc=exc,
                 processing_token=lease.processing_token,
             )
+            if failed is None:
+                return None
+            return service.failed_storage_cleanup(failed)
+
+
+async def _delete_failed_export_storage(
+    cleanup: FailedExportStorageCleanup,
+) -> None:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        service = ExportArtifactService(session)
+        await asyncio.to_thread(
+            service.delete_failed_export_storage_object,
+            cleanup,
+        )
+
+
+async def _clear_failed_export_storage_metadata(
+    cleanup: FailedExportStorageCleanup,
+) -> None:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        async with session.begin():
+            await ExportArtifactService(session).clear_failed_export_storage_metadata(
+                cleanup
+            )
+
+
+async def _cleanup_failed_export_storage(
+    cleanup: FailedExportStorageCleanup,
+) -> None:
+    try:
+        await _delete_failed_export_storage(cleanup)
+    except Exception as exc:
+        logger.error(
+            "Failed to delete failed export artifact storage object",
+            extra={
+                "artifact_id": str(cleanup.artifact_id),
+                "storage_backend": cleanup.storage_backend,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return
+
+    try:
+        await _clear_failed_export_storage_metadata(cleanup)
+    except Exception as exc:
+        logger.error(
+            "Failed to clear failed export artifact storage metadata",
+            extra={
+                "artifact_id": str(cleanup.artifact_id),
+                "storage_backend": cleanup.storage_backend,
+                "error_type": type(exc).__name__,
+            },
+        )
 
 
 async def _heartbeat_processing_lease(*, lease: ProcessingExportLease) -> None:
@@ -102,10 +189,12 @@ async def _process_artifact(*, lease: ProcessingExportLease) -> None:
     heartbeat = asyncio.create_task(_heartbeat_processing_lease(lease=lease))
     try:
         prepared = await _prepare_export_archive(lease=lease)
-        await _write_export_archive(prepared)
+        await _write_export_archive(lease=lease, prepared=prepared)
         await _mark_export_ready(lease=lease, prepared=prepared)
     except Exception as exc:
-        await _mark_export_failed(lease=lease, exc=exc)
+        cleanup = await _mark_export_failed(lease=lease, exc=exc)
+        if cleanup is not None:
+            await _cleanup_failed_export_storage(cleanup)
     finally:
         heartbeat.cancel()
         with contextlib.suppress(asyncio.CancelledError):

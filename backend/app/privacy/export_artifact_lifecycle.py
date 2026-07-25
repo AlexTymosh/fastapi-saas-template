@@ -57,7 +57,7 @@ def mark_export_artifact_failed(
     detail: str,
     failed_at: datetime | None = None,
 ) -> tuple[str, ...]:
-    """Apply the failed terminal transition for export generation."""
+    """Apply a non-downloadable failure while retaining storage retry state."""
 
     changed_fields: list[str] = []
     _set_if_changed(

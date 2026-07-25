@@ -127,6 +127,30 @@ async def _create_cancelled_erasure_retry_artifact(session):
     return artifact.id, storage_key
 
 
+async def _create_failed_upload_retry_artifact(
+    session,
+    *,
+    create_object: bool,
+):
+    user, dsr = await _create_approved_export_dsr(session)
+    service = ExportArtifactService(session)
+    artifact = await service.request_export_artifact(
+        request_id=dsr.id,
+        requested_by_user_id=user.id,
+        audit_context=AuditContext(actor_user_id=user.id),
+    )
+    storage_key = f"exports/{artifact.id}/failed-upload.zip"
+    artifact.status = ExportArtifactStatus.FAILED.value
+    artifact.failure_reason_code = "generation_failed"
+    artifact.failure_detail = "Export generation failed"
+    artifact.failed_at = datetime.now(UTC)
+    artifact.storage_key = storage_key
+    await service.repo.save(artifact)
+    if create_object:
+        service.storage.put_bytes(storage_key, b"partial-payload", "application/zip")
+    return artifact.id, storage_key
+
+
 async def _create_retention_subject(session, *, old: datetime):
     user = User(
         external_auth_id=f"kc|{uuid4()}",
@@ -533,6 +557,64 @@ def test_privacy_retention_expires_ready_when_erasure_retry_purge_fails(
                 == DataSubjectRequestExecutionStatus.FAILED.value
             )
             assert persisted_dsr.execution_failure_reason_code == "artifact_expired"
+
+    run_async(_run())
+
+
+def test_privacy_retention_clears_missing_failed_upload_idempotently(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            artifact_id, storage_key = await _create_failed_upload_retry_artifact(
+                session,
+                create_object=False,
+            )
+            await session.commit()
+            service = ExportArtifactService(session)
+
+            processed = await service.mark_expired_artifacts(limit=1)
+
+            assert processed == 1
+            persisted = await service.repo.get_by_id(artifact_id)
+            assert persisted is not None
+            assert persisted.status == ExportArtifactStatus.FAILED.value
+            assert persisted.storage_key is None
+            assert service.storage.exists(storage_key) is False
+
+    run_async(_run())
+
+
+def test_privacy_retention_prioritises_failed_upload_before_ready_expiry(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            failed_id, failed_key = await _create_failed_upload_retry_artifact(
+                session,
+                create_object=True,
+            )
+            ready_id, ready_key, _ = await _create_expired_ready_artifact(session)
+            await session.commit()
+            service = ExportArtifactService(session)
+
+            processed = await service.mark_expired_artifacts(
+                now=datetime.now(UTC),
+                limit=1,
+            )
+
+            assert processed == 1
+            failed = await service.repo.get_by_id(failed_id)
+            assert failed is not None
+            assert failed.status == ExportArtifactStatus.FAILED.value
+            assert failed.storage_key is None
+            assert service.storage.exists(failed_key) is False
+
+            ready = await service.repo.get_by_id(ready_id)
+            assert ready is not None
+            assert ready.status == ExportArtifactStatus.READY.value
+            assert ready.storage_key == ready_key
+            assert service.storage.exists(ready_key) is True
 
     run_async(_run())
 

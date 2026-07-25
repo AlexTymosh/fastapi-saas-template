@@ -20,11 +20,13 @@ from app.privacy.models.data_subject_request import (
     DataSubjectRequestRequesterRole,
     DataSubjectRequestStatus,
 )
-from app.privacy.models.export_artifact import ExportArtifactStatus
 from app.privacy.services.data_subject_requests import DataSubjectRequestService
 from app.privacy.services.export_artifacts import ExportArtifactService
 from app.users.models.user import User, UserStatus
 from tests.helpers.asyncio_runner import run_async
+from tests.helpers.privacy_exports import (
+    generate_export_artifact_in_committed_phases,
+)
 
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
 
@@ -149,8 +151,8 @@ def test_verified_representative_export_targets_subject_data(
             assert artifact.requester_user_id == requester.id
             assert artifact.subject_user_id == subject.id
 
-            artifact.status = ExportArtifactStatus.PROCESSING.value
-            ready = await export_service.generate_export_artifact(
+            ready = await generate_export_artifact_in_committed_phases(
+                session,
                 artifact=artifact,
                 generated_by_user_id=reviewer.id,
             )
