@@ -61,6 +61,9 @@ and DSR idempotency rows.
   object. A successful publish consumes the reservation and does not run a
   separate cancellation request. An ambiguous conditional response is accepted
   only when storage metadata matches the committed checksum and size.
+  Transport-level acknowledgement failures use the same `HeadObject`
+  reconciliation. If object state cannot be inspected, the committed intent
+  remains `processing` for stale recovery instead of entering failed cleanup.
 - READY export artifacts transition to `expired` while keeping `storage_key` as
   a purge retry marker. This transition is independent of retry purge failures,
   so a temporary object-store outage must not keep unrelated expired READY

@@ -2,6 +2,7 @@ from app.privacy.storage.base import (
     StorageAdapter,
     StorageObjectConflictError,
     StorageObjectState,
+    StorageObjectStateUnknownError,
     StoragePublicationReservation,
     StoredObject,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "StorageAdapter",
     "StorageObjectConflictError",
     "StorageObjectState",
+    "StorageObjectStateUnknownError",
     "StoragePublicationReservation",
     "StoredObject",
 ]

@@ -183,6 +183,9 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
   transient post-publication cleanup error cannot fail a valid export.
 - An ambiguous S3 conditional response is accepted only when `HeadObject`
   confirms the committed checksum and size; all other states fail closed.
+- S3 response timeouts and connection closures use the same postcondition
+  check. If `HeadObject` is also unavailable, the committed intent stays
+  recoverable instead of entering failed cleanup from an unknown outcome.
 - Cleanup conditionally removes the current reservation or object revision, so
   an in-flight publisher cannot recreate an object after the key is cleared.
 - Missing, reserved or conflicting recovery objects are fenced before the
@@ -202,10 +205,10 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
 Verification completed in the implementation environment:
 
 - Ruff format and lint: passed for the complete backend.
-- Focused export/worker/retention/storage/erasure/docs suite: 116 passed.
-- Privacy suite without container/external-DB tests: 442 passed.
+- Focused export/worker/retention/storage/erasure/docs suite: 117 passed.
+- Privacy suite without container/external-DB tests: 446 passed.
 - Contract suite: 111 passed.
-- Complete lightweight backend suite: 1329 passed.
+- Complete lightweight backend suite: 1334 passed.
 - Four MinIO container tests could not start because the environment has no
   Docker runtime. Run them locally and in CI before merge.
 

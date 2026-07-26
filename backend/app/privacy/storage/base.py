@@ -17,6 +17,10 @@ class StorageObjectConflictError(RuntimeError):
     """Raised when an immutable object key already contains different bytes."""
 
 
+class StorageObjectStateUnknownError(RuntimeError):
+    """Raised when storage cannot determine the current state of an object."""
+
+
 class StorageObjectState(StrEnum):
     MISSING = "missing"
     RESERVED = "reserved"

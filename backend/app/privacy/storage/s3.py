@@ -6,11 +6,12 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError, HTTPClientError
 
 from app.privacy.storage.base import (
     StorageObjectConflictError,
     StorageObjectState,
+    StorageObjectStateUnknownError,
     StoragePublicationReservation,
     StoredObject,
 )
@@ -194,16 +195,23 @@ class S3CompatibleStorageAdapter:
                 or self._is_conditional_request_conflict(exc)
                 or self._is_missing_object(exc)
             ):
-                state = self.inspect_file(
+                if self._published_object_matches(
                     reservation.key,
                     checksum_sha256=checksum_sha256,
                     size_bytes=size_bytes,
-                )
-                if state == StorageObjectState.MATCHING:
+                ):
                     return stored
                 raise StorageObjectConflictError(
                     "Storage publication reservation is no longer active"
                 ) from None
+            raise
+        except HTTPClientError:
+            if self._published_object_matches(
+                reservation.key,
+                checksum_sha256=checksum_sha256,
+                size_bytes=size_bytes,
+            ):
+                return stored
             raise
         return stored
 
@@ -246,6 +254,22 @@ class S3CompatibleStorageAdapter:
             return StorageObjectState.MATCHING
         return StorageObjectState.CONFLICT
 
+    def _published_object_matches(
+        self,
+        key: str,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> bool:
+        return (
+            self.inspect_file(
+                key,
+                checksum_sha256=checksum_sha256,
+                size_bytes=size_bytes,
+            )
+            == StorageObjectState.MATCHING
+        )
+
     def _head_object(self, object_key: str) -> dict[str, Any] | None:
         try:
             return self.client.head_object(
@@ -255,7 +279,13 @@ class S3CompatibleStorageAdapter:
         except ClientError as exc:
             if self._is_missing_object(exc):
                 return None
-            raise
+            raise StorageObjectStateUnknownError(
+                "Storage object state could not be inspected"
+            ) from exc
+        except BotoCoreError as exc:
+            raise StorageObjectStateUnknownError(
+                "Storage object state could not be inspected"
+            ) from exc
 
     def get_bytes(self, key: str) -> bytes:
         response = self.client.get_object(

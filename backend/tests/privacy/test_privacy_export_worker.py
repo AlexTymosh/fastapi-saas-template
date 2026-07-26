@@ -26,6 +26,7 @@ from app.privacy.models.export_artifact import (
     ExportArtifactStorageBackend,
 )
 from app.privacy.services.export_artifacts import ExportArtifactService
+from app.privacy.storage.base import StorageObjectStateUnknownError
 from app.privacy.storage.local import LocalStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -607,6 +608,99 @@ def test_worker_skips_reservation_cancellation_after_successful_publication(
     assert LocalStorageAdapter(str(storage_path), "test-secret").exists(
         ready.storage_key
     )
+
+
+def test_worker_recovers_after_publication_state_cannot_be_verified(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    storage_path = tmp_path / "worker-exports"
+    _configure_worker(
+        monkeypatch,
+        database_url=migrated_database_url,
+        storage_path=storage_path,
+    )
+    artifact_id = run_async(_provision_queued_artifact(migrated_session_factory))
+    original_publish = LocalStorageAdapter.publish_reserved_file
+    original_cancel = LocalStorageAdapter.cancel_file_publication
+
+    def _publish_then_report_unknown(
+        self,
+        reservation,
+        path,
+        content_type,
+        *,
+        checksum_sha256,
+    ):
+        original_publish(
+            self,
+            reservation,
+            path,
+            content_type,
+            checksum_sha256=checksum_sha256,
+        )
+        raise StorageObjectStateUnknownError(
+            "Storage object state could not be inspected"
+        )
+
+    def _fail_if_cancelled(self, reservation) -> None:
+        raise AssertionError("Unknown publication outcome must not be cancelled")
+
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "publish_reserved_file",
+        _publish_then_report_unknown,
+    )
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "cancel_file_publication",
+        _fail_if_cancelled,
+    )
+
+    first_exit_code = run_async(run_worker(batch_size=1, dry_run=False, once=True))
+
+    async def _expire_processing_lease():
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                artifact = await session.get(ExportArtifact, artifact_id)
+                assert artifact is not None
+                assert artifact.status == ExportArtifactStatus.PROCESSING.value
+                assert artifact.storage_key is not None
+                storage_key = artifact.storage_key
+                artifact.processing_lease_expires_at = datetime.now(UTC) - timedelta(
+                    seconds=1
+                )
+                return storage_key
+
+    storage_key = run_async(_expire_processing_lease())
+
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "publish_reserved_file",
+        original_publish,
+    )
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "cancel_file_publication",
+        original_cancel,
+    )
+
+    second_exit_code = run_async(run_worker(batch_size=1, dry_run=False, once=True))
+
+    async def _load_ready_artifact():
+        async with migrated_session_factory() as session:
+            return await session.get(ExportArtifact, artifact_id)
+
+    ready = run_async(_load_ready_artifact())
+
+    assert first_exit_code == 0
+    assert second_exit_code == 0
+    assert ready is not None
+    assert ready.status == ExportArtifactStatus.READY.value
+    assert ready.storage_key == storage_key
+    assert LocalStorageAdapter(str(storage_path), "test-secret").exists(storage_key)
 
 
 def test_worker_retains_failed_upload_key_when_immediate_cleanup_fails(

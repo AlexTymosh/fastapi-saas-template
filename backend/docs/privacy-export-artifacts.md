@@ -68,6 +68,9 @@ removes the current reservation or object revision before the database key is
 cleared, so an in-flight publisher cannot recreate an untracked object after
 cleanup. Reservation cancellation is attempted only when publication does not
 complete; a successful compare-and-swap has already consumed the reservation.
+If the provider may have committed a publication but its state cannot be
+inspected, the worker leaves the committed intent in `processing` for stale
+recovery instead of marking it failed or cancelling its reservation.
 Storage I/O is never performed while a database transaction is held.
 
 If upload or final persistence fails, the worker first commits the artifact as
@@ -136,10 +139,13 @@ The S3-compatible provider must also implement conditional `PutObject` with
 SHA-256 checksum validation and read-after-write `HeadObject` metadata.
 Deployment smoke tests must fail closed instead of retrying a cleanup conflict
 as an unconditional create or overwrite when these capabilities are
-unavailable. If a conditional publish reports an ambiguous `409` or `412`
-after the provider may already have stored the object, the adapter accepts the
-operation only when `HeadObject` confirms the committed SHA-256 and size.
-Missing, reserved or different bytes remain a publication conflict.
+unavailable. If a conditional publish reports an ambiguous `409` or `412`, or
+its HTTP response times out or closes after the provider may already have
+stored the object, the adapter reconciles the result with `HeadObject`. It
+accepts the operation only when the committed SHA-256 and size match. Missing,
+reserved or different bytes remain a publication failure. If `HeadObject`
+cannot determine the state, the durable intent remains recoverable and no
+cleanup decision is made from the ambiguous response.
 
 ## Worker operations
 

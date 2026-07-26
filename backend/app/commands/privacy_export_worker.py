@@ -15,6 +15,7 @@ from app.privacy.services.export_artifacts import (
 )
 from app.privacy.storage.base import (
     StorageObjectState,
+    StorageObjectStateUnknownError,
     StoragePublicationReservation,
 )
 
@@ -81,6 +82,7 @@ async def _write_export_archive(
     service: ExportArtifactService
     reservation: StoragePublicationReservation | None = None
     publication_completed = False
+    publication_outcome_unknown = False
     try:
         async with session_factory() as session:
             service = ExportArtifactService(session)
@@ -94,14 +96,23 @@ async def _write_export_archive(
                     prepared=prepared,
                     processing_token=lease.processing_token,
                 )
-        await asyncio.to_thread(
-            service.publish_prepared_export_archive,
-            prepared,
-            reservation,
-        )
-        publication_completed = True
+        try:
+            await asyncio.to_thread(
+                service.publish_prepared_export_archive,
+                prepared,
+                reservation,
+            )
+        except StorageObjectStateUnknownError:
+            publication_outcome_unknown = True
+            raise
+        else:
+            publication_completed = True
     finally:
-        if reservation is not None and not publication_completed:
+        if (
+            reservation is not None
+            and not publication_completed
+            and not publication_outcome_unknown
+        ):
             await asyncio.to_thread(
                 service.cancel_prepared_export_archive_reservation,
                 prepared,
@@ -259,6 +270,14 @@ async def _process_artifact(*, lease: ProcessingExportLease) -> None:
         if prepared.archive_path is not None:
             await _write_export_archive(lease=lease, prepared=prepared)
         await _mark_export_ready(lease=lease, prepared=prepared)
+    except StorageObjectStateUnknownError as exc:
+        logger.warning(
+            "Export artifact storage state could not be verified",
+            extra={
+                "artifact_id": str(lease.artifact_id),
+                "error_type": type(exc).__name__,
+            },
+        )
     except Exception as exc:
         cleanup = await _mark_export_failed(lease=lease, exc=exc)
         if cleanup is not None:

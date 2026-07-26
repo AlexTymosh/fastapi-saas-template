@@ -7,12 +7,14 @@ import io
 import boto3
 import pytest
 from botocore.config import Config
+from botocore.exceptions import ConnectionClosedError, ReadTimeoutError
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
 from app.privacy.storage.base import (
     StorageObjectConflictError,
     StorageObjectState,
+    StorageObjectStateUnknownError,
     StoragePublicationReservation,
 )
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
@@ -362,6 +364,138 @@ def test_s3_storage_accepts_matching_object_after_ambiguous_publish_conflict(
 
     assert stored.key == reservation.key
     assert stored.size_bytes == len(payload)
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    [
+        ReadTimeoutError(endpoint_url="https://s3.example.test"),
+        ConnectionClosedError(endpoint_url="https://s3.example.test"),
+    ],
+    ids=["read-timeout", "connection-closed"],
+)
+def test_s3_storage_accepts_matching_object_after_publish_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    transport_error: Exception,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    path = tmp_path / "archive.zip"
+    payload = b"privacy export archive"
+    path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    object_key = "privacy-exports/exports/artifact.zip"
+    reservation = StoragePublicationReservation(
+        key="exports/artifact.zip",
+        owner_token="worker-token",
+        revision='"reservation-etag"',
+    )
+
+    def _raise_transport_error(**_kwargs) -> None:
+        raise transport_error
+
+    def _head_published_object(**kwargs):
+        assert kwargs == {
+            "Bucket": "privacy-exports",
+            "Key": object_key,
+        }
+        return {
+            "ContentLength": len(payload),
+            "Metadata": {"checksum-sha256": checksum},
+            "ETag": '"published-etag"',
+        }
+
+    monkeypatch.setattr(client, "put_object", _raise_transport_error)
+    monkeypatch.setattr(client, "head_object", _head_published_object)
+
+    stored = storage.publish_reserved_file(
+        reservation,
+        path,
+        "application/zip",
+        checksum_sha256=checksum,
+    )
+
+    assert stored.key == reservation.key
+    assert stored.size_bytes == len(payload)
+
+
+def test_s3_storage_rejects_nonmatching_object_after_publish_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    path = tmp_path / "archive.zip"
+    payload = b"privacy export archive"
+    path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    publication_error = ReadTimeoutError(endpoint_url="https://s3.example.test")
+
+    def _raise_publication_error(**_kwargs) -> None:
+        raise publication_error
+
+    def _head_reservation(**_kwargs):
+        return {
+            "ContentLength": 0,
+            "Metadata": {
+                "publication-reservation-owner": "worker-token",
+            },
+            "ETag": '"reservation-etag"',
+        }
+
+    monkeypatch.setattr(client, "put_object", _raise_publication_error)
+    monkeypatch.setattr(client, "head_object", _head_reservation)
+
+    with pytest.raises(ReadTimeoutError) as caught:
+        storage.publish_reserved_file(
+            StoragePublicationReservation(
+                key="exports/artifact.zip",
+                owner_token="worker-token",
+                revision='"reservation-etag"',
+            ),
+            path,
+            "application/zip",
+            checksum_sha256=checksum,
+        )
+
+    assert caught.value is publication_error
+
+
+def test_s3_storage_reports_unknown_state_when_publish_reconciliation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    path = tmp_path / "archive.zip"
+    payload = b"privacy export archive"
+    path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    inspection_error = ReadTimeoutError(endpoint_url="https://s3.example.test")
+
+    def _raise_publication_error(**_kwargs) -> None:
+        raise ConnectionClosedError(endpoint_url="https://s3.example.test")
+
+    def _raise_inspection_error(**_kwargs) -> None:
+        raise inspection_error
+
+    monkeypatch.setattr(client, "put_object", _raise_publication_error)
+    monkeypatch.setattr(client, "head_object", _raise_inspection_error)
+
+    with pytest.raises(StorageObjectStateUnknownError) as caught:
+        storage.publish_reserved_file(
+            StoragePublicationReservation(
+                key="exports/artifact.zip",
+                owner_token="worker-token",
+                revision='"reservation-etag"',
+            ),
+            path,
+            "application/zip",
+            checksum_sha256=checksum,
+        )
+
+    assert caught.value.__cause__ is inspection_error
 
 
 def test_s3_storage_cleanup_removes_reservation_before_late_publish(
