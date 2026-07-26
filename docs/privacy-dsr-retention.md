@@ -54,6 +54,11 @@ and DSR idempotency rows.
   until object deletion succeeds. They are non-downloadable and have second
   cleanup priority, before new READY expiry work. Missing objects are accepted
   as an idempotent cleanup success.
+- Export publishers first create a storage reservation and publish only by
+  replacing that exact revision. Cleanup conditionally removes the current
+  reservation or object revision before clearing the database key. A publisher
+  that resumes after committed cleanup therefore cannot recreate an untracked
+  object.
 - READY export artifacts transition to `expired` while keeping `storage_key` as
   a purge retry marker. This transition is independent of retry purge failures,
   so a temporary object-store outage must not keep unrelated expired READY
@@ -69,6 +74,10 @@ and DSR idempotency rows.
 - S3-compatible cleanup is key-level deletion. A versioning-enabled production
   bucket must permanently expire noncurrent versions and expired delete markers
   within the retention SLA, or use a dedicated unversioned bucket/prefix.
+- S3-compatible providers must support conditional `PutObject` with
+  `If-None-Match: *` and `If-Match`, conditional `DeleteObject` with `If-Match`,
+  and read-after-write `HeadObject` metadata. Cleanup and publication fail
+  closed when these preconditions are unavailable.
 - Erasure-cancelled artifacts use the same retry-marker model: object deletion
   is retried only after the row is already `cancelled` for subject erasure.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so

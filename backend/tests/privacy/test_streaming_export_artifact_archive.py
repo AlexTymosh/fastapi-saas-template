@@ -20,6 +20,7 @@ from app.privacy.models.data_subject_request import (
 from app.privacy.models.export_artifact import ExportArtifactStatus
 from app.privacy.services import export_artifacts as export_artifacts_module
 from app.privacy.services.export_artifacts import ExportArtifactService
+from app.privacy.storage.base import StorageObjectState
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -152,14 +153,29 @@ def test_prepared_export_archive_uses_temporary_file_then_cleans_up(
             persisted = await service.repo.get_by_id(artifact.id)
             assert persisted is not None
             assert persisted.storage_key == prepared.storage_key
+            assert persisted.filename == prepared.filename
+            assert persisted.content_type == prepared.content_type
+            assert persisted.size_bytes == prepared.size_bytes
+            assert persisted.checksum_sha256 == prepared.checksum_sha256
             await session.commit()
 
-            await service.validate_prepared_export_upload(
-                prepared=prepared,
+            reservation = service.reserve_prepared_export_archive(
+                prepared,
                 processing_token=token,
             )
-            await session.commit()
-            service.write_prepared_export_archive(prepared)
+            try:
+                await service.validate_prepared_export_upload(
+                    prepared=prepared,
+                    processing_token=token,
+                )
+                await session.commit()
+                service.publish_prepared_export_archive(prepared, reservation)
+            finally:
+                service.cancel_prepared_export_archive_reservation(
+                    prepared,
+                    reservation,
+                )
+                service.discard_prepared_export_archive(prepared)
 
             assert not prepared.archive_path.exists()
             assert service.storage.exists(prepared.storage_key)
@@ -168,16 +184,9 @@ def test_prepared_export_archive_uses_temporary_file_then_cleans_up(
 
 
 def test_stale_retry_reuses_committed_upload_intent(
-    monkeypatch: pytest.MonkeyPatch,
     migrated_session_factory,
     isolated_export_storage: Path,
 ) -> None:
-    monkeypatch.setattr(
-        export_artifacts_module,
-        "iter_subject_export_json_chunks",
-        _fake_streaming_export_chunks,
-    )
-
     async def _run() -> None:
         async with migrated_session_factory() as session:
             user, dsr = await _create_user_and_dsr(session)
@@ -196,14 +205,30 @@ def test_stale_retry_reuses_committed_upload_intent(
                 artifact_id=artifact_id,
                 processing_token=first_lease.processing_token,
             )
+            assert first_prepared.archive_path is not None
             first_storage_key = first_prepared.storage_key
+            first_checksum = first_prepared.checksum_sha256
             await session.commit()
-            await service.validate_prepared_export_upload(
-                prepared=first_prepared,
+            reservation = service.reserve_prepared_export_archive(
+                first_prepared,
                 processing_token=first_lease.processing_token,
             )
-            await session.commit()
-            service.write_prepared_export_archive(first_prepared)
+            try:
+                await service.validate_prepared_export_upload(
+                    prepared=first_prepared,
+                    processing_token=first_lease.processing_token,
+                )
+                await session.commit()
+                service.publish_prepared_export_archive(
+                    first_prepared,
+                    reservation,
+                )
+            finally:
+                service.cancel_prepared_export_archive_reservation(
+                    first_prepared,
+                    reservation,
+                )
+                service.discard_prepared_export_archive(first_prepared)
             assert service.storage.exists(first_storage_key)
 
             processing = await service.repo.get_by_id(artifact_id)
@@ -230,13 +255,18 @@ def test_stale_retry_reuses_committed_upload_intent(
                 processing_token=second_lease.processing_token,
             )
             assert second_prepared.storage_key == first_storage_key
+            assert second_prepared.checksum_sha256 == first_checksum
+            assert second_prepared.archive_path is None
             await session.commit()
             await service.validate_prepared_export_upload(
                 prepared=second_prepared,
                 processing_token=second_lease.processing_token,
             )
             await session.commit()
-            service.write_prepared_export_archive(second_prepared)
+            assert (
+                service.inspect_committed_export_archive(second_prepared)
+                == StorageObjectState.MATCHING
+            )
             ready = await service.mark_generated_export_artifact_ready(
                 artifact_id=artifact_id,
                 prepared=second_prepared,

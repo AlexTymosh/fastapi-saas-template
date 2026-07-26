@@ -137,13 +137,19 @@ class ExportArtifactRepository:
         return True
 
     async def get_processing_by_token(
-        self, *, artifact_id: UUID, processing_token: str
+        self,
+        *,
+        artifact_id: UUID,
+        processing_token: str,
+        for_update: bool = False,
     ) -> ExportArtifact | None:
         stmt = select(ExportArtifact).where(
             ExportArtifact.id == artifact_id,
             ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
             ExportArtifact.processing_token == processing_token,
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def ensure_processing_upload_intent(
@@ -152,6 +158,10 @@ class ExportArtifactRepository:
         artifact_id: UUID,
         processing_token: str,
         candidate_storage_key: str,
+        filename: str,
+        content_type: str,
+        size_bytes: int,
+        checksum_sha256: str,
         now: datetime,
     ) -> ExportArtifact | None:
         await self.session.execute(
@@ -164,7 +174,13 @@ class ExportArtifactRepository:
                 ExportArtifact.processing_lease_expires_at > now,
                 ExportArtifact.storage_key.is_(None),
             )
-            .values(storage_key=candidate_storage_key)
+            .values(
+                storage_key=candidate_storage_key,
+                filename=filename,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                checksum_sha256=checksum_sha256,
+            )
             .execution_options(synchronize_session=False)
         )
         await self.session.flush()
@@ -202,6 +218,38 @@ class ExportArtifactRepository:
             .execution_options(populate_existing=True)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def reset_processing_upload_intent(
+        self,
+        *,
+        artifact_id: UUID,
+        processing_token: str,
+        storage_backend: str,
+        storage_key: str,
+        now: datetime,
+    ) -> bool:
+        result = await self.session.execute(
+            update(ExportArtifact)
+            .where(
+                ExportArtifact.id == artifact_id,
+                ExportArtifact.status == ExportArtifactStatus.PROCESSING.value,
+                ExportArtifact.processing_token == processing_token,
+                ExportArtifact.processing_lease_expires_at.is_not(None),
+                ExportArtifact.processing_lease_expires_at > now,
+                ExportArtifact.storage_backend == storage_backend,
+                ExportArtifact.storage_key == storage_key,
+            )
+            .values(
+                storage_key=None,
+                filename=None,
+                content_type=None,
+                size_bytes=None,
+                checksum_sha256=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.flush()
+        return result.rowcount == 1
 
     async def recover_stale_processing(
         self, *, now: datetime, limit: int

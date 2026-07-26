@@ -8,7 +8,14 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from app.privacy.storage.base import StorageObjectConflictError, StoredObject
+from app.privacy.storage.base import (
+    StorageObjectConflictError,
+    StorageObjectState,
+    StoragePublicationReservation,
+    StoredObject,
+)
+
+_RESERVATION_OWNER_METADATA_KEY = "publication-reservation-owner"
 
 
 class S3CompatibleStorageAdapter:
@@ -89,19 +96,77 @@ class S3CompatibleStorageAdapter:
             size_bytes=path.stat().st_size,
         )
 
-    def put_file_if_absent(
+    def reserve_file_publication(
         self,
         key: str,
+        *,
+        owner_token: str,
+    ) -> StoragePublicationReservation:
+        """Create a conditional marker that the archive PUT must replace."""
+
+        object_key = self._object_key(key)
+        params: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": object_key,
+            "Body": b"",
+            "ContentLength": 0,
+            "ContentType": "application/octet-stream",
+            "Metadata": {_RESERVATION_OWNER_METADATA_KEY: owner_token},
+            "IfNoneMatch": "*",
+        }
+        self._add_server_side_encryption(params)
+
+        for _ in range(self.max_conditional_write_attempts):
+            try:
+                response = self.client.put_object(**params)
+            except ClientError as exc:
+                if self._is_precondition_failure(exc):
+                    existing = self._head_object(object_key)
+                    if existing is None:
+                        continue
+                    metadata = existing.get("Metadata") or {}
+                    revision = existing.get("ETag")
+                    if metadata.get(
+                        _RESERVATION_OWNER_METADATA_KEY
+                    ) == owner_token and isinstance(revision, str):
+                        return StoragePublicationReservation(
+                            key=key,
+                            owner_token=owner_token,
+                            revision=revision,
+                        )
+                    raise StorageObjectConflictError(
+                        "Storage key is reserved or published by another writer"
+                    ) from None
+                if self._is_conditional_request_conflict(exc):
+                    continue
+                raise
+            revision = response.get("ETag")
+            if not isinstance(revision, str):
+                raise StorageObjectConflictError(
+                    "Storage reservation response omitted its revision"
+                )
+            return StoragePublicationReservation(
+                key=key,
+                owner_token=owner_token,
+                revision=revision,
+            )
+
+        raise StorageObjectConflictError(
+            "Conditional storage reservation did not settle"
+        )
+
+    def publish_reserved_file(
+        self,
+        reservation: StoragePublicationReservation,
         path: Path,
         content_type: str,
         *,
         checksum_sha256: str,
     ) -> StoredObject:
-        """Publish with an S3 precondition that prevents lease-stale overwrite."""
+        """Replace only the exact reservation observed before DB validation."""
 
-        object_key = self._object_key(key)
+        object_key = self._object_key(reservation.key)
         size_bytes = path.stat().st_size
-        checksum_base64 = self._sha256_base64(checksum_sha256)
         params: dict[str, Any] = {
             "Bucket": self.bucket_name,
             "Key": object_key,
@@ -111,46 +176,78 @@ class S3CompatibleStorageAdapter:
                 "privacy-artifact": "true",
                 "checksum-sha256": checksum_sha256,
             },
-            "IfNoneMatch": "*",
-            "ChecksumSHA256": checksum_base64,
+            "IfMatch": reservation.revision,
+            "ChecksumSHA256": self._sha256_base64(checksum_sha256),
         }
         self._add_server_side_encryption(params)
-
-        for _ in range(self.max_conditional_write_attempts):
-            try:
-                with path.open("rb") as body:
-                    self.client.put_object(Body=body, **params)
-            except ClientError as exc:
-                if self._is_precondition_failure(exc):
-                    existing_matches = self._existing_file_matches(
-                        object_key=object_key,
-                        checksum_sha256=checksum_sha256,
-                        size_bytes=size_bytes,
-                    )
-                    if existing_matches is True:
-                        return StoredObject(
-                            key=key,
-                            content_type=content_type,
-                            size_bytes=size_bytes,
-                        )
-                    if existing_matches is False:
-                        raise StorageObjectConflictError(
-                            "Immutable storage key already contains different bytes"
-                        ) from None
-                    continue
-                if self._is_conditional_request_conflict(exc):
-                    continue
-                raise
-            else:
-                return StoredObject(
-                    key=key,
-                    content_type=content_type,
-                    size_bytes=size_bytes,
-                )
-
-        raise StorageObjectConflictError(
-            "Conditional storage publication did not settle"
+        try:
+            with path.open("rb") as body:
+                self.client.put_object(Body=body, **params)
+        except ClientError as exc:
+            if (
+                self._is_precondition_failure(exc)
+                or self._is_conditional_request_conflict(exc)
+                or self._is_missing_object(exc)
+            ):
+                raise StorageObjectConflictError(
+                    "Storage publication reservation is no longer active"
+                ) from None
+            raise
+        return StoredObject(
+            key=reservation.key,
+            content_type=content_type,
+            size_bytes=size_bytes,
         )
+
+    def cancel_file_publication(
+        self,
+        reservation: StoragePublicationReservation,
+    ) -> None:
+        try:
+            self.client.delete_object(
+                Bucket=self.bucket_name,
+                Key=self._object_key(reservation.key),
+                IfMatch=reservation.revision,
+            )
+        except ClientError as exc:
+            if (
+                self._is_precondition_failure(exc)
+                or self._is_conditional_request_conflict(exc)
+                or self._is_missing_object(exc)
+            ):
+                return
+            raise
+
+    def inspect_file(
+        self,
+        key: str,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState:
+        response = self._head_object(self._object_key(key))
+        if response is None:
+            return StorageObjectState.MISSING
+        metadata = response.get("Metadata") or {}
+        if metadata.get(_RESERVATION_OWNER_METADATA_KEY):
+            return StorageObjectState.RESERVED
+        if (
+            metadata.get("checksum-sha256") == checksum_sha256
+            and response.get("ContentLength") == size_bytes
+        ):
+            return StorageObjectState.MATCHING
+        return StorageObjectState.CONFLICT
+
+    def _head_object(self, object_key: str) -> dict[str, Any] | None:
+        try:
+            return self.client.head_object(
+                Bucket=self.bucket_name,
+                Key=object_key,
+            )
+        except ClientError as exc:
+            if self._is_missing_object(exc):
+                return None
+            raise
 
     def get_bytes(self, key: str) -> bytes:
         response = self.client.get_object(
@@ -161,20 +258,36 @@ class S3CompatibleStorageAdapter:
         return body.read()
 
     def exists(self, key: str) -> bool:
-        try:
-            self.client.head_object(
-                Bucket=self.bucket_name,
-                Key=self._object_key(key),
-            )
-        except ClientError as exc:
-            code = str(exc.response.get("Error", {}).get("Code", ""))
-            if code in {"404", "NoSuchKey", "NotFound"}:
-                return False
-            raise
-        return True
+        return self._head_object(self._object_key(key)) is not None
 
     def delete(self, key: str) -> None:
-        self.client.delete_object(Bucket=self.bucket_name, Key=self._object_key(key))
+        object_key = self._object_key(key)
+        for _ in range(self.max_conditional_write_attempts):
+            existing = self._head_object(object_key)
+            if existing is None:
+                return
+            revision = existing.get("ETag")
+            if not isinstance(revision, str):
+                raise StorageObjectConflictError(
+                    "Stored object metadata omitted its revision"
+                )
+            try:
+                self.client.delete_object(
+                    Bucket=self.bucket_name,
+                    Key=object_key,
+                    IfMatch=revision,
+                )
+            except ClientError as exc:
+                if self._is_missing_object(exc):
+                    return
+                if self._is_precondition_failure(
+                    exc
+                ) or self._is_conditional_request_conflict(exc):
+                    continue
+                raise
+            return
+
+        raise StorageObjectConflictError("Conditional storage deletion did not settle")
 
     def generate_download_url(self, key: str, expires_in_seconds: int) -> str:
         return self.client.generate_presigned_url(
@@ -194,29 +307,6 @@ class S3CompatibleStorageAdapter:
             params["ServerSideEncryption"] = self.server_side_encryption
         if self.sse_kms_key_id is not None:
             params["SSEKMSKeyId"] = self.sse_kms_key_id
-
-    def _existing_file_matches(
-        self,
-        *,
-        object_key: str,
-        checksum_sha256: str,
-        size_bytes: int,
-    ) -> bool | None:
-        try:
-            response = self.client.head_object(
-                Bucket=self.bucket_name,
-                Key=object_key,
-            )
-        except ClientError as exc:
-            if self._is_missing_object(exc):
-                return None
-            raise
-
-        metadata = response.get("Metadata") or {}
-        return (
-            metadata.get("checksum-sha256") == checksum_sha256
-            and response.get("ContentLength") == size_bytes
-        )
 
     @staticmethod
     def _sha256_base64(checksum_sha256: str) -> str:

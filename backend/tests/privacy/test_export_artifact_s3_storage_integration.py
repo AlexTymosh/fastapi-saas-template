@@ -235,37 +235,56 @@ def test_s3_compatible_storage_conditional_publish_does_not_overwrite(
     adapter = minio_export_storage.adapter
     storage_key = f"exports/{uuid4()}/archive.zip"
     first_path = tmp_path / "first.zip"
-    same_path = tmp_path / "same.zip"
-    different_path = tmp_path / "different.zip"
     first_payload = b"first minio privacy export"
-    different_payload = b"different minio privacy export"
     first_path.write_bytes(first_payload)
-    same_path.write_bytes(first_payload)
-    different_path.write_bytes(different_payload)
     first_checksum = hashlib.sha256(first_payload).hexdigest()
 
-    adapter.put_file_if_absent(
+    reservation = adapter.reserve_file_publication(
         storage_key,
-        first_path,
-        "application/zip",
-        checksum_sha256=first_checksum,
+        owner_token="first-worker",
     )
-    adapter.put_file_if_absent(
-        storage_key,
-        same_path,
+    adapter.publish_reserved_file(
+        reservation,
+        first_path,
         "application/zip",
         checksum_sha256=first_checksum,
     )
 
     with pytest.raises(StorageObjectConflictError):
-        adapter.put_file_if_absent(
+        adapter.reserve_file_publication(
             storage_key,
-            different_path,
-            "application/zip",
-            checksum_sha256=hashlib.sha256(different_payload).hexdigest(),
+            owner_token="second-worker",
         )
 
     assert adapter.get_bytes(storage_key) == first_payload
+
+
+def test_s3_compatible_cleanup_fences_reserved_publication(
+    minio_export_storage: MinioExportStorage,
+    tmp_path,
+) -> None:
+    adapter = minio_export_storage.adapter
+    storage_key = f"exports/{uuid4()}/archive.zip"
+    archive_path = tmp_path / "archive.zip"
+    payload = b"late minio privacy export"
+    archive_path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    reservation = adapter.reserve_file_publication(
+        storage_key,
+        owner_token="stale-worker",
+    )
+
+    adapter.delete(storage_key)
+
+    with pytest.raises(StorageObjectConflictError):
+        adapter.publish_reserved_file(
+            reservation,
+            archive_path,
+            "application/zip",
+            checksum_sha256=checksum,
+        )
+
+    assert not adapter.exists(storage_key)
 
 
 def test_export_artifact_retention_expires_before_purging_minio_object(

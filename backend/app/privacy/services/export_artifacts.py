@@ -38,7 +38,11 @@ from app.privacy.models.export_artifact import (
 )
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
-from app.privacy.storage.base import StorageAdapter
+from app.privacy.storage.base import (
+    StorageAdapter,
+    StorageObjectState,
+    StoragePublicationReservation,
+)
 from app.privacy.storage.local import LocalStorageAdapter
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 
@@ -115,7 +119,7 @@ class PreparedExportArchive:
     storage_key: str
     filename: str
     content_type: str
-    archive_path: Path
+    archive_path: Path | None
     size_bytes: int
     checksum_sha256: str
 
@@ -599,9 +603,14 @@ class ExportArtifactService:
             or not self._has_export_dsr_participant_links(dsr)
         ):
             raise ValueError("dsr_not_export_eligible")
+        if artifact.storage_key is not None:
+            return self._prepared_from_committed_upload_intent(artifact)
 
         now = datetime.now(UTC)
         archive_path = self._temporary_archive_path()
+        filename = f"privacy-export-{artifact.id}.zip"
+        content_type = "application/zip"
+        candidate_storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
         try:
             await self._write_export_archive_file(
                 archive_path,
@@ -623,19 +632,33 @@ class ExportArtifactService:
             intent = await self.repo.ensure_processing_upload_intent(
                 artifact_id=artifact.id,
                 processing_token=processing_token,
-                candidate_storage_key=f"exports/{artifact.id}/{uuid4()}.zip",
+                candidate_storage_key=candidate_storage_key,
+                filename=filename,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                checksum_sha256=checksum_sha256,
                 now=datetime.now(UTC),
             )
             if intent is None or intent.storage_key is None:
                 raise ConflictError(
                     detail="Export artifact processing lease is no longer active"
                 )
+            committed = self._prepared_from_committed_upload_intent(intent)
+            if (
+                committed.storage_key != candidate_storage_key
+                or committed.filename != filename
+                or committed.content_type != content_type
+                or committed.size_bytes != size_bytes
+                or committed.checksum_sha256 != checksum_sha256
+            ):
+                _unlink_file(archive_path)
+                return committed
             return PreparedExportArchive(
                 artifact_id=artifact.id,
                 storage_backend=intent.storage_backend,
                 storage_key=intent.storage_key,
-                filename=f"privacy-export-{artifact.id}.zip",
-                content_type="application/zip",
+                filename=filename,
+                content_type=content_type,
                 archive_path=archive_path,
                 size_bytes=size_bytes,
                 checksum_sha256=checksum_sha256,
@@ -643,6 +666,31 @@ class ExportArtifactService:
         except Exception:
             _unlink_file(archive_path)
             raise
+
+    @staticmethod
+    def _prepared_from_committed_upload_intent(
+        artifact: ExportArtifact,
+    ) -> PreparedExportArchive:
+        if (
+            artifact.storage_key is None
+            or artifact.filename is None
+            or artifact.content_type is None
+            or artifact.size_bytes is None
+            or artifact.checksum_sha256 is None
+        ):
+            raise ConflictError(
+                detail="Export artifact upload intent metadata is incomplete"
+            )
+        return PreparedExportArchive(
+            artifact_id=artifact.id,
+            storage_backend=artifact.storage_backend,
+            storage_key=artifact.storage_key,
+            filename=artifact.filename,
+            content_type=artifact.content_type,
+            archive_path=None,
+            size_bytes=artifact.size_bytes,
+            checksum_sha256=artifact.checksum_sha256,
+        )
 
     def _temporary_archive_path(self) -> Path:
         temporary_dir = Path(self.settings.privacy_exports.local_storage_path).resolve()
@@ -695,24 +743,110 @@ class ExportArtifactService:
             raise ConflictError(
                 detail="Export artifact upload intent is no longer active"
             )
+        if not self._prepared_metadata_matches_artifact(
+            prepared=prepared,
+            artifact=artifact,
+        ):
+            raise ConflictError(
+                detail="Export artifact upload intent metadata no longer matches"
+            )
 
     @staticmethod
     def discard_prepared_export_archive(prepared: PreparedExportArchive) -> None:
-        _unlink_file(prepared.archive_path)
-
-    def write_prepared_export_archive(self, prepared: PreparedExportArchive) -> None:
-        """Publish without allowing a lease-stale writer to replace the key."""
-
-        storage = self._storage_for_backend(prepared.storage_backend)
-        try:
-            storage.put_file_if_absent(
-                prepared.storage_key,
-                prepared.archive_path,
-                prepared.content_type,
-                checksum_sha256=prepared.checksum_sha256,
-            )
-        finally:
+        if prepared.archive_path is not None:
             _unlink_file(prepared.archive_path)
+
+    def inspect_committed_export_archive(
+        self,
+        prepared: PreparedExportArchive,
+    ) -> StorageObjectState:
+        storage = self._storage_for_backend(prepared.storage_backend)
+        return storage.inspect_file(
+            prepared.storage_key,
+            checksum_sha256=prepared.checksum_sha256,
+            size_bytes=prepared.size_bytes,
+        )
+
+    def reserve_prepared_export_archive(
+        self,
+        prepared: PreparedExportArchive,
+        *,
+        processing_token: str,
+    ) -> StoragePublicationReservation:
+        if prepared.archive_path is None:
+            raise ConflictError(
+                detail="Recovered export archive does not require publication"
+            )
+        storage = self._storage_for_backend(prepared.storage_backend)
+        return storage.reserve_file_publication(
+            prepared.storage_key,
+            owner_token=processing_token,
+        )
+
+    def publish_prepared_export_archive(
+        self,
+        prepared: PreparedExportArchive,
+        reservation: StoragePublicationReservation,
+    ) -> None:
+        if prepared.archive_path is None:
+            raise ConflictError(
+                detail="Recovered export archive does not require publication"
+            )
+        if reservation.key != prepared.storage_key:
+            raise ConflictError(
+                detail="Export archive storage reservation no longer matches"
+            )
+        storage = self._storage_for_backend(prepared.storage_backend)
+        storage.publish_reserved_file(
+            reservation,
+            prepared.archive_path,
+            prepared.content_type,
+            checksum_sha256=prepared.checksum_sha256,
+        )
+
+    def cancel_prepared_export_archive_reservation(
+        self,
+        prepared: PreparedExportArchive,
+        reservation: StoragePublicationReservation,
+    ) -> None:
+        storage = self._storage_for_backend(prepared.storage_backend)
+        storage.cancel_file_publication(reservation)
+
+    def delete_prepared_export_storage_object(
+        self,
+        prepared: PreparedExportArchive,
+    ) -> None:
+        storage = self._storage_for_backend(prepared.storage_backend)
+        storage.delete(prepared.storage_key)
+
+    async def reset_prepared_export_upload_intent(
+        self,
+        *,
+        prepared: PreparedExportArchive,
+        processing_token: str,
+    ) -> bool:
+        return await self.repo.reset_processing_upload_intent(
+            artifact_id=prepared.artifact_id,
+            processing_token=processing_token,
+            storage_backend=prepared.storage_backend,
+            storage_key=prepared.storage_key,
+            now=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def _prepared_metadata_matches_artifact(
+        *,
+        prepared: PreparedExportArchive,
+        artifact: ExportArtifact,
+    ) -> bool:
+        return (
+            artifact.storage_backend == prepared.storage_backend
+            and artifact.storage_key == prepared.storage_key
+            and artifact.filename == prepared.filename
+            and artifact.content_type == prepared.content_type
+            and artifact.size_bytes == prepared.size_bytes
+            and artifact.checksum_sha256 == prepared.checksum_sha256
+        )
 
     async def mark_generated_export_artifact_ready(
         self,
@@ -728,14 +862,15 @@ class ExportArtifactService:
             artifact = await self.repo.get_processing_by_token(
                 artifact_id=artifact_id,
                 processing_token=processing_token,
+                for_update=True,
             )
         if artifact is None:
             raise ConflictError(
                 detail="Export artifact processing lease is no longer active"
             )
-        if (
-            artifact.storage_backend != prepared.storage_backend
-            or artifact.storage_key != prepared.storage_key
+        if not self._prepared_metadata_matches_artifact(
+            prepared=prepared,
+            artifact=artifact,
         ):
             raise ConflictError(
                 detail="Export artifact upload intent no longer matches"
@@ -772,6 +907,7 @@ class ExportArtifactService:
             artifact = await self.repo.get_processing_by_token(
                 artifact_id=artifact_id,
                 processing_token=processing_token,
+                for_update=True,
             )
         if artifact is None:
             return None

@@ -10,7 +10,11 @@ from botocore.config import Config
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
-from app.privacy.storage.base import StorageObjectConflictError
+from app.privacy.storage.base import (
+    StorageObjectConflictError,
+    StorageObjectState,
+    StoragePublicationReservation,
+)
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
@@ -67,9 +71,18 @@ def test_s3_storage_put_get_exists_delete_and_presigned_url(
             {"Bucket": "privacy-exports", "Key": object_key},
         )
         stubber.add_response(
+            "head_object",
+            {"ContentLength": 7, "ETag": '"payload-etag"'},
+            {"Bucket": "privacy-exports", "Key": object_key},
+        )
+        stubber.add_response(
             "delete_object",
             {},
-            {"Bucket": "privacy-exports", "Key": object_key},
+            {
+                "Bucket": "privacy-exports",
+                "Key": object_key,
+                "IfMatch": '"payload-etag"',
+            },
         )
 
         stored = storage.put_bytes(key, b"payload", "application/zip")
@@ -125,7 +138,7 @@ def test_s3_storage_rejects_unsafe_storage_keys(
             storage.put_bytes(key, b"x", "application/octet-stream")
 
 
-def test_s3_storage_immutable_publish_uses_conditional_put(
+def test_s3_storage_reserved_publish_uses_compare_and_swap(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -138,7 +151,22 @@ def test_s3_storage_immutable_publish_uses_conditional_put(
     checksum_base64 = base64.b64encode(bytes.fromhex(checksum)).decode("ascii")
     object_key = "privacy-exports/exports/artifact.zip"
 
+    reservation_put = {
+        "Bucket": "privacy-exports",
+        "Key": object_key,
+        "Body": b"",
+        "ContentLength": 0,
+        "ContentType": "application/octet-stream",
+        "Metadata": {"publication-reservation-owner": "worker-token"},
+        "IfNoneMatch": "*",
+        "ServerSideEncryption": "AES256",
+    }
     with Stubber(client) as stubber:
+        stubber.add_response(
+            "put_object",
+            {"ETag": '"reservation-etag"'},
+            reservation_put,
+        )
         stubber.add_response(
             "put_object",
             {"ETag": "etag"},
@@ -152,14 +180,18 @@ def test_s3_storage_immutable_publish_uses_conditional_put(
                     "privacy-artifact": "true",
                     "checksum-sha256": checksum,
                 },
-                "IfNoneMatch": "*",
+                "IfMatch": '"reservation-etag"',
                 "ChecksumSHA256": checksum_base64,
                 "ServerSideEncryption": "AES256",
             },
         )
 
-        stored = storage.put_file_if_absent(
+        reservation = storage.reserve_file_publication(
             "exports/artifact.zip",
+            owner_token="worker-token",
+        )
+        stored = storage.publish_reserved_file(
+            reservation,
             path,
             "application/zip",
             checksum_sha256=checksum,
@@ -168,7 +200,7 @@ def test_s3_storage_immutable_publish_uses_conditional_put(
     assert stored.size_bytes == len(payload)
 
 
-def test_s3_storage_immutable_publish_reuses_only_matching_object(
+def test_s3_storage_inspects_only_matching_committed_object(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -180,72 +212,46 @@ def test_s3_storage_immutable_publish_reuses_only_matching_object(
     checksum = hashlib.sha256(payload).hexdigest()
     object_key = "privacy-exports/exports/artifact.zip"
 
-    expected_put = {
-        "Bucket": "privacy-exports",
-        "Key": object_key,
-        "Body": ANY,
-        "ContentLength": len(payload),
-        "ContentType": "application/zip",
-        "Metadata": {
-            "privacy-artifact": "true",
-            "checksum-sha256": checksum,
-        },
-        "IfNoneMatch": "*",
-        "ChecksumSHA256": base64.b64encode(bytes.fromhex(checksum)).decode("ascii"),
-        "ServerSideEncryption": "AES256",
-    }
-
     with Stubber(client) as stubber:
-        stubber.add_client_error(
-            "put_object",
-            service_error_code="PreconditionFailed",
-            http_status_code=412,
-            expected_params=expected_put,
-        )
         stubber.add_response(
             "head_object",
             {
                 "ContentLength": len(payload),
                 "Metadata": {"checksum-sha256": checksum},
+                "ETag": '"archive-etag"',
             },
             {"Bucket": "privacy-exports", "Key": object_key},
         )
 
-        stored = storage.put_file_if_absent(
+        state = storage.inspect_file(
             "exports/artifact.zip",
-            path,
-            "application/zip",
             checksum_sha256=checksum,
+            size_bytes=len(payload),
         )
 
-    assert stored.size_bytes == len(payload)
+    assert state == StorageObjectState.MATCHING
 
     with Stubber(client) as stubber:
-        stubber.add_client_error(
-            "put_object",
-            service_error_code="PreconditionFailed",
-            http_status_code=412,
-            expected_params=expected_put,
-        )
         stubber.add_response(
             "head_object",
             {
                 "ContentLength": len(payload),
                 "Metadata": {"checksum-sha256": "0" * 64},
+                "ETag": '"archive-etag"',
             },
             {"Bucket": "privacy-exports", "Key": object_key},
         )
 
-        with pytest.raises(StorageObjectConflictError):
-            storage.put_file_if_absent(
-                "exports/artifact.zip",
-                path,
-                "application/zip",
-                checksum_sha256=checksum,
-            )
+        state = storage.inspect_file(
+            "exports/artifact.zip",
+            checksum_sha256=checksum,
+            size_bytes=len(payload),
+        )
+
+    assert state == StorageObjectState.CONFLICT
 
 
-def test_s3_storage_retries_conditional_request_conflict(
+def test_s3_storage_does_not_retry_publish_after_cleanup_conflict(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -255,7 +261,7 @@ def test_s3_storage_retries_conditional_request_conflict(
     payload = b"privacy export archive"
     path.write_bytes(payload)
     checksum = hashlib.sha256(payload).hexdigest()
-    expected_put = {
+    expected_publish = {
         "Bucket": "privacy-exports",
         "Key": "privacy-exports/exports/artifact.zip",
         "Body": ANY,
@@ -265,29 +271,96 @@ def test_s3_storage_retries_conditional_request_conflict(
             "privacy-artifact": "true",
             "checksum-sha256": checksum,
         },
-        "IfNoneMatch": "*",
+        "IfMatch": '"reservation-etag"',
         "ChecksumSHA256": base64.b64encode(bytes.fromhex(checksum)).decode("ascii"),
         "ServerSideEncryption": "AES256",
     }
-
     with Stubber(client) as stubber:
         stubber.add_client_error(
             "put_object",
             service_error_code="ConditionalRequestConflict",
             http_status_code=409,
-            expected_params=expected_put,
+            expected_params=expected_publish,
+        )
+
+        with pytest.raises(StorageObjectConflictError):
+            storage.publish_reserved_file(
+                StoragePublicationReservation(
+                    key="exports/artifact.zip",
+                    owner_token="worker-token",
+                    revision='"reservation-etag"',
+                ),
+                path,
+                "application/zip",
+                checksum_sha256=checksum,
+            )
+
+
+def test_s3_storage_cleanup_removes_reservation_before_late_publish(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    path = tmp_path / "archive.zip"
+    payload = b"privacy export archive"
+    path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    object_key = "privacy-exports/exports/artifact.zip"
+    reservation = StoragePublicationReservation(
+        key="exports/artifact.zip",
+        owner_token="worker-token",
+        revision='"reservation-etag"',
+    )
+
+    with Stubber(client) as stubber:
+        stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": 0,
+                "Metadata": {
+                    "publication-reservation-owner": "worker-token",
+                },
+                "ETag": '"reservation-etag"',
+            },
+            {"Bucket": "privacy-exports", "Key": object_key},
         )
         stubber.add_response(
+            "delete_object",
+            {},
+            {
+                "Bucket": "privacy-exports",
+                "Key": object_key,
+                "IfMatch": '"reservation-etag"',
+            },
+        )
+        storage.delete("exports/artifact.zip")
+
+        stubber.add_client_error(
             "put_object",
-            {"ETag": "etag"},
-            expected_put,
+            service_error_code="PreconditionFailed",
+            http_status_code=412,
+            expected_params={
+                "Bucket": "privacy-exports",
+                "Key": object_key,
+                "Body": ANY,
+                "ContentLength": len(payload),
+                "ContentType": "application/zip",
+                "Metadata": {
+                    "privacy-artifact": "true",
+                    "checksum-sha256": checksum,
+                },
+                "IfMatch": '"reservation-etag"',
+                "ChecksumSHA256": base64.b64encode(bytes.fromhex(checksum)).decode(
+                    "ascii"
+                ),
+                "ServerSideEncryption": "AES256",
+            },
         )
-
-        stored = storage.put_file_if_absent(
-            "exports/artifact.zip",
-            path,
-            "application/zip",
-            checksum_sha256=checksum,
-        )
-
-    assert stored.size_bytes == len(payload)
+        with pytest.raises(StorageObjectConflictError):
+            storage.publish_reserved_file(
+                reservation,
+                path,
+                "application/zip",
+                checksum_sha256=checksum,
+            )

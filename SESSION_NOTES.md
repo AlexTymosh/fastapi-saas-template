@@ -103,40 +103,45 @@ and CI
 ### Implementation
 
 1. Keep archive preparation, upload, and ready transition as distinct phases.
-2. Before `put_file()`:
+2. Before storage publication:
    - validate the active processing lease;
    - choose a stable object key for the artifact;
-   - persist `storage_backend` and `storage_key`;
+   - persist the backend, key, filename, content type, size and checksum;
    - commit that upload intent.
-3. Reuse an existing recorded key on stale recovery or retry. Never replace a
-   recorded key with a new random key unless the old object has been durably
-   scheduled for purge.
-4. Keep `processing` and `failed` artifacts non-downloadable. Download URL
+3. On stale recovery, inspect the recorded key against its committed size and
+   checksum. Finalise matching stored bytes without regenerating the archive.
+4. If the committed object is missing, reserved or conflicting, conditionally
+   fence and delete that key before resetting the exact upload intent and
+   generating a new archive under a new key.
+5. Keep `processing` and `failed` artifacts non-downloadable. Download URL
    generation must continue to require `ready`.
-5. If upload or ready/audit persistence fails:
+6. If upload or ready/audit persistence fails:
    - first commit the artifact as `failed` while retaining `storage_key`;
    - then attempt object deletion outside the transaction;
    - clear storage metadata only in a later transaction after deletion
      succeeds;
    - retain the key when deletion fails.
-6. Extend export retention to select failed artifacts that still have a
+7. Extend export retention to select failed artifacts that still have a
    storage key. Deletion must be idempotent when the object does not exist.
-7. Preserve cleanup priority:
+8. Preserve cleanup priority:
    - subject-erasure cancellation retry;
    - failed generation/upload retry;
    - READY to EXPIRED transition;
    - previously expired object retry.
-8. Preserve the existing rule that a rollback cannot restore a downloadable
+9. Preserve the existing rule that a rollback cannot restore a downloadable
    row whose object has already been deleted.
-9. A failed purge must not prevent unrelated READY artifacts from becoming
+10. A failed purge must not prevent unrelated READY artifacts from becoming
    non-downloadable. Preserve the existing rule that a storage error is raised
    only when no useful retention work can complete.
 
 ### Acceptance criteria
 
-- Every attempted external object key is recorded before external I/O.
+- Every attempted external object key and archive identity are recorded before
+  publication I/O.
 - A crash after upload cannot create an object unknown to the database.
-- Stale recovery reuses the recorded key and cannot create a second orphan.
+- Stale recovery finalises only bytes matching the committed checksum and size.
+- Committed cleanup invalidates the reservation needed by an in-flight
+  publisher before the database key can be cleared.
 - Ready/audit transaction failure leaves a non-downloadable, purgeable row.
 - Cleanup failure leaves the retry key intact.
 - One failing cleanup does not starve unrelated expiry work.
@@ -147,6 +152,8 @@ and CI
 
 - Upload succeeds and ready/audit persistence fails.
 - Worker stops after upload, then stale recovery and retry run.
+- Recovery uses a real timestamped archive and does not regenerate it.
+- Erasure cleanup commits before an old publisher resumes.
 - Upload fails after the intent is committed.
 - Immediate cleanup fails, then retention succeeds.
 - Retry uses the same key.
@@ -164,34 +171,38 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
 
 ### Implementation result
 
-- `storage_key` is now committed before `put_file()` and reused after stale
-  recovery.
-- The worker revalidates the processing token, lease, backend, and key before
-  external I/O.
-- Local and S3-compatible publication is immutable for the full write. A stale
-  lease cannot interleave with or replace bytes published at the committed key.
-- Matching bytes at an existing key are an idempotent retry. Different bytes
-  fail closed and enter the existing non-downloadable cleanup workflow.
+- `storage_key` and the complete archive identity are committed before
+  publication.
+- Recovery finalises an existing object only when its checksum and size match
+  the committed identity; it never regenerates bytes for that intent.
+- The worker creates a storage reservation, then revalidates the processing
+  token, lease, backend, key and archive identity before publication.
+- Local and S3-compatible publication replaces only the exact reservation
+  revision. A stale lease cannot interleave with or replace committed bytes.
+- Cleanup conditionally removes the current reservation or object revision, so
+  an in-flight publisher cannot recreate an object after the key is cleared.
+- Missing, reserved or conflicting recovery objects are fenced before the
+  active lease resets the old intent and generates a new key.
 - Upload and ready/audit failures first commit a non-downloadable `failed` row.
 - Immediate cleanup runs outside a database transaction; failed cleanup keeps
   the key for retention.
 - Retention cleanup now prioritises subject-erasure retries, failed-upload
   retries, READY expiry, and previously expired retries.
 - No migration, table, or dependency was added.
-- S3-compatible deployments must support conditional `PutObject`,
-  `If-None-Match: *`, SHA-256 validation and read-after-write object metadata.
+- S3-compatible deployments must support conditional `PutObject` with
+  `If-None-Match: *` and `If-Match`, conditional `DeleteObject` with `If-Match`,
+  SHA-256 validation and read-after-write object metadata.
 - S3 versioning/noncurrent-version deletion is an explicit production
   deployment requirement in the export and retention documentation.
 
 Verification completed in the implementation environment:
 
 - Ruff format and lint: passed for the complete backend.
-- Focused export/worker/retention/storage suite: 99 passed.
-- Lease-turnover and adapter slice: 23 passed.
-- Privacy suite without container/external-DB tests: 440 passed.
+- Focused export/worker/retention/storage/erasure suite: 96 passed.
+- Privacy suite without container/external-DB tests: 441 passed.
 - Contract suite: 111 passed.
-- Complete lightweight backend suite: 1324 passed.
-- Three MinIO container tests could not start because the environment has no
+- Complete lightweight backend suite: 1327 passed.
+- Four MinIO container tests could not start because the environment has no
   Docker socket; run them locally and in CI before merge.
 
 ### Separate follow-up discovered during impact analysis

@@ -9,6 +9,7 @@ from app.privacy.services.export_artifacts import (
     ExportArtifactService,
     PreparedExportArchive,
 )
+from app.privacy.storage.base import StorageObjectState
 
 
 async def generate_export_artifact_in_committed_phases(
@@ -35,18 +36,28 @@ async def generate_export_artifact_in_committed_phases(
     await session.commit()
 
     prepared: PreparedExportArchive | None = None
+    reservation = None
     try:
         prepared = await service.prepare_export_archive(
             artifact_id=artifact_id,
             processing_token=token,
         )
         await session.commit()
-        await service.validate_prepared_export_upload(
-            prepared=prepared,
-            processing_token=token,
-        )
-        await session.commit()
-        service.write_prepared_export_archive(prepared)
+        if prepared.archive_path is None:
+            state = service.inspect_committed_export_archive(prepared)
+            if state != StorageObjectState.MATCHING:
+                raise RuntimeError("committed_export_archive_unavailable")
+        else:
+            reservation = service.reserve_prepared_export_archive(
+                prepared,
+                processing_token=token,
+            )
+            await service.validate_prepared_export_upload(
+                prepared=prepared,
+                processing_token=token,
+            )
+            await session.commit()
+            service.publish_prepared_export_archive(prepared, reservation)
         ready = await service.mark_generated_export_artifact_ready(
             artifact_id=artifact_id,
             prepared=prepared,
@@ -57,8 +68,6 @@ async def generate_export_artifact_in_committed_phases(
         return ready
     except Exception as exc:
         await session.rollback()
-        if prepared is not None:
-            service.discard_prepared_export_archive(prepared)
         failed = await service.mark_export_artifact_failed(
             artifact_id=artifact_id,
             exc=exc,
@@ -79,3 +88,11 @@ async def generate_export_artifact_in_committed_phases(
         await service.clear_failed_export_storage_metadata(cleanup)
         await session.commit()
         return failed
+    finally:
+        if prepared is not None:
+            if reservation is not None:
+                service.cancel_prepared_export_archive_reservation(
+                    prepared,
+                    reservation,
+                )
+            service.discard_prepared_export_archive(prepared)

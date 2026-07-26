@@ -4,7 +4,10 @@ import hashlib
 
 import pytest
 
-from app.privacy.storage.base import StorageObjectConflictError
+from app.privacy.storage.base import (
+    StorageObjectConflictError,
+    StorageObjectState,
+)
 from app.privacy.storage.local import LocalStorageAdapter
 
 
@@ -51,34 +54,59 @@ def test_local_storage_immutable_publish_never_replaces_existing_bytes(
     storage = LocalStorageAdapter(str(tmp_path / "storage"), "test-secret")
     key = "exports/artifact/archive.zip"
     first_path = tmp_path / "first.zip"
-    same_path = tmp_path / "same.zip"
-    different_path = tmp_path / "different.zip"
     first_payload = b"first archive"
-    different_payload = b"different archive"
     first_path.write_bytes(first_payload)
-    same_path.write_bytes(first_payload)
-    different_path.write_bytes(different_payload)
     first_checksum = hashlib.sha256(first_payload).hexdigest()
 
-    storage.put_file_if_absent(
+    reservation = storage.reserve_file_publication(
         key,
+        owner_token="first-owner",
+    )
+    storage.publish_reserved_file(
+        reservation,
         first_path,
         "application/zip",
         checksum_sha256=first_checksum,
     )
-    storage.put_file_if_absent(
-        key,
-        same_path,
-        "application/zip",
-        checksum_sha256=first_checksum,
-    )
+    storage.cancel_file_publication(reservation)
 
     with pytest.raises(StorageObjectConflictError):
-        storage.put_file_if_absent(
+        storage.reserve_file_publication(
             key,
-            different_path,
-            "application/zip",
-            checksum_sha256=hashlib.sha256(different_payload).hexdigest(),
+            owner_token="different-owner",
         )
 
+    assert (
+        storage.inspect_file(
+            key,
+            checksum_sha256=first_checksum,
+            size_bytes=len(first_payload),
+        )
+        == StorageObjectState.MATCHING
+    )
     assert storage.get_bytes(key) == first_payload
+
+
+def test_local_storage_cleanup_fences_reserved_publication(tmp_path) -> None:
+    storage = LocalStorageAdapter(str(tmp_path / "storage"), "test-secret")
+    key = "exports/artifact/archive.zip"
+    archive_path = tmp_path / "archive.zip"
+    payload = b"privacy export archive"
+    archive_path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    reservation = storage.reserve_file_publication(
+        key,
+        owner_token="stale-owner",
+    )
+
+    storage.delete(key)
+
+    with pytest.raises(StorageObjectConflictError):
+        storage.publish_reserved_file(
+            reservation,
+            archive_path,
+            "application/zip",
+            checksum_sha256=checksum,
+        )
+
+    assert not storage.exists(key)

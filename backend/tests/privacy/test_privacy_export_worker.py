@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
@@ -16,6 +15,9 @@ from app.audit.models.audit_event import AuditAction
 from app.commands import privacy_export_worker as worker_module
 from app.commands.privacy_export_worker import run_worker
 from app.core.config.settings import get_settings
+from app.privacy.erasures.remaining_inventory import (
+    minimise_export_artifacts_for_approved_erase_request,
+)
 from app.privacy.models.data_subject_request import DataSubjectRequest
 from app.privacy.models.export_artifact import (
     ExportArtifact,
@@ -23,11 +25,7 @@ from app.privacy.models.export_artifact import (
     ExportArtifactStatus,
     ExportArtifactStorageBackend,
 )
-from app.privacy.services.export_artifacts import (
-    ExportArtifactService,
-    PreparedExportArchive,
-)
-from app.privacy.storage.base import StorageObjectConflictError
+from app.privacy.services.export_artifacts import ExportArtifactService
 from app.privacy.storage.local import LocalStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -191,35 +189,49 @@ def test_worker_commits_upload_intent_before_storage_write(
 
     database_path = make_url(migrated_database_url).database
     assert database_path is not None
-    observed_rows: list[tuple[str, str]] = []
-    original_put_file = LocalStorageAdapter.put_file_if_absent
+    observed_rows: list[tuple[str, str, str, int]] = []
+    original_publish = LocalStorageAdapter.publish_reserved_file
 
-    def _put_file(self, key, path, content_type, *, checksum_sha256):
+    def _publish_file(
+        self,
+        reservation,
+        path,
+        content_type,
+        *,
+        checksum_sha256,
+    ):
         with sqlite3.connect(database_path) as connection:
             row = connection.execute(
                 (
-                    "SELECT status, storage_key FROM export_artifacts "
+                    "SELECT status, storage_key, checksum_sha256, size_bytes "
+                    "FROM export_artifacts "
                     "WHERE storage_key = ?"
                 ),
-                (key,),
+                (reservation.key,),
             ).fetchone()
         assert row is not None
-        observed_rows.append((row[0], row[1]))
-        return original_put_file(
+        observed_rows.append((row[0], row[1], row[2], row[3]))
+        return original_publish(
             self,
-            key,
+            reservation,
             path,
             content_type,
             checksum_sha256=checksum_sha256,
         )
 
-    monkeypatch.setattr(LocalStorageAdapter, "put_file_if_absent", _put_file)
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "publish_reserved_file",
+        _publish_file,
+    )
 
     exit_code = run_async(run_worker(batch_size=1, dry_run=False, once=True))
 
     assert exit_code == 0
     assert len(observed_rows) == 1
     assert observed_rows[0][0] == ExportArtifactStatus.PROCESSING.value
+    assert observed_rows[0][2]
+    assert observed_rows[0][3] > 0
 
     async def _load_failed_artifact():
         async with migrated_session_factory() as session:
@@ -250,34 +262,26 @@ def test_worker_fences_storage_write_after_lease_turnover(
         lambda: migrated_session_factory,
     )
     artifact_id = run_async(_provision_queued_artifact(migrated_session_factory))
-    storage_key = f"exports/{artifact_id}/fenced.zip"
-    stale_payload = b"stale worker archive"
-    current_payload = b"current worker archive"
-    stale_path = tmp_path / "stale-worker.tmp"
-    current_path = tmp_path / "current-worker.tmp"
-    stale_path.write_bytes(stale_payload)
-    current_path.write_bytes(current_payload)
-    stale_checksum = hashlib.sha256(stale_payload).hexdigest()
-    current_checksum = hashlib.sha256(current_payload).hexdigest()
     stale_write_started = threading.Event()
     release_stale_write = threading.Event()
-    original_put_file = LocalStorageAdapter.put_file_if_absent
+    original_publish = LocalStorageAdapter.publish_reserved_file
+    stale_token: str | None = None
 
-    def _controlled_put_file(
+    def _controlled_publish(
         self,
-        key,
+        reservation,
         path,
         content_type,
         *,
         checksum_sha256,
     ):
-        if path == stale_path:
+        if reservation.owner_token == stale_token:
             stale_write_started.set()
             if not release_stale_write.wait(timeout=10):
                 raise TimeoutError("Timed out waiting to release stale write")
-        return original_put_file(
+        return original_publish(
             self,
-            key,
+            reservation,
             path,
             content_type,
             checksum_sha256=checksum_sha256,
@@ -285,40 +289,21 @@ def test_worker_fences_storage_write_after_lease_turnover(
 
     monkeypatch.setattr(
         LocalStorageAdapter,
-        "put_file_if_absent",
-        _controlled_put_file,
+        "publish_reserved_file",
+        _controlled_publish,
     )
 
-    async def _run() -> tuple[str, str | None]:
+    async def _run() -> tuple[str, str | None, str | None, int | None]:
+        nonlocal stale_token
         async with migrated_session_factory() as session:
             async with session.begin():
                 service = ExportArtifactService(session)
                 stale_lease = (
                     await service.claim_queued_artifact_leases(batch_size=1)
                 )[0]
-                intent = await service.repo.ensure_processing_upload_intent(
-                    artifact_id=artifact_id,
-                    processing_token=stale_lease.processing_token,
-                    candidate_storage_key=storage_key,
-                    now=datetime.now(UTC),
-                )
-                assert intent is not None
-
-        stale_prepared = PreparedExportArchive(
-            artifact_id=artifact_id,
-            storage_backend=ExportArtifactStorageBackend.LOCAL.value,
-            storage_key=storage_key,
-            filename="privacy-export.zip",
-            content_type="application/zip",
-            archive_path=stale_path,
-            size_bytes=len(stale_payload),
-            checksum_sha256=stale_checksum,
-        )
+        stale_token = stale_lease.processing_token
         stale_write = asyncio.create_task(
-            worker_module._write_export_archive(
-                lease=stale_lease,
-                prepared=stale_prepared,
-            )
+            worker_module._process_artifact(lease=stale_lease)
         )
 
         try:
@@ -342,41 +327,193 @@ def test_worker_fences_storage_write_after_lease_turnover(
                         await service.claim_queued_artifact_leases(batch_size=1)
                     )[0]
 
-            current_prepared = PreparedExportArchive(
-                artifact_id=artifact_id,
-                storage_backend=ExportArtifactStorageBackend.LOCAL.value,
-                storage_key=storage_key,
-                filename="privacy-export.zip",
-                content_type="application/zip",
-                archive_path=current_path,
-                size_bytes=len(current_payload),
-                checksum_sha256=current_checksum,
-            )
-            await worker_module._write_export_archive(
-                lease=current_lease,
-                prepared=current_prepared,
-            )
-            await worker_module._mark_export_ready(
-                lease=current_lease,
-                prepared=current_prepared,
-            )
+            await worker_module._process_artifact(lease=current_lease)
         finally:
             release_stale_write.set()
 
-        with pytest.raises(StorageObjectConflictError):
-            await stale_write
+        await stale_write
 
         async with migrated_session_factory() as session:
             artifact = await session.get(ExportArtifact, artifact_id)
             assert artifact is not None
-            return artifact.status, artifact.checksum_sha256
+            return (
+                artifact.status,
+                artifact.checksum_sha256,
+                artifact.storage_key,
+                artifact.size_bytes,
+            )
 
-    status, checksum = run_async(_run())
+    status, checksum, storage_key, size_bytes = run_async(_run())
 
     storage = LocalStorageAdapter(str(storage_path), "test-secret")
     assert status == ExportArtifactStatus.READY.value
-    assert checksum == current_checksum
-    assert storage.get_bytes(storage_key) == current_payload
+    assert checksum is not None
+    assert storage_key is not None
+    assert size_bytes is not None
+    assert (
+        storage.inspect_file(
+            storage_key,
+            checksum_sha256=checksum,
+            size_bytes=size_bytes,
+        ).value
+        == "matching"
+    )
+    assert len(list(storage_path.rglob("*.zip"))) == 1
+
+
+def test_worker_cannot_publish_after_erasure_cleanup_commits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    storage_path = tmp_path / "worker-exports"
+    _configure_worker(
+        monkeypatch,
+        database_url=migrated_database_url,
+        storage_path=storage_path,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "get_session_factory",
+        lambda: migrated_session_factory,
+    )
+    artifact_id = run_async(_provision_queued_artifact(migrated_session_factory))
+    stale_write_started = threading.Event()
+    release_stale_write = threading.Event()
+    original_publish = LocalStorageAdapter.publish_reserved_file
+    stale_token: str | None = None
+
+    def _controlled_publish(
+        self,
+        reservation,
+        path,
+        content_type,
+        *,
+        checksum_sha256,
+    ):
+        if reservation.owner_token == stale_token:
+            stale_write_started.set()
+            if not release_stale_write.wait(timeout=10):
+                raise TimeoutError("Timed out waiting to release stale write")
+        return original_publish(
+            self,
+            reservation,
+            path,
+            content_type,
+            checksum_sha256=checksum_sha256,
+        )
+
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "publish_reserved_file",
+        _controlled_publish,
+    )
+
+    async def _run() -> tuple[str, str | None, str]:
+        nonlocal stale_token
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                stale_lease = (
+                    await ExportArtifactService(session).claim_queued_artifact_leases(
+                        batch_size=1
+                    )
+                )[0]
+        stale_token = stale_lease.processing_token
+        stale_write = asyncio.create_task(
+            worker_module._process_artifact(lease=stale_lease)
+        )
+
+        try:
+            started = await asyncio.to_thread(stale_write_started.wait, 10)
+            assert started
+
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    service = ExportArtifactService(session)
+                    artifact = await service.repo.get_by_id(artifact_id)
+                    assert artifact is not None
+                    assert artifact.subject_user_id is not None
+                    assert artifact.storage_key is not None
+                    assert artifact.checksum_sha256 is not None
+                    assert artifact.size_bytes is not None
+                    subject_user_id = artifact.subject_user_id
+                    storage_key = artifact.storage_key
+                    checksum_sha256 = artifact.checksum_sha256
+                    size_bytes = artifact.size_bytes
+                    artifact.processing_lease_expires_at = datetime.now(
+                        UTC
+                    ) - timedelta(seconds=1)
+                    await service.repo.save(artifact)
+
+            storage = LocalStorageAdapter(str(storage_path), "test-secret")
+            assert (
+                storage.inspect_file(
+                    storage_key,
+                    checksum_sha256=checksum_sha256,
+                    size_bytes=size_bytes,
+                ).value
+                == "reserved"
+            )
+
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    recovered = await ExportArtifactService(
+                        session
+                    ).recover_stale_processing_artifacts(limit=1)
+                    assert recovered == 1
+
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    erase_request = DataSubjectRequest(
+                        request_type="erase",
+                        status="approved",
+                        requester_user_id=subject_user_id,
+                        subject_user_id=subject_user_id,
+                        submitted_at=datetime.now(UTC),
+                        reviewed_at=datetime.now(UTC),
+                        decided_at=datetime.now(UTC),
+                        due_at=datetime.now(UTC) + timedelta(days=30),
+                    )
+                    session.add(erase_request)
+                    await session.flush()
+                    await minimise_export_artifacts_for_approved_erase_request(
+                        session,
+                        erase_request,
+                    )
+
+            assert (
+                storage.inspect_file(
+                    storage_key,
+                    checksum_sha256=checksum_sha256,
+                    size_bytes=size_bytes,
+                ).value
+                == "missing"
+            )
+
+            async with migrated_session_factory() as session:
+                async with session.begin():
+                    processed = await ExportArtifactService(
+                        session
+                    ).mark_expired_artifacts(limit=1)
+                    assert processed == 1
+        finally:
+            release_stale_write.set()
+
+        await stale_write
+
+        async with migrated_session_factory() as session:
+            artifact = await session.get(ExportArtifact, artifact_id)
+            assert artifact is not None
+            return artifact.status, artifact.storage_key, storage_key
+
+    status, committed_key, stale_storage_key = run_async(_run())
+
+    storage = LocalStorageAdapter(str(storage_path), "test-secret")
+    assert status == ExportArtifactStatus.CANCELLED.value
+    assert committed_key is None
+    assert not storage.exists(stale_storage_key)
+    assert not list(storage_path.rglob("*.zip"))
 
 
 def test_worker_cleans_partial_object_when_upload_reports_failure(
@@ -392,12 +529,19 @@ def test_worker_cleans_partial_object_when_upload_reports_failure(
         storage_path=storage_path,
     )
     artifact_id = run_async(_provision_queued_artifact(migrated_session_factory))
-    original_put_file = LocalStorageAdapter.put_file_if_absent
+    original_publish = LocalStorageAdapter.publish_reserved_file
 
-    def _put_then_fail(self, key, path, content_type, *, checksum_sha256):
-        original_put_file(
+    def _put_then_fail(
+        self,
+        reservation,
+        path,
+        content_type,
+        *,
+        checksum_sha256,
+    ):
+        original_publish(
             self,
-            key,
+            reservation,
             path,
             content_type,
             checksum_sha256=checksum_sha256,
@@ -406,7 +550,7 @@ def test_worker_cleans_partial_object_when_upload_reports_failure(
 
     monkeypatch.setattr(
         LocalStorageAdapter,
-        "put_file_if_absent",
+        "publish_reserved_file",
         _put_then_fail,
     )
 

@@ -13,6 +13,10 @@ from app.privacy.services.export_artifacts import (
     PreparedExportArchive,
     ProcessingExportLease,
 )
+from app.privacy.storage.base import (
+    StorageObjectState,
+    StoragePublicationReservation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,24 +75,77 @@ async def _prepare_export_archive(
 async def _write_export_archive(
     *, lease: ProcessingExportLease, prepared: PreparedExportArchive
 ) -> None:
-    """Validate committed upload intent, then write outside the transaction."""
+    """Reserve storage, revalidate the intent, then publish with compare-and-swap."""
 
     session_factory = get_session_factory()
     service: ExportArtifactService
+    reservation: StoragePublicationReservation | None = None
     try:
         async with session_factory() as session:
             service = ExportArtifactService(session)
+            reservation = await asyncio.to_thread(
+                service.reserve_prepared_export_archive,
+                prepared,
+                processing_token=lease.processing_token,
+            )
             async with session.begin():
                 await service.validate_prepared_export_upload(
                     prepared=prepared,
                     processing_token=lease.processing_token,
                 )
-        await asyncio.to_thread(service.write_prepared_export_archive, prepared)
+        await asyncio.to_thread(
+            service.publish_prepared_export_archive,
+            prepared,
+            reservation,
+        )
     finally:
+        if reservation is not None:
+            await asyncio.to_thread(
+                service.cancel_prepared_export_archive_reservation,
+                prepared,
+                reservation,
+            )
         await asyncio.to_thread(
             ExportArtifactService.discard_prepared_export_archive,
             prepared,
         )
+
+
+async def _recover_committed_export_archive(*, prepared: PreparedExportArchive) -> bool:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        service = ExportArtifactService(session)
+        state = await asyncio.to_thread(
+            service.inspect_committed_export_archive,
+            prepared,
+        )
+    return state == StorageObjectState.MATCHING
+
+
+async def _reset_committed_export_upload_intent(
+    *,
+    lease: ProcessingExportLease,
+    prepared: PreparedExportArchive,
+) -> None:
+    """Fence the old key before allowing the active lease to choose a new one."""
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        service = ExportArtifactService(session)
+        await asyncio.to_thread(
+            service.delete_prepared_export_storage_object,
+            prepared,
+        )
+    async with session_factory() as session:
+        async with session.begin():
+            reset = await ExportArtifactService(
+                session
+            ).reset_prepared_export_upload_intent(
+                prepared=prepared,
+                processing_token=lease.processing_token,
+            )
+            if not reset:
+                raise RuntimeError("export_upload_intent_reset_rejected")
 
 
 async def _mark_export_ready(
@@ -189,7 +246,16 @@ async def _process_artifact(*, lease: ProcessingExportLease) -> None:
     heartbeat = asyncio.create_task(_heartbeat_processing_lease(lease=lease))
     try:
         prepared = await _prepare_export_archive(lease=lease)
-        await _write_export_archive(lease=lease, prepared=prepared)
+        if prepared.archive_path is None:
+            recovered = await _recover_committed_export_archive(prepared=prepared)
+            if not recovered:
+                await _reset_committed_export_upload_intent(
+                    lease=lease,
+                    prepared=prepared,
+                )
+                prepared = await _prepare_export_archive(lease=lease)
+        if prepared.archive_path is not None:
+            await _write_export_archive(lease=lease, prepared=prepared)
         await _mark_export_ready(lease=lease, prepared=prepared)
     except Exception as exc:
         cleanup = await _mark_export_failed(lease=lease, exc=exc)
