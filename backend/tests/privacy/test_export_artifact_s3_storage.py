@@ -282,6 +282,15 @@ def test_s3_storage_does_not_retry_publish_after_cleanup_conflict(
             http_status_code=409,
             expected_params=expected_publish,
         )
+        stubber.add_client_error(
+            "head_object",
+            service_error_code="NoSuchKey",
+            http_status_code=404,
+            expected_params={
+                "Bucket": "privacy-exports",
+                "Key": "privacy-exports/exports/artifact.zip",
+            },
+        )
 
         with pytest.raises(StorageObjectConflictError):
             storage.publish_reserved_file(
@@ -294,6 +303,65 @@ def test_s3_storage_does_not_retry_publish_after_cleanup_conflict(
                 "application/zip",
                 checksum_sha256=checksum,
             )
+
+
+def test_s3_storage_accepts_matching_object_after_ambiguous_publish_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    path = tmp_path / "archive.zip"
+    payload = b"privacy export archive"
+    path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    object_key = "privacy-exports/exports/artifact.zip"
+    reservation = StoragePublicationReservation(
+        key="exports/artifact.zip",
+        owner_token="worker-token",
+        revision='"reservation-etag"',
+    )
+    expected_publish = {
+        "Bucket": "privacy-exports",
+        "Key": object_key,
+        "Body": ANY,
+        "ContentLength": len(payload),
+        "ContentType": "application/zip",
+        "Metadata": {
+            "privacy-artifact": "true",
+            "checksum-sha256": checksum,
+        },
+        "IfMatch": '"reservation-etag"',
+        "ChecksumSHA256": base64.b64encode(bytes.fromhex(checksum)).decode("ascii"),
+        "ServerSideEncryption": "AES256",
+    }
+
+    with Stubber(client) as stubber:
+        stubber.add_client_error(
+            "put_object",
+            service_error_code="PreconditionFailed",
+            http_status_code=412,
+            expected_params=expected_publish,
+        )
+        stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": len(payload),
+                "Metadata": {"checksum-sha256": checksum},
+                "ETag": '"published-etag"',
+            },
+            {"Bucket": "privacy-exports", "Key": object_key},
+        )
+
+        stored = storage.publish_reserved_file(
+            reservation,
+            path,
+            "application/zip",
+            checksum_sha256=checksum,
+        )
+
+    assert stored.key == reservation.key
+    assert stored.size_bytes == len(payload)
 
 
 def test_s3_storage_cleanup_removes_reservation_before_late_publish(
@@ -356,6 +424,12 @@ def test_s3_storage_cleanup_removes_reservation_before_late_publish(
                 ),
                 "ServerSideEncryption": "AES256",
             },
+        )
+        stubber.add_client_error(
+            "head_object",
+            service_error_code="NoSuchKey",
+            http_status_code=404,
+            expected_params={"Bucket": "privacy-exports", "Key": object_key},
         )
         with pytest.raises(StorageObjectConflictError):
             storage.publish_reserved_file(

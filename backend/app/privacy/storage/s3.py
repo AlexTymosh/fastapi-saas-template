@@ -167,6 +167,11 @@ class S3CompatibleStorageAdapter:
 
         object_key = self._object_key(reservation.key)
         size_bytes = path.stat().st_size
+        stored = StoredObject(
+            key=reservation.key,
+            content_type=content_type,
+            size_bytes=size_bytes,
+        )
         params: dict[str, Any] = {
             "Bucket": self.bucket_name,
             "Key": object_key,
@@ -189,15 +194,18 @@ class S3CompatibleStorageAdapter:
                 or self._is_conditional_request_conflict(exc)
                 or self._is_missing_object(exc)
             ):
+                state = self.inspect_file(
+                    reservation.key,
+                    checksum_sha256=checksum_sha256,
+                    size_bytes=size_bytes,
+                )
+                if state == StorageObjectState.MATCHING:
+                    return stored
                 raise StorageObjectConflictError(
                     "Storage publication reservation is no longer active"
                 ) from None
             raise
-        return StoredObject(
-            key=reservation.key,
-            content_type=content_type,
-            size_bytes=size_bytes,
-        )
+        return stored
 
     def cancel_file_publication(
         self,

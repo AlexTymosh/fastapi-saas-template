@@ -58,7 +58,9 @@ and DSR idempotency rows.
   replacing that exact revision. Cleanup conditionally removes the current
   reservation or object revision before clearing the database key. A publisher
   that resumes after committed cleanup therefore cannot recreate an untracked
-  object.
+  object. A successful publish consumes the reservation and does not run a
+  separate cancellation request. An ambiguous conditional response is accepted
+  only when storage metadata matches the committed checksum and size.
 - READY export artifacts transition to `expired` while keeping `storage_key` as
   a purge retry marker. This transition is independent of retry purge failures,
   so a temporary object-store outage must not keep unrelated expired READY

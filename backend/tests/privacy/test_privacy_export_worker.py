@@ -569,6 +569,46 @@ def test_worker_cleans_partial_object_when_upload_reports_failure(
     assert not list(storage_path.rglob("*.zip"))
 
 
+def test_worker_skips_reservation_cancellation_after_successful_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    storage_path = tmp_path / "worker-exports"
+    _configure_worker(
+        monkeypatch,
+        database_url=migrated_database_url,
+        storage_path=storage_path,
+    )
+    artifact_id = run_async(_provision_queued_artifact(migrated_session_factory))
+
+    def _fail_if_cancelled(self, reservation) -> None:
+        raise RuntimeError("published reservation must not be cancelled")
+
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "cancel_file_publication",
+        _fail_if_cancelled,
+    )
+
+    exit_code = run_async(run_worker(batch_size=1, dry_run=False, once=True))
+
+    assert exit_code == 0
+
+    async def _load_ready_artifact():
+        async with migrated_session_factory() as session:
+            return await session.get(ExportArtifact, artifact_id)
+
+    ready = run_async(_load_ready_artifact())
+    assert ready is not None
+    assert ready.status == ExportArtifactStatus.READY.value
+    assert ready.storage_key is not None
+    assert LocalStorageAdapter(str(storage_path), "test-secret").exists(
+        ready.storage_key
+    )
+
+
 def test_worker_retains_failed_upload_key_when_immediate_cleanup_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

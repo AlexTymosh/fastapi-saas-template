@@ -80,6 +80,7 @@ async def _write_export_archive(
     session_factory = get_session_factory()
     service: ExportArtifactService
     reservation: StoragePublicationReservation | None = None
+    publication_completed = False
     try:
         async with session_factory() as session:
             service = ExportArtifactService(session)
@@ -98,8 +99,9 @@ async def _write_export_archive(
             prepared,
             reservation,
         )
+        publication_completed = True
     finally:
-        if reservation is not None:
+        if reservation is not None and not publication_completed:
             await asyncio.to_thread(
                 service.cancel_prepared_export_archive_reservation,
                 prepared,

@@ -179,6 +179,10 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
   token, lease, backend, key and archive identity before publication.
 - Local and S3-compatible publication replaces only the exact reservation
   revision. A stale lease cannot interleave with or replace committed bytes.
+- Successful publication consumes its reservation and skips cancellation, so a
+  transient post-publication cleanup error cannot fail a valid export.
+- An ambiguous S3 conditional response is accepted only when `HeadObject`
+  confirms the committed checksum and size; all other states fail closed.
 - Cleanup conditionally removes the current reservation or object revision, so
   an in-flight publisher cannot recreate an object after the key is cleared.
 - Missing, reserved or conflicting recovery objects are fenced before the
@@ -198,12 +202,12 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
 Verification completed in the implementation environment:
 
 - Ruff format and lint: passed for the complete backend.
-- Focused export/worker/retention/storage/erasure suite: 96 passed.
-- Privacy suite without container/external-DB tests: 441 passed.
+- Focused export/worker/retention/storage/erasure/docs suite: 116 passed.
+- Privacy suite without container/external-DB tests: 442 passed.
 - Contract suite: 111 passed.
-- Complete lightweight backend suite: 1327 passed.
+- Complete lightweight backend suite: 1329 passed.
 - Four MinIO container tests could not start because the environment has no
-  Docker socket; run them locally and in CI before merge.
+  Docker runtime. Run them locally and in CI before merge.
 
 ### Separate follow-up discovered during impact analysis
 
