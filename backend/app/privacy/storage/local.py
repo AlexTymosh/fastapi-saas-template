@@ -4,19 +4,37 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from pydantic import SecretStr
 
-from app.privacy.storage.base import StorageAdapter, StoredObject
+from app.privacy.storage.base import (
+    StorageAdapter,
+    StorageObjectConflictError,
+    StoredObject,
+)
+
+_FILE_COPY_CHUNK_SIZE = 1024 * 1024
+_PUBLISH_RETRY_LIMIT = 3
 
 
 def _secret_value(secret: str | SecretStr) -> str:
     if isinstance(secret, SecretStr):
         return secret.get_secret_value()
     return secret
+
+
+def _checksum_and_size(path: Path) -> tuple[str, int]:
+    checksum = hashlib.sha256()
+    size_bytes = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(_FILE_COPY_CHUNK_SIZE):
+            checksum.update(chunk)
+            size_bytes += len(chunk)
+    return checksum.hexdigest(), size_bytes
 
 
 class LocalStorageAdapter(StorageAdapter):
@@ -65,11 +83,58 @@ class LocalStorageAdapter(StorageAdapter):
         target = self._resolve(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         with path.open("rb") as source, target.open("wb") as destination:
-            shutil.copyfileobj(source, destination, length=1024 * 1024)
+            shutil.copyfileobj(source, destination, length=_FILE_COPY_CHUNK_SIZE)
         return StoredObject(
             key=key,
             content_type=content_type,
             size_bytes=target.stat().st_size,
+        )
+
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        content_type: str,
+        *,
+        checksum_sha256: str,
+    ) -> StoredObject:
+        """Atomically publish a complete file without replacing an existing key."""
+
+        target = self._resolve(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staged_checksum, staged_size = _checksum_and_size(path)
+        if staged_checksum != checksum_sha256:
+            raise ValueError("Prepared storage file checksum changed")
+
+        for _ in range(_PUBLISH_RETRY_LIMIT):
+            try:
+                os.link(path, target)
+            except FileExistsError:
+                try:
+                    existing_checksum, existing_size = _checksum_and_size(target)
+                except FileNotFoundError:
+                    continue
+                if (
+                    existing_checksum == staged_checksum
+                    and existing_size == staged_size
+                ):
+                    return StoredObject(
+                        key=key,
+                        content_type=content_type,
+                        size_bytes=existing_size,
+                    )
+                raise StorageObjectConflictError(
+                    "Immutable storage key already contains different bytes"
+                ) from None
+            else:
+                return StoredObject(
+                    key=key,
+                    content_type=content_type,
+                    size_bytes=staged_size,
+                )
+
+        raise StorageObjectConflictError(
+            "Immutable storage key changed during publication"
         )
 
     def get_bytes(self, key: str) -> bytes:

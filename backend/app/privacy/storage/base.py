@@ -12,10 +12,23 @@ class StoredObject:
     size_bytes: int
 
 
+class StorageObjectConflictError(RuntimeError):
+    """Raised when an immutable object key already contains different bytes."""
+
+
 class StorageAdapter(Protocol):
     def put_bytes(self, key: str, data: bytes, content_type: str) -> StoredObject: ...
 
     def put_file(self, key: str, path: Path, content_type: str) -> StoredObject: ...
+
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        content_type: str,
+        *,
+        checksum_sha256: str,
+    ) -> StoredObject: ...
 
     def get_bytes(self, key: str) -> bytes: ...
 

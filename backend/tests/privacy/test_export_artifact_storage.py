@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
+from app.privacy.storage.base import StorageObjectConflictError
 from app.privacy.storage.local import LocalStorageAdapter
 
 
@@ -40,3 +43,42 @@ def test_local_storage_put_get_and_signed_url(tmp_path) -> None:
     assert not storage.verify_download_url(tampered, expected_key=key)
     expired = storage.generate_download_url(key, -1)
     assert not storage.verify_download_url(expired, expected_key=key)
+
+
+def test_local_storage_immutable_publish_never_replaces_existing_bytes(
+    tmp_path,
+) -> None:
+    storage = LocalStorageAdapter(str(tmp_path / "storage"), "test-secret")
+    key = "exports/artifact/archive.zip"
+    first_path = tmp_path / "first.zip"
+    same_path = tmp_path / "same.zip"
+    different_path = tmp_path / "different.zip"
+    first_payload = b"first archive"
+    different_payload = b"different archive"
+    first_path.write_bytes(first_payload)
+    same_path.write_bytes(first_payload)
+    different_path.write_bytes(different_payload)
+    first_checksum = hashlib.sha256(first_payload).hexdigest()
+
+    storage.put_file_if_absent(
+        key,
+        first_path,
+        "application/zip",
+        checksum_sha256=first_checksum,
+    )
+    storage.put_file_if_absent(
+        key,
+        same_path,
+        "application/zip",
+        checksum_sha256=first_checksum,
+    )
+
+    with pytest.raises(StorageObjectConflictError):
+        storage.put_file_if_absent(
+            key,
+            different_path,
+            "application/zip",
+            checksum_sha256=hashlib.sha256(different_payload).hexdigest(),
+        )
+
+    assert storage.get_bytes(key) == first_payload

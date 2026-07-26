@@ -63,7 +63,7 @@ reviewed, merged, and CI is green.
 
 | Order | Priority | PR | Finding closed | Risk | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | P1 | Durable export upload intent | 1 | High | Implemented in this patch |
+| 1 | P1 | Durable export upload intent | 1 | High | Implemented; storage fence added |
 | 2 | P1 | Tenant write-context foundation | 2, part 1 | Medium | Pending |
 | 3 | P1 | Organisation/membership transaction migration | 2, part 2 | Medium–High | Pending |
 | 4 | P1/P2 | Invite transaction/boundary migration | 2, 6 | Medium–High | Pending |
@@ -168,24 +168,30 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
   recovery.
 - The worker revalidates the processing token, lease, backend, and key before
   external I/O.
+- Local and S3-compatible publication is immutable for the full write. A stale
+  lease cannot interleave with or replace bytes published at the committed key.
+- Matching bytes at an existing key are an idempotent retry. Different bytes
+  fail closed and enter the existing non-downloadable cleanup workflow.
 - Upload and ready/audit failures first commit a non-downloadable `failed` row.
 - Immediate cleanup runs outside a database transaction; failed cleanup keeps
   the key for retention.
 - Retention cleanup now prioritises subject-erasure retries, failed-upload
   retries, READY expiry, and previously expired retries.
 - No migration, table, or dependency was added.
+- S3-compatible deployments must support conditional `PutObject`,
+  `If-None-Match: *`, SHA-256 validation and read-after-write object metadata.
 - S3 versioning/noncurrent-version deletion is an explicit production
   deployment requirement in the export and retention documentation.
 
 Verification completed in the implementation environment:
 
 - Ruff format and lint: passed for the complete backend.
-- Focused export/worker/retention suite: 63 passed.
-- Privacy suite without container/external-DB tests: 437 passed.
+- Focused export/worker/retention/storage suite: 99 passed.
+- Lease-turnover and adapter slice: 23 passed.
+- Privacy suite without container/external-DB tests: 440 passed.
 - Contract suite: 111 passed.
-- Complete lightweight backend suite: 1319 passed.
-- Local and mocked S3/storage slice: 36 passed.
-- Two MinIO container tests could not start because the environment has no
+- Complete lightweight backend suite: 1324 passed.
+- Three MinIO container tests could not start because the environment has no
   Docker socket; run them locally and in CI before merge.
 
 ### Separate follow-up discovered during impact analysis

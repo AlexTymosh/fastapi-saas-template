@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 import urllib.request
 from collections.abc import Iterator
@@ -28,6 +29,7 @@ from app.privacy.models.export_artifact import (
     ExportArtifactStorageBackend,
 )
 from app.privacy.services.export_artifacts import ExportArtifactService
+from app.privacy.storage.base import StorageObjectConflictError
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -224,6 +226,46 @@ def test_s3_compatible_storage_adapter_round_trips_with_minio(
     assert not adapter.exists(storage_key)
 
     adapter.delete(storage_key)
+
+
+def test_s3_compatible_storage_conditional_publish_does_not_overwrite(
+    minio_export_storage: MinioExportStorage,
+    tmp_path,
+) -> None:
+    adapter = minio_export_storage.adapter
+    storage_key = f"exports/{uuid4()}/archive.zip"
+    first_path = tmp_path / "first.zip"
+    same_path = tmp_path / "same.zip"
+    different_path = tmp_path / "different.zip"
+    first_payload = b"first minio privacy export"
+    different_payload = b"different minio privacy export"
+    first_path.write_bytes(first_payload)
+    same_path.write_bytes(first_payload)
+    different_path.write_bytes(different_payload)
+    first_checksum = hashlib.sha256(first_payload).hexdigest()
+
+    adapter.put_file_if_absent(
+        storage_key,
+        first_path,
+        "application/zip",
+        checksum_sha256=first_checksum,
+    )
+    adapter.put_file_if_absent(
+        storage_key,
+        same_path,
+        "application/zip",
+        checksum_sha256=first_checksum,
+    )
+
+    with pytest.raises(StorageObjectConflictError):
+        adapter.put_file_if_absent(
+            storage_key,
+            different_path,
+            "application/zip",
+            checksum_sha256=hashlib.sha256(different_payload).hexdigest(),
+        )
+
+    assert adapter.get_bytes(storage_key) == first_payload
 
 
 def test_export_artifact_retention_expires_before_purging_minio_object(

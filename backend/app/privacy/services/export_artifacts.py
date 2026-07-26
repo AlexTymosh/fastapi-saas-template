@@ -701,14 +701,15 @@ class ExportArtifactService:
         _unlink_file(prepared.archive_path)
 
     def write_prepared_export_archive(self, prepared: PreparedExportArchive) -> None:
-        """Write an archive only after its upload-intent transaction commits."""
+        """Publish without allowing a lease-stale writer to replace the key."""
 
         storage = self._storage_for_backend(prepared.storage_backend)
         try:
-            storage.put_file(
+            storage.put_file_if_absent(
                 prepared.storage_key,
                 prepared.archive_path,
                 prepared.content_type,
+                checksum_sha256=prepared.checksum_sha256,
             )
         finally:
             _unlink_file(prepared.archive_path)

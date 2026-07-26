@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -7,7 +8,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from app.privacy.storage.base import StoredObject
+from app.privacy.storage.base import StorageObjectConflictError, StoredObject
 
 
 class S3CompatibleStorageAdapter:
@@ -39,6 +40,7 @@ class S3CompatibleStorageAdapter:
         self.key_prefix = self._normalise_prefix(key_prefix)
         self.server_side_encryption = self._normalise_optional(server_side_encryption)
         self.sse_kms_key_id = self._normalise_optional(sse_kms_key_id)
+        self.max_conditional_write_attempts = max(1, max_attempts)
         self.client = boto3.client(
             "s3",
             endpoint_url=self._normalise_optional(endpoint_url),
@@ -87,6 +89,69 @@ class S3CompatibleStorageAdapter:
             size_bytes=path.stat().st_size,
         )
 
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        content_type: str,
+        *,
+        checksum_sha256: str,
+    ) -> StoredObject:
+        """Publish with an S3 precondition that prevents lease-stale overwrite."""
+
+        object_key = self._object_key(key)
+        size_bytes = path.stat().st_size
+        checksum_base64 = self._sha256_base64(checksum_sha256)
+        params: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": object_key,
+            "ContentLength": size_bytes,
+            "ContentType": content_type,
+            "Metadata": {
+                "privacy-artifact": "true",
+                "checksum-sha256": checksum_sha256,
+            },
+            "IfNoneMatch": "*",
+            "ChecksumSHA256": checksum_base64,
+        }
+        self._add_server_side_encryption(params)
+
+        for _ in range(self.max_conditional_write_attempts):
+            try:
+                with path.open("rb") as body:
+                    self.client.put_object(Body=body, **params)
+            except ClientError as exc:
+                if self._is_precondition_failure(exc):
+                    existing_matches = self._existing_file_matches(
+                        object_key=object_key,
+                        checksum_sha256=checksum_sha256,
+                        size_bytes=size_bytes,
+                    )
+                    if existing_matches is True:
+                        return StoredObject(
+                            key=key,
+                            content_type=content_type,
+                            size_bytes=size_bytes,
+                        )
+                    if existing_matches is False:
+                        raise StorageObjectConflictError(
+                            "Immutable storage key already contains different bytes"
+                        ) from None
+                    continue
+                if self._is_conditional_request_conflict(exc):
+                    continue
+                raise
+            else:
+                return StoredObject(
+                    key=key,
+                    content_type=content_type,
+                    size_bytes=size_bytes,
+                )
+
+        raise StorageObjectConflictError(
+            "Conditional storage publication did not settle"
+        )
+
     def get_bytes(self, key: str) -> bytes:
         response = self.client.get_object(
             Bucket=self.bucket_name,
@@ -129,6 +194,60 @@ class S3CompatibleStorageAdapter:
             params["ServerSideEncryption"] = self.server_side_encryption
         if self.sse_kms_key_id is not None:
             params["SSEKMSKeyId"] = self.sse_kms_key_id
+
+    def _existing_file_matches(
+        self,
+        *,
+        object_key: str,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> bool | None:
+        try:
+            response = self.client.head_object(
+                Bucket=self.bucket_name,
+                Key=object_key,
+            )
+        except ClientError as exc:
+            if self._is_missing_object(exc):
+                return None
+            raise
+
+        metadata = response.get("Metadata") or {}
+        return (
+            metadata.get("checksum-sha256") == checksum_sha256
+            and response.get("ContentLength") == size_bytes
+        )
+
+    @staticmethod
+    def _sha256_base64(checksum_sha256: str) -> str:
+        try:
+            digest = bytes.fromhex(checksum_sha256)
+        except ValueError as exc:
+            raise ValueError("Invalid SHA-256 checksum") from exc
+        if len(digest) != 32:
+            raise ValueError("Invalid SHA-256 checksum")
+        return base64.b64encode(digest).decode("ascii")
+
+    @staticmethod
+    def _client_error_status(exc: ClientError) -> tuple[str, int]:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
+        return code, status
+
+    @classmethod
+    def _is_precondition_failure(cls, exc: ClientError) -> bool:
+        code, status = cls._client_error_status(exc)
+        return status == 412 or code in {"412", "PreconditionFailed"}
+
+    @classmethod
+    def _is_conditional_request_conflict(cls, exc: ClientError) -> bool:
+        code, status = cls._client_error_status(exc)
+        return status == 409 or code in {"409", "ConditionalRequestConflict"}
+
+    @classmethod
+    def _is_missing_object(cls, exc: ClientError) -> bool:
+        code, status = cls._client_error_status(exc)
+        return status == 404 or code in {"404", "NoSuchKey", "NotFound"}
 
     @classmethod
     def _validate_key(cls, key: str) -> str:

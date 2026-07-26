@@ -25,6 +25,10 @@ Export artifacts are generated asynchronously from approved export DSRs.
 - Before storage upload, the worker commits a stable `storage_key` upload intent
   on the still-active processing lease. Retries reuse that key instead of
   creating an untracked object.
+- Storage publication is immutable. Local storage atomically publishes a
+  completed staged file without replacing an existing key. S3-compatible
+  storage uses a conditional `PutObject` with `If-None-Match: *` and a
+  server-validated SHA-256 checksum.
 - Audit metadata is intentionally minimised and does not include payload/storage
   paths/tokens.
 - `--dry-run` worker mode performs one non-mutating count pass and then exits
@@ -51,9 +55,16 @@ The generated archive metadata is derived from the completed temporary file:
 Archive preparation, upload and the `ready` transition use separate transaction
 phases. The preparation phase records or reuses the upload intent. The worker
 commits it, revalidates the processing token, lease, backend and key, and only
-then calls storage outside the database transaction. The final transaction
-stores file metadata, marks the artifact `ready`, synchronises the DSR execution
-state and records the audit event.
+then calls immutable storage publication outside the database transaction. The
+final transaction stores file metadata, marks the artifact `ready`, synchronises
+the DSR execution state and records the audit event.
+
+The storage precondition remains effective for the entire external write. If a
+lease turns over after validation, a stale worker cannot replace or interleave
+with the object published by the current worker. An existing object is accepted
+only when its SHA-256 checksum and size match the prepared archive. Different
+bytes at the committed key fail closed; the current lease records a failed,
+non-downloadable artifact and the normal cleanup workflow removes the object.
 
 If upload or final persistence fails, the worker first commits the artifact as
 non-downloadable `failed` while retaining `storage_key`. It then attempts object
@@ -64,7 +75,9 @@ idempotent success.
 
 A stale processing lease keeps its recorded upload intent. Recovery requeues the
 artifact and the next lease reuses the same key. An old lease must fail the
-pre-upload validation and cannot transition the row to `ready`.
+pre-upload validation and cannot transition the row to `ready`. If turnover
+occurs during storage I/O, immutable publication prevents the old lease from
+overwriting bytes selected by the newer lease.
 
 Deployment environments must provide writable temporary storage for export
 workers. For large exports, size the writable path for at least the configured
@@ -110,6 +123,12 @@ therefore use a dedicated unversioned bucket/prefix or configure and verify a
 lifecycle policy that permanently expires noncurrent versions and removes
 expired delete markers within the required retention SLA. Object Lock or
 replication policy must not extend personal-export retention unintentionally.
+
+The S3-compatible provider must also implement standard conditional
+`PutObject` requests with `If-None-Match: *`, SHA-256 checksum validation and
+read-after-write `HeadObject` metadata. Deployment smoke tests must fail closed
+instead of falling back to an unconditional overwrite when these capabilities
+are unavailable.
 
 ## Worker operations
 
