@@ -4,14 +4,17 @@ from pathlib import Path
 
 import pytest
 
-from app.privacy.retention_cli import build_parser, run_once
+from app.privacy import retention_cli
+from app.privacy.maintenance import PrivacyRetentionMaintenanceSummary
 from tests.helpers.asyncio_runner import run_async
 
 pytestmark = [pytest.mark.privacy, pytest.mark.security]
 
 
 def test_privacy_retention_cli_parser_accepts_ops_flags() -> None:
-    args = build_parser().parse_args(["--dry-run", "--batch-size", "25", "--quiet"])
+    args = retention_cli.build_parser().parse_args(
+        ["--dry-run", "--batch-size", "25", "--quiet"]
+    )
 
     assert args.dry_run is True
     assert args.batch_size == 25
@@ -20,7 +23,45 @@ def test_privacy_retention_cli_parser_accepts_ops_flags() -> None:
 
 def test_privacy_retention_cli_rejects_non_positive_batch_size() -> None:
     with pytest.raises(ValueError, match="must be positive"):
-        run_async(run_once(batch_size=0))
+        run_async(retention_cli.run_once(batch_size=0))
+
+
+def test_privacy_retention_cli_uses_post_commit_retention_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_factory = object()
+    calls: list[tuple[object, bool, int]] = []
+
+    async def _run_pass(
+        received_session_factory,
+        *,
+        dry_run: bool,
+        limit: int,
+    ) -> PrivacyRetentionMaintenanceSummary:
+        calls.append((received_session_factory, dry_run, limit))
+        return PrivacyRetentionMaintenanceSummary(
+            expired_export_artifacts=1,
+            anonymised_invites=0,
+            scrubbed_outbox_events=0,
+            minimised_audit_events=0,
+            cleaned_dsr_idempotency_keys=0,
+        )
+
+    monkeypatch.setattr(
+        retention_cli,
+        "get_session_factory",
+        lambda: session_factory,
+    )
+    monkeypatch.setattr(
+        retention_cli,
+        "run_privacy_retention_pass",
+        _run_pass,
+    )
+
+    summary = run_async(retention_cli.run_once(dry_run=False, batch_size=7))
+
+    assert summary["expired_export_artifacts"] == 1
+    assert calls == [(session_factory, False, 7)]
 
 
 def test_taskfile_exposes_privacy_retention_runner_tasks() -> None:

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.audit.models.audit_event import AuditCategory, AuditEvent
 from app.core.config.settings import get_settings
@@ -20,7 +22,10 @@ from app.invites.anonymisation import (
 from app.invites.models.invite import Invite, InviteStatus
 from app.outbox.models.outbox_event import OutboxEvent, OutboxStatus
 from app.privacy.models.data_subject_request import DataSubjectRequest
-from app.privacy.services.export_artifacts import ExportArtifactService
+from app.privacy.services.export_artifacts import (
+    ExportArtifactService,
+    ExportArtifactStoragePurge,
+)
 
 _OUTBOX_DELIVERY_RETENTION_DAYS = 30
 _PRIVACY_RETENTION_LAST_ERROR = "privacy_retention_scrubbed"
@@ -34,6 +39,7 @@ _SAFE_OUTBOX_PAYLOAD_KEYS = frozenset(
 )
 _SCRUBBED_PAYLOAD_MARKER = "sensitive_payload_scrubbed"
 _PRIVACY_RETENTION_MARKER = "privacy_retention_scrubbed"
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,40 +67,21 @@ async def run_privacy_retention_maintenance(
     limit: int = 1000,
     dry_run: bool = False,
 ) -> PrivacyRetentionMaintenanceSummary:
-    """Run one bounded privacy retention pass across DSR-adjacent data.
+    """Run the database phase of privacy retention.
 
     Transaction ownership remains with the caller so this helper can be reused
-    by a CLI command, scheduled worker, or explicit maintenance job.
+    inside an explicit unit of work. External storage is never touched here.
 
-    Dry-run mode performs a non-mutating database/storage preview. Each step is
-    capped by ``limit`` so operators can safely run repeated maintenance passes.
-    Export artifacts first enter a durable non-downloadable DB state. Storage
-    object purge only runs for already non-downloadable retry rows.
+    Dry-run mode includes already non-downloadable storage retry rows in the
+    preview count. The full runner commits this database phase before it performs
+    storage deletion and conditionally clears matching metadata afterward.
     """
 
     if limit < 1:
         raise ValueError("Privacy retention batch size must be positive")
 
     reference_now = _normalise_utc(now)
-    anonymised_invites = await _anonymise_retained_invites(
-        session,
-        now=reference_now,
-        limit=limit,
-        dry_run=dry_run,
-    )
-    scrubbed_outbox_events = await _scrub_retained_outbox_events(
-        session,
-        now=reference_now,
-        limit=limit,
-        dry_run=dry_run,
-    )
-    minimised_audit_events = await _minimise_retained_audit_events(
-        session,
-        now=reference_now,
-        limit=limit,
-        dry_run=dry_run,
-    )
-    cleaned_dsr_idempotency_keys = await _clean_expired_dsr_idempotency_keys(
+    database_summary = await _run_non_export_retention(
         session,
         now=reference_now,
         limit=limit,
@@ -109,6 +96,161 @@ async def run_privacy_retention_maintenance(
 
     return PrivacyRetentionMaintenanceSummary(
         expired_export_artifacts=expired_export_artifacts,
+        anonymised_invites=database_summary.anonymised_invites,
+        scrubbed_outbox_events=database_summary.scrubbed_outbox_events,
+        minimised_audit_events=database_summary.minimised_audit_events,
+        cleaned_dsr_idempotency_keys=(database_summary.cleaned_dsr_idempotency_keys),
+    )
+
+
+async def run_privacy_retention_pass(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    now: datetime | None = None,
+    limit: int = 1000,
+    dry_run: bool = False,
+) -> PrivacyRetentionMaintenanceSummary:
+    """Run one bounded retention pass with storage I/O between transactions."""
+
+    if limit < 1:
+        raise ValueError("Privacy retention batch size must be positive")
+
+    reference_now = _normalise_utc(now)
+    if dry_run:
+        async with session_factory() as session:
+            summary = await run_privacy_retention_maintenance(
+                session,
+                now=reference_now,
+                limit=limit,
+                dry_run=True,
+            )
+            await session.rollback()
+        return summary
+
+    purge_failures: list[Exception] = []
+    export_processed = 0
+
+    async with session_factory() as session:
+        async with session.begin():
+            database_summary = await _run_non_export_retention(
+                session,
+                now=reference_now,
+                limit=limit,
+                dry_run=False,
+            )
+            service = ExportArtifactService(session)
+            cancelled_purges = await service.list_cancelled_erasure_storage_purges(
+                limit=limit,
+            )
+
+    deleted, failures = await _delete_export_storage_purges(
+        session_factory,
+        cancelled_purges,
+    )
+    purge_failures.extend(failures)
+
+    async with session_factory() as session:
+        async with session.begin():
+            service = ExportArtifactService(session)
+            cleared = await _clear_export_storage_purges(service, deleted)
+            export_processed += cleared
+            remaining_limit = limit - export_processed
+            failed_purges = (
+                await service.list_failed_storage_purges(limit=remaining_limit)
+                if remaining_limit > 0
+                else ()
+            )
+
+    deleted, failures = await _delete_export_storage_purges(
+        session_factory,
+        failed_purges,
+    )
+    purge_failures.extend(failures)
+
+    async with session_factory() as session:
+        async with session.begin():
+            service = ExportArtifactService(session)
+            cleared = await _clear_export_storage_purges(service, deleted)
+            export_processed += cleared
+            remaining_limit = limit - export_processed
+            if remaining_limit > 0:
+                newly_expired_ids = await service.expire_ready_artifacts(
+                    now=reference_now,
+                    limit=remaining_limit,
+                )
+            else:
+                newly_expired_ids = ()
+            export_processed += len(newly_expired_ids)
+            remaining_limit = limit - export_processed
+            expired_purges = (
+                await service.list_expired_storage_purges(
+                    limit=remaining_limit,
+                    exclude_ids=set(newly_expired_ids),
+                )
+                if remaining_limit > 0
+                else ()
+            )
+
+    deleted, failures = await _delete_export_storage_purges(
+        session_factory,
+        expired_purges,
+    )
+    purge_failures.extend(failures)
+
+    async with session_factory() as session:
+        async with session.begin():
+            cleared = await _clear_export_storage_purges(
+                ExportArtifactService(session),
+                deleted,
+            )
+            export_processed += cleared
+
+    summary = PrivacyRetentionMaintenanceSummary(
+        expired_export_artifacts=export_processed,
+        anonymised_invites=database_summary.anonymised_invites,
+        scrubbed_outbox_events=database_summary.scrubbed_outbox_events,
+        minimised_audit_events=database_summary.minimised_audit_events,
+        cleaned_dsr_idempotency_keys=(database_summary.cleaned_dsr_idempotency_keys),
+    )
+    if summary.total == 0 and purge_failures:
+        raise purge_failures[0]
+    return summary
+
+
+async def _run_non_export_retention(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    limit: int,
+    dry_run: bool,
+) -> PrivacyRetentionMaintenanceSummary:
+    anonymised_invites = await _anonymise_retained_invites(
+        session,
+        now=now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    scrubbed_outbox_events = await _scrub_retained_outbox_events(
+        session,
+        now=now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    minimised_audit_events = await _minimise_retained_audit_events(
+        session,
+        now=now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    cleaned_dsr_idempotency_keys = await _clean_expired_dsr_idempotency_keys(
+        session,
+        now=now,
+        limit=limit,
+        dry_run=dry_run,
+    )
+
+    return PrivacyRetentionMaintenanceSummary(
+        expired_export_artifacts=0,
         anonymised_invites=anonymised_invites,
         scrubbed_outbox_events=scrubbed_outbox_events,
         minimised_audit_events=minimised_audit_events,
@@ -123,14 +265,13 @@ async def expire_ready_export_artifacts(
     limit: int = 1000,
     dry_run: bool = False,
 ) -> int:
-    """Expire ready exports and purge already non-downloadable objects.
+    """Expire ready exports without touching external storage.
 
     Transaction ownership remains with the caller so this helper can be reused
-    by a CLI command, scheduled worker, or explicit maintenance job.
+    inside an explicit unit of work.
 
-    Dry-run mode performs a non-mutating database preview and deliberately does
-    not touch external storage. Non-dry-run mode does not delete stored objects
-    while a rollback could restore an artifact to ``ready``.
+    Dry-run mode previews all export retention work. The full retention runner
+    handles already non-downloadable object purges after a committed snapshot.
     """
 
     reference_now = _normalise_utc(now)
@@ -144,6 +285,52 @@ async def expire_ready_export_artifacts(
         now=reference_now,
         limit=limit,
     )
+
+
+async def _delete_export_storage_purges(
+    session_factory: async_sessionmaker[AsyncSession],
+    purges: tuple[ExportArtifactStoragePurge, ...],
+) -> tuple[tuple[ExportArtifactStoragePurge, ...], list[Exception]]:
+    deleted: list[ExportArtifactStoragePurge] = []
+    failures: list[Exception] = []
+    if not purges:
+        return (), failures
+
+    async with session_factory() as session:
+        service = ExportArtifactService(session)
+        if session.in_transaction():
+            raise RuntimeError(
+                "Export storage purge cannot run inside a database transaction"
+            )
+        for purge in purges:
+            try:
+                await asyncio.to_thread(
+                    service.delete_export_storage_purge_object,
+                    purge,
+                )
+            except Exception as exc:
+                failures.append(exc)
+                _logger.exception(
+                    "Failed to purge export artifact storage object",
+                    extra={
+                        "artifact_id": str(purge.artifact_id),
+                        "storage_backend": purge.storage_backend,
+                    },
+                )
+                continue
+            deleted.append(purge)
+    return tuple(deleted), failures
+
+
+async def _clear_export_storage_purges(
+    service: ExportArtifactService,
+    purges: tuple[ExportArtifactStoragePurge, ...],
+) -> int:
+    cleared = 0
+    for purge in purges:
+        if await service.clear_export_storage_purge_metadata(purge):
+            cleared += 1
+    return cleared
 
 
 async def _anonymise_retained_invites(

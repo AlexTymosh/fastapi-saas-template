@@ -343,6 +343,27 @@ class ExportArtifactRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_storage_purge_target(
+        self,
+        *,
+        artifact_id: UUID,
+        expected_status: str,
+        storage_backend: str,
+        storage_key: str,
+    ) -> ExportArtifact | None:
+        stmt = (
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.id == artifact_id,
+                ExportArtifact.status == expected_status,
+                ExportArtifact.storage_backend == storage_backend,
+                ExportArtifact.storage_key == storage_key,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_expired_storage_purge_retry(
         self, *, limit: int, exclude_ids: Collection[UUID] | None = None
     ) -> list[ExportArtifact]:

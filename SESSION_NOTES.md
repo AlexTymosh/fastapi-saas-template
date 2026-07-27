@@ -195,6 +195,10 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
   the key for retention.
 - Retention cleanup now prioritises subject-erasure retries, failed-upload
   retries, READY expiry, and previously expired retries.
+- Retention snapshots purge targets in a committed database phase, performs
+  blocking storage deletion without an active transaction, and clears matching
+  metadata in a later short transaction. Storage failures therefore do not hold
+  export row locks or unrelated retention mutations open.
 - No migration, table, or dependency was added.
 - S3-compatible deployments must support conditional `PutObject` with
   `If-None-Match: *` and `If-Match`, conditional `DeleteObject` with `If-Match`,
@@ -205,12 +209,12 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
 Verification completed in the implementation environment:
 
 - Ruff format and lint: passed for the complete backend.
-- Focused export/worker/retention/storage/erasure/docs suite: 117 passed.
-- Privacy suite without container/external-DB tests: 446 passed.
+- Focused retention/export/worker/storage/docs suite: 97 passed.
+- Privacy suite without container/external-DB tests: 450 passed.
 - Contract suite: 111 passed.
-- Complete lightweight backend suite: 1334 passed.
+- Complete lightweight backend suite: 1338 passed.
 - Four MinIO container tests could not start because the environment has no
-  Docker runtime. Run them locally and in CI before merge.
+  Docker socket permission. Run them locally and in CI before merge.
 
 ### Separate follow-up discovered during impact analysis
 

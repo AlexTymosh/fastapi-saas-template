@@ -28,6 +28,7 @@ from app.privacy import maintenance as privacy_maintenance
 from app.privacy.maintenance import (
     expire_ready_export_artifacts,
     run_privacy_retention_maintenance,
+    run_privacy_retention_pass,
 )
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
@@ -36,6 +37,7 @@ from app.privacy.models.data_subject_request import (
 )
 from app.privacy.models.export_artifact import ExportArtifactStatus
 from app.privacy.services.export_artifacts import ExportArtifactService
+from app.privacy.storage.local import LocalStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
 
@@ -280,11 +282,14 @@ def test_privacy_retention_expires_before_purging_storage_object(
                 session
             )
             await session.commit()
+
+        first_summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+        )
+
+        assert first_summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
             service = ExportArtifactService(session)
-
-            count = await expire_ready_export_artifacts(session)
-
-            assert count == 1
             persisted_artifact = await service.repo.get_by_id(artifact_id)
             assert persisted_artifact is not None
             assert persisted_artifact.status == ExportArtifactStatus.EXPIRED.value
@@ -302,14 +307,13 @@ def test_privacy_retention_expires_before_purging_storage_object(
             )
             assert persisted_dsr.execution_failure_reason_code == "artifact_expired"
 
-            await session.commit()
-            post_commit_artifact = await service.repo.get_by_id(artifact_id)
-            assert post_commit_artifact is not None
-            assert post_commit_artifact.status == ExportArtifactStatus.EXPIRED.value
+        second_summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+        )
 
-            count = await expire_ready_export_artifacts(session)
-
-            assert count == 1
+        assert second_summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
             persisted_artifact = await service.repo.get_by_id(artifact_id)
             assert persisted_artifact is not None
             assert persisted_artifact.status == ExportArtifactStatus.EXPIRED.value
@@ -393,7 +397,7 @@ def test_privacy_retention_requires_commit_before_new_expiry_purge(
     run_async(_run())
 
 
-def test_privacy_retention_excludes_markers_before_retry_limit(
+def test_privacy_retention_excludes_new_expiry_from_same_pass_purge(
     migrated_session_factory,
 ) -> None:
     async def _run() -> None:
@@ -421,19 +425,21 @@ def test_privacy_retention_excludes_markers_before_retry_limit(
             await service.repo.save(marker_artifact)
             await session.commit()
 
-            first_count = await expire_ready_export_artifacts(session, limit=1)
-            second_count = await expire_ready_export_artifacts(session, limit=1)
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            limit=1,
+        )
 
-            assert first_count == 1
-            assert second_count == 1
-
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
             persisted_committed_retry = await service.repo.get_by_id(committed_retry_id)
             assert persisted_committed_retry is not None
             assert (
                 persisted_committed_retry.status == ExportArtifactStatus.EXPIRED.value
             )
-            assert persisted_committed_retry.storage_key is None
-            assert service.storage.exists(committed_retry_storage_key) is False
+            assert persisted_committed_retry.storage_key == committed_retry_storage_key
+            assert service.storage.exists(committed_retry_storage_key) is True
 
             persisted_marker = await service.repo.get_by_id(marker_artifact_id)
             assert persisted_marker is not None
@@ -470,18 +476,28 @@ def test_privacy_retention_expires_ready_when_retry_purge_fails(
             await service.repo.save(retry_artifact)
             await session.commit()
 
-            service = ExportArtifactService(session)
-            storage = service.storage
-
-            def _raise_storage_failure(storage_key: str) -> None:
+            def _raise_storage_failure(
+                storage: LocalStorageAdapter,
+                storage_key: str,
+            ) -> None:
+                del storage
                 del storage_key
                 raise StoragePurgeFailure("storage unavailable")
 
-            monkeypatch.setattr(storage, "delete", _raise_storage_failure)
+            monkeypatch.setattr(
+                LocalStorageAdapter,
+                "delete",
+                _raise_storage_failure,
+            )
 
-            processed = await service.mark_expired_artifacts(now=datetime.now(UTC))
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+        )
 
-            assert processed == 1
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
             persisted_retry = await service.repo.get_by_id(retry_artifact_id)
             assert persisted_retry is not None
             assert persisted_retry.status == ExportArtifactStatus.EXPIRED.value
@@ -524,21 +540,29 @@ def test_privacy_retention_expires_ready_when_erasure_retry_purge_fails(
             ) = await _create_expired_ready_artifact(session)
             await session.commit()
 
-            service = ExportArtifactService(session)
-            storage = service.storage
-
-            def _raise_storage_failure(storage_key: str) -> None:
+            def _raise_storage_failure(
+                storage: LocalStorageAdapter,
+                storage_key: str,
+            ) -> None:
+                del storage
                 del storage_key
                 raise StoragePurgeFailure("storage unavailable")
 
-            monkeypatch.setattr(storage, "delete", _raise_storage_failure)
-
-            processed = await service.mark_expired_artifacts(
-                now=datetime.now(UTC),
-                limit=1,
+            monkeypatch.setattr(
+                LocalStorageAdapter,
+                "delete",
+                _raise_storage_failure,
             )
 
-            assert processed == 1
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+            limit=1,
+        )
+
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
             persisted_retry = await service.repo.get_by_id(retry_artifact_id)
             assert persisted_retry is not None
             assert persisted_retry.status == ExportArtifactStatus.CANCELLED.value
@@ -571,11 +595,15 @@ def test_privacy_retention_clears_missing_failed_upload_idempotently(
                 create_object=False,
             )
             await session.commit()
+
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            limit=1,
+        )
+
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
             service = ExportArtifactService(session)
-
-            processed = await service.mark_expired_artifacts(limit=1)
-
-            assert processed == 1
             persisted = await service.repo.get_by_id(artifact_id)
             assert persisted is not None
             assert persisted.status == ExportArtifactStatus.FAILED.value
@@ -596,14 +624,16 @@ def test_privacy_retention_prioritises_failed_upload_before_ready_expiry(
             )
             ready_id, ready_key, _ = await _create_expired_ready_artifact(session)
             await session.commit()
+
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+            limit=1,
+        )
+
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
             service = ExportArtifactService(session)
-
-            processed = await service.mark_expired_artifacts(
-                now=datetime.now(UTC),
-                limit=1,
-            )
-
-            assert processed == 1
             failed = await service.repo.get_by_id(failed_id)
             assert failed is not None
             assert failed.status == ExportArtifactStatus.FAILED.value
@@ -615,6 +645,187 @@ def test_privacy_retention_prioritises_failed_upload_before_ready_expiry(
             assert ready.status == ExportArtifactStatus.READY.value
             assert ready.storage_key == ready_key
             assert service.storage.exists(ready_key) is True
+
+    run_async(_run())
+
+
+def test_retention_pass_commits_database_work_before_failed_upload_purge(
+    isolated_export_storage,
+    monkeypatch,
+    migrated_session_factory,
+) -> None:
+    class StoragePurgeFailure(RuntimeError):
+        pass
+
+    transaction_states: list[bool] = []
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            retained_ids = await _create_retained_privacy_rows(session)
+            artifact_id, storage_key = await _create_failed_upload_retry_artifact(
+                session,
+                create_object=True,
+            )
+            await session.commit()
+
+        def _fail_purge(
+            service: ExportArtifactService,
+            purge,
+        ) -> None:
+            del purge
+            transaction_states.append(service.session.in_transaction())
+            raise StoragePurgeFailure("storage unavailable")
+
+        monkeypatch.setattr(
+            ExportArtifactService,
+            "delete_export_storage_purge_object",
+            _fail_purge,
+        )
+
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            limit=1,
+        )
+
+        assert summary.expired_export_artifacts == 0
+        assert summary.anonymised_invites == 1
+        assert summary.scrubbed_outbox_events == 1
+        assert summary.minimised_audit_events == 1
+        assert summary.cleaned_dsr_idempotency_keys == 1
+        assert transaction_states == [False]
+
+        async with migrated_session_factory() as session:
+            invite = await session.get(Invite, retained_ids["invite_id"])
+            assert invite is not None
+            assert invite.email.endswith(f"@{SCRUBBED_INVITE_EMAIL_DOMAIN}")
+
+            artifact = await ExportArtifactService(session).repo.get_by_id(artifact_id)
+            assert artifact is not None
+            assert artifact.status == ExportArtifactStatus.FAILED.value
+            assert artifact.storage_key == storage_key
+            assert LocalStorageAdapter(
+                str(isolated_export_storage),
+                "test-secret",
+            ).exists(storage_key)
+
+    run_async(_run())
+
+
+def test_retention_metadata_clear_rechecks_failed_upload_snapshot(
+    migrated_session_factory,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            artifact_id, original_key = await _create_failed_upload_retry_artifact(
+                session,
+                create_object=True,
+            )
+            await session.commit()
+
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                service = ExportArtifactService(session)
+                purges = await service.list_failed_storage_purges(limit=1)
+                assert len(purges) == 1
+                purge = purges[0]
+
+        replacement_key = f"exports/{artifact_id}/replacement.zip"
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                service = ExportArtifactService(session)
+                artifact = await service.repo.get_by_id(artifact_id)
+                assert artifact is not None
+                artifact.storage_key = replacement_key
+                await service.repo.save(artifact)
+                service.storage.put_bytes(
+                    replacement_key,
+                    b"replacement",
+                    "application/zip",
+                )
+
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            assert session.in_transaction() is False
+            service.delete_export_storage_purge_object(purge)
+
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                cleared = await ExportArtifactService(
+                    session
+                ).clear_export_storage_purge_metadata(purge)
+                assert cleared is False
+
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            persisted = await service.repo.get_by_id(artifact_id)
+            assert persisted is not None
+            assert persisted.storage_key == replacement_key
+            assert service.storage.exists(original_key) is False
+            assert service.storage.exists(replacement_key) is True
+
+    run_async(_run())
+
+
+def test_retention_retries_after_metadata_clear_transaction_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    migrated_session_factory,
+) -> None:
+    class MetadataClearFailure(RuntimeError):
+        pass
+
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            artifact_id, storage_key = await _create_failed_upload_retry_artifact(
+                session,
+                create_object=True,
+            )
+            await session.commit()
+
+        original_clear = ExportArtifactService.clear_export_storage_purge_metadata
+
+        async def _fail_after_clear(
+            service: ExportArtifactService,
+            purge,
+        ) -> bool:
+            cleared = await original_clear(service, purge)
+            assert cleared is True
+            raise MetadataClearFailure("metadata transaction failed")
+
+        monkeypatch.setattr(
+            ExportArtifactService,
+            "clear_export_storage_purge_metadata",
+            _fail_after_clear,
+        )
+
+        with pytest.raises(MetadataClearFailure, match="transaction failed"):
+            await run_privacy_retention_pass(
+                migrated_session_factory,
+                limit=1,
+            )
+
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            persisted = await service.repo.get_by_id(artifact_id)
+            assert persisted is not None
+            assert persisted.storage_key == storage_key
+            assert service.storage.exists(storage_key) is False
+
+        monkeypatch.setattr(
+            ExportArtifactService,
+            "clear_export_storage_purge_metadata",
+            original_clear,
+        )
+
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            limit=1,
+        )
+
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            persisted = await ExportArtifactService(session).repo.get_by_id(artifact_id)
+            assert persisted is not None
+            assert persisted.storage_key is None
 
     run_async(_run())
 

@@ -246,6 +246,15 @@ failed generation/upload retries, READY-to-EXPIRED transitions, and previously
 expired object retries. A storage failure does not prevent unrelated READY rows
 from becoming non-downloadable when useful work remains in the pass.
 
+Every retry purge uses three committed phases. The runner first commits ordinary
+retention mutations and a bounded snapshot of non-downloadable cleanup targets.
+It then deletes local/S3-compatible objects without an active database
+transaction and conditionally clears metadata in a later short transaction.
+Metadata is cleared only while artifact ID, status, storage backend, and key
+still match the committed snapshot. A timeout, process failure, metadata
+conflict, or final transaction rollback therefore keeps a durable retry key.
+Synchronous storage adapters are offloaded from the async event loop.
+
 ### Production scheduling guidance
 
 Run retention after database migrations and with the same application image,

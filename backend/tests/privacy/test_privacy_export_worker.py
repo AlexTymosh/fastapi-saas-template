@@ -18,6 +18,7 @@ from app.core.config.settings import get_settings
 from app.privacy.erasures.remaining_inventory import (
     minimise_export_artifacts_for_approved_erase_request,
 )
+from app.privacy.maintenance import run_privacy_retention_pass
 from app.privacy.models.data_subject_request import DataSubjectRequest
 from app.privacy.models.export_artifact import (
     ExportArtifact,
@@ -492,12 +493,11 @@ def test_worker_cannot_publish_after_erasure_cleanup_commits(
                 == "missing"
             )
 
-            async with migrated_session_factory() as session:
-                async with session.begin():
-                    processed = await ExportArtifactService(
-                        session
-                    ).mark_expired_artifacts(limit=1)
-                    assert processed == 1
+            summary = await run_privacy_retention_pass(
+                migrated_session_factory,
+                limit=1,
+            )
+            assert summary.expired_export_artifacts == 1
         finally:
             release_stale_write.set()
 
@@ -741,12 +741,12 @@ def test_worker_retains_failed_upload_key_when_immediate_cleanup_fails(
     monkeypatch.setattr(LocalStorageAdapter, "delete", original_delete)
 
     async def _retry_cleanup() -> ExportArtifact:
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            limit=1,
+        )
+        assert summary.expired_export_artifacts == 1
         async with migrated_session_factory() as session:
-            async with session.begin():
-                processed = await ExportArtifactService(session).mark_expired_artifacts(
-                    limit=1
-                )
-                assert processed == 1
             persisted = await session.get(ExportArtifact, artifact_id)
             assert persisted is not None
             return persisted

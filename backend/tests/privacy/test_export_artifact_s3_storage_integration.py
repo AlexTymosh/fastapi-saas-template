@@ -20,6 +20,7 @@ from testcontainers.core.container import DockerContainer
 
 from app.audit.context import AuditContext
 from app.core.config.settings import get_settings
+from app.privacy.maintenance import run_privacy_retention_pass
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
@@ -321,11 +322,18 @@ def test_export_artifact_retention_expires_before_purging_minio_object(
             artifact.completed_at = expired_at - timedelta(minutes=1)
             artifact.expires_at = expired_at
             await service.repo.save(artifact)
+            artifact_id = artifact.id
+            await session.commit()
 
-            expired_count = await service.mark_expired_artifacts(now=datetime.now(UTC))
-            expired = await service.repo.get_by_id(artifact.id)
+        first_summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+        )
 
-            assert expired_count == 1
+        assert first_summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            expired = await service.repo.get_by_id(artifact_id)
             assert expired is not None
             assert expired.status == ExportArtifactStatus.EXPIRED.value
             assert expired.storage_key == storage_key
@@ -335,13 +343,15 @@ def test_export_artifact_retention_expires_before_purging_minio_object(
             assert expired.checksum_sha256 == "0" * 64
             assert minio_export_storage.adapter.exists(storage_key)
 
-            await session.commit()
+        second_summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+        )
+
+        assert second_summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
             service = ExportArtifactService(session)
-
-            purged_count = await service.mark_expired_artifacts(now=datetime.now(UTC))
-            purged = await service.repo.get_by_id(artifact.id)
-
-            assert purged_count == 1
+            purged = await service.repo.get_by_id(artifact_id)
             assert purged is not None
             assert purged.status == ExportArtifactStatus.EXPIRED.value
             assert purged.storage_key is None

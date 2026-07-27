@@ -13,6 +13,7 @@ from app.audit.context import AuditContext
 from app.audit.models.audit_event import AuditAction, AuditEvent
 from app.core.config.settings import get_settings
 from app.core.errors import ConflictError
+from app.privacy.maintenance import run_privacy_retention_pass
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestExecutionStatus,
@@ -1100,15 +1101,22 @@ def test_mark_expired_artifacts_prioritizes_cancelled_erasure_retry(
             routine_artifact.completed_at = expired_at - timedelta(minutes=1)
             routine_artifact.expires_at = expired_at
             await service.repo.save(routine_artifact)
+            retry_artifact_id = retry_artifact.id
+            routine_artifact_id = routine_artifact.id
+            await session.commit()
 
-            processed = await service.mark_expired_artifacts(
-                now=datetime.now(UTC),
-                limit=1,
-            )
-            persisted_retry = await service.repo.get_by_id(retry_artifact.id)
-            persisted_routine = await service.repo.get_by_id(routine_artifact.id)
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+            limit=1,
+        )
 
-            assert processed == 1
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            persisted_retry = await service.repo.get_by_id(retry_artifact_id)
+            persisted_routine = await service.repo.get_by_id(routine_artifact_id)
+
             assert persisted_retry is not None
             assert persisted_retry.status == ExportArtifactStatus.CANCELLED.value
             assert persisted_retry.storage_key is None
@@ -1157,11 +1165,18 @@ def test_mark_expired_artifacts_retries_cancelled_erasure_storage_purge(
             artifact.requested_by_user_id = None
             artifact.generated_by_user_id = None
             await service.repo.save(artifact)
+            artifact_id = artifact.id
+            await session.commit()
 
-            processed = await service.mark_expired_artifacts(now=datetime.now(UTC))
-            persisted = await service.repo.get_by_id(artifact.id)
+        summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+        )
 
-            assert processed == 1
+        assert summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            persisted = await service.repo.get_by_id(artifact_id)
             assert persisted is not None
             assert persisted.status == ExportArtifactStatus.CANCELLED.value
             assert persisted.failure_reason_code == "subject_erasure_requested"
@@ -1211,17 +1226,29 @@ def test_mark_expired_artifacts_preserves_cancelled_erasure_retry_on_failure(
             artifact.requested_by_user_id = None
             artifact.generated_by_user_id = None
             await service.repo.save(artifact)
+            artifact_id = artifact.id
+            await session.commit()
 
-            def _raise_delete(key: str) -> None:
-                del key
+            def _raise_delete(service, purge) -> None:
+                del service, purge
                 raise RuntimeError("storage offline")
 
-            monkeypatch.setattr(storage, "delete", _raise_delete)
+            monkeypatch.setattr(
+                ExportArtifactService,
+                "delete_export_storage_purge_object",
+                _raise_delete,
+            )
 
-            with pytest.raises(RuntimeError, match="storage offline"):
-                await service.mark_expired_artifacts(now=datetime.now(UTC))
+        with pytest.raises(RuntimeError, match="storage offline"):
+            await run_privacy_retention_pass(
+                migrated_session_factory,
+                now=datetime.now(UTC),
+            )
 
-            persisted = await service.repo.get_by_id(artifact.id)
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            storage = service.storage
+            persisted = await service.repo.get_by_id(artifact_id)
             assert persisted is not None
             assert persisted.status == ExportArtifactStatus.CANCELLED.value
             assert persisted.failure_reason_code == "subject_erasure_requested"

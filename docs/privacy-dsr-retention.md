@@ -54,6 +54,12 @@ and DSR idempotency rows.
   until object deletion succeeds. They are non-downloadable and have second
   cleanup priority, before new READY expiry work. Missing objects are accepted
   as an idempotent cleanup success.
+- Export purge candidates are captured in a short committed database phase.
+  Object deletion runs without an active database transaction, and matching
+  metadata is cleared in a later transaction only while artifact ID, status,
+  backend and key still match the snapshot. Storage latency therefore cannot
+  extend export row locks or hold invite, outbox, audit and DSR retention
+  mutations open. Delete or final-commit failures keep the durable retry key.
 - Export publishers first create a storage reservation and publish only by
   replacing that exact revision. Cleanup conditionally removes the current
   reservation or object revision before clearing the database key. A publisher
