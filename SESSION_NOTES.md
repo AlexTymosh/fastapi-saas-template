@@ -183,6 +183,10 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
   revision. A stale lease cannot interleave with or replace committed bytes.
 - Successful publication consumes its reservation and skips cancellation, so a
   transient post-publication cleanup error cannot fail a valid export.
+- Ambiguous S3 reservation writes are reconciled with `HeadObject`. Only a
+  marker owned by the same processing token is accepted; a missing key is
+  conditionally retried, a conflicting owner fails closed, and an unverifiable
+  state keeps the committed intent recoverable.
 - An ambiguous S3 conditional response is accepted only when `HeadObject`
   confirms the committed checksum and size; all other states fail closed.
 - S3 response timeouts and connection closures use the same postcondition
@@ -220,10 +224,10 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
 Verification completed in the implementation environment:
 
 - Ruff format and lint: passed for the complete backend.
-- Focused retention/export/worker/storage/docs suite: 104 passed.
-- Privacy suite without container/external-DB tests: 454 passed.
+- Focused retention/export/worker/storage/docs suite: 109 passed.
+- Privacy suite without container/external-DB tests: 459 passed.
 - Contract suite: 111 passed.
-- Complete lightweight backend suite: 1345 passed.
+- Complete lightweight backend suite: 1350 passed.
 - Four MinIO container tests could not start because the environment has no
   Docker socket permission. Run them locally and in CI before merge.
 

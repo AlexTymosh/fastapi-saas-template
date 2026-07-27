@@ -122,25 +122,26 @@ class S3CompatibleStorageAdapter:
                 response = self.client.put_object(**params)
             except ClientError as exc:
                 if self._is_precondition_failure(exc):
-                    existing = self._head_object(object_key)
-                    if existing is None:
-                        continue
-                    metadata = existing.get("Metadata") or {}
-                    revision = existing.get("ETag")
-                    if metadata.get(
-                        _RESERVATION_OWNER_METADATA_KEY
-                    ) == owner_token and isinstance(revision, str):
-                        return StoragePublicationReservation(
-                            key=key,
-                            owner_token=owner_token,
-                            revision=revision,
-                        )
-                    raise StorageObjectConflictError(
-                        "Storage key is reserved or published by another writer"
-                    ) from None
+                    reservation = self._reconcile_reservation(
+                        key=key,
+                        object_key=object_key,
+                        owner_token=owner_token,
+                    )
+                    if reservation is not None:
+                        return reservation
+                    continue
                 if self._is_conditional_request_conflict(exc):
                     continue
                 raise
+            except HTTPClientError:
+                reservation = self._reconcile_reservation(
+                    key=key,
+                    object_key=object_key,
+                    owner_token=owner_token,
+                )
+                if reservation is not None:
+                    return reservation
+                continue
             revision = response.get("ETag")
             if not isinstance(revision, str):
                 raise StorageObjectConflictError(
@@ -154,6 +155,30 @@ class S3CompatibleStorageAdapter:
 
         raise StorageObjectConflictError(
             "Conditional storage reservation did not settle"
+        )
+
+    def _reconcile_reservation(
+        self,
+        *,
+        key: str,
+        object_key: str,
+        owner_token: str,
+    ) -> StoragePublicationReservation | None:
+        existing = self._head_object(object_key)
+        if existing is None:
+            return None
+        metadata = existing.get("Metadata") or {}
+        revision = existing.get("ETag")
+        if metadata.get(_RESERVATION_OWNER_METADATA_KEY) == owner_token and isinstance(
+            revision, str
+        ):
+            return StoragePublicationReservation(
+                key=key,
+                owner_token=owner_token,
+                revision=revision,
+            )
+        raise StorageObjectConflictError(
+            "Storage key is reserved or published by another writer"
         )
 
     def publish_reserved_file(

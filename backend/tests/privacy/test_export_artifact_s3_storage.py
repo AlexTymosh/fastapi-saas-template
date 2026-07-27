@@ -7,7 +7,7 @@ import io
 import boto3
 import pytest
 from botocore.config import Config
-from botocore.exceptions import ConnectionClosedError, ReadTimeoutError
+from botocore.exceptions import ClientError, ConnectionClosedError, ReadTimeoutError
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
@@ -200,6 +200,147 @@ def test_s3_storage_reserved_publish_uses_compare_and_swap(
         )
 
     assert stored.size_bytes == len(payload)
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    [
+        ReadTimeoutError(endpoint_url="https://s3.example.test"),
+        ConnectionClosedError(endpoint_url="https://s3.example.test"),
+    ],
+    ids=["read-timeout", "connection-closed"],
+)
+def test_s3_storage_recovers_owned_reservation_after_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+    transport_error: Exception,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    object_key = "privacy-exports/exports/artifact.zip"
+
+    def _raise_transport_error(**kwargs) -> None:
+        assert kwargs["IfNoneMatch"] == "*"
+        assert kwargs["Metadata"] == {"publication-reservation-owner": "worker-token"}
+        raise transport_error
+
+    def _head_owned_reservation(**kwargs):
+        assert kwargs == {
+            "Bucket": "privacy-exports",
+            "Key": object_key,
+        }
+        return {
+            "ContentLength": 0,
+            "Metadata": {
+                "publication-reservation-owner": "worker-token",
+            },
+            "ETag": '"reservation-etag"',
+        }
+
+    monkeypatch.setattr(client, "put_object", _raise_transport_error)
+    monkeypatch.setattr(client, "head_object", _head_owned_reservation)
+
+    reservation = storage.reserve_file_publication(
+        "exports/artifact.zip",
+        owner_token="worker-token",
+    )
+
+    assert reservation == StoragePublicationReservation(
+        key="exports/artifact.zip",
+        owner_token="worker-token",
+        revision='"reservation-etag"',
+    )
+
+
+def test_s3_storage_retries_missing_reservation_after_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    transport_error = ReadTimeoutError(endpoint_url="https://s3.example.test")
+    put_calls = 0
+
+    def _put_reservation(**_kwargs):
+        nonlocal put_calls
+        put_calls += 1
+        if put_calls == 1:
+            raise transport_error
+        return {"ETag": '"reservation-etag"'}
+
+    def _head_missing_reservation(**_kwargs):
+        raise ClientError(
+            {
+                "Error": {"Code": "NoSuchKey"},
+                "ResponseMetadata": {"HTTPStatusCode": 404},
+            },
+            "HeadObject",
+        )
+
+    monkeypatch.setattr(client, "put_object", _put_reservation)
+    monkeypatch.setattr(client, "head_object", _head_missing_reservation)
+
+    reservation = storage.reserve_file_publication(
+        "exports/artifact.zip",
+        owner_token="worker-token",
+    )
+
+    assert put_calls == 2
+    assert reservation.revision == '"reservation-etag"'
+
+
+def test_s3_storage_rejects_foreign_reservation_after_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+
+    def _raise_transport_error(**_kwargs) -> None:
+        raise ConnectionClosedError(endpoint_url="https://s3.example.test")
+
+    def _head_foreign_reservation(**_kwargs):
+        return {
+            "ContentLength": 0,
+            "Metadata": {
+                "publication-reservation-owner": "other-worker-token",
+            },
+            "ETag": '"other-reservation-etag"',
+        }
+
+    monkeypatch.setattr(client, "put_object", _raise_transport_error)
+    monkeypatch.setattr(client, "head_object", _head_foreign_reservation)
+
+    with pytest.raises(
+        StorageObjectConflictError,
+        match="reserved or published by another writer",
+    ):
+        storage.reserve_file_publication(
+            "exports/artifact.zip",
+            owner_token="worker-token",
+        )
+
+
+def test_s3_storage_reports_unknown_reservation_after_reconciliation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    inspection_error = ConnectionClosedError(endpoint_url="https://s3.example.test")
+
+    def _raise_reservation_error(**_kwargs) -> None:
+        raise ReadTimeoutError(endpoint_url="https://s3.example.test")
+
+    def _raise_inspection_error(**_kwargs) -> None:
+        raise inspection_error
+
+    monkeypatch.setattr(client, "put_object", _raise_reservation_error)
+    monkeypatch.setattr(client, "head_object", _raise_inspection_error)
+
+    with pytest.raises(StorageObjectStateUnknownError) as caught:
+        storage.reserve_file_publication(
+            "exports/artifact.zip",
+            owner_token="worker-token",
+        )
+
+    assert caught.value.__cause__ is inspection_error
 
 
 def test_s3_storage_inspects_only_matching_committed_object(

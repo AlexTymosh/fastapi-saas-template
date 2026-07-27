@@ -73,6 +73,12 @@ complete; a successful compare-and-swap has already consumed the reservation.
 If the provider may have committed a publication but its state cannot be
 inspected, the worker leaves the committed intent in `processing` for stale
 recovery instead of marking it failed or cancelling its reservation.
+Reservation creation follows the same acknowledgement-loss rule. If its
+conditional `PutObject` raises an HTTP transport error, the adapter inspects the
+key and accepts only a reservation whose owner metadata matches the current
+processing token and whose ETag is available. A confirmed missing key is retried
+with `If-None-Match: *`; another owner or a published object fails closed. If
+inspection is unavailable, the committed intent remains recoverable.
 Storage I/O is never performed while a database transaction is held.
 
 Recovery cleanup revalidates the exact active upload intent before storage I/O.
@@ -151,13 +157,15 @@ The S3-compatible provider must also implement conditional `PutObject` with
 SHA-256 checksum validation and read-after-write `HeadObject` metadata.
 Deployment smoke tests must fail closed instead of retrying a cleanup conflict
 as an unconditional create or overwrite when these capabilities are
-unavailable. If a conditional publish reports an ambiguous `409` or `412`, or
-its HTTP response times out or closes after the provider may already have
-stored the object, the adapter reconciles the result with `HeadObject`. It
-accepts the operation only when the committed SHA-256 and size match. Missing,
-reserved or different bytes remain a publication failure. If `HeadObject`
-cannot determine the state, the durable intent remains recoverable and no
-cleanup decision is made from the ambiguous response.
+unavailable. If reservation creation loses its HTTP acknowledgement, the adapter
+uses `HeadObject` to recover only the marker owned by the same processing token.
+If a conditional publish reports an ambiguous `409` or `412`, or its HTTP
+response times out or closes after the provider may already have stored the
+object, the adapter reconciles the result with `HeadObject`. It accepts the
+operation only when the committed SHA-256 and size match. Missing, reserved or
+different bytes remain a publication failure. If `HeadObject` cannot determine
+the state, the durable intent remains recoverable and no cleanup decision is
+made from the ambiguous response.
 
 Recovery cleanup also reads the current ETag and sends `DeleteObject` with
 `If-Match`. A concurrent `409` or `412` triggers a fresh `HeadObject`; matching

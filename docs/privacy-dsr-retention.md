@@ -67,9 +67,11 @@ and DSR idempotency rows.
   object. A successful publish consumes the reservation and does not run a
   separate cancellation request. An ambiguous conditional response is accepted
   only when storage metadata matches the committed checksum and size.
-  Transport-level acknowledgement failures use the same `HeadObject`
-  reconciliation. If object state cannot be inspected, the committed intent
-  remains `processing` for stale recovery instead of entering failed cleanup.
+  Transport-level acknowledgement failures use `HeadObject` reconciliation for
+  both reservation creation and publication. Reservation recovery additionally
+  requires owner metadata matching the current processing token. If object state
+  cannot be inspected, the committed intent remains `processing` for stale
+  recovery instead of entering failed cleanup.
 - Stale-upload recovery revalidates its active lease and committed identity
   before cleanup. It deletes only a reserved or conflicting storage revision;
   matching bytes that appear after lease turnover are preserved. Local
