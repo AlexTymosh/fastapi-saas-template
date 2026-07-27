@@ -70,6 +70,11 @@ and DSR idempotency rows.
   Transport-level acknowledgement failures use the same `HeadObject`
   reconciliation. If object state cannot be inspected, the committed intent
   remains `processing` for stale recovery instead of entering failed cleanup.
+- Stale-upload recovery revalidates its active lease and committed identity
+  before cleanup. It deletes only a reserved or conflicting storage revision;
+  matching bytes that appear after lease turnover are preserved. Local
+  publication and recovery deletion share a cross-process lock, while S3 uses
+  `HeadObject` plus conditional `DeleteObject` with `If-Match`.
 - READY export artifacts transition to `expired` while keeping `storage_key` as
   a purge retry marker. This transition is independent of retry purge failures,
   so a temporary object-store outage must not keep unrelated expired READY

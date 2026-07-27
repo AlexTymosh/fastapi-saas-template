@@ -818,12 +818,16 @@ class ExportArtifactService:
         storage = self._storage_for_backend(prepared.storage_backend)
         storage.cancel_file_publication(reservation)
 
-    def delete_prepared_export_storage_object(
+    def delete_prepared_export_storage_object_if_not_matching(
         self,
         prepared: PreparedExportArchive,
-    ) -> None:
+    ) -> StorageObjectState:
         storage = self._storage_for_backend(prepared.storage_backend)
-        storage.delete(prepared.storage_key)
+        return storage.delete_file_if_not_matching(
+            prepared.storage_key,
+            checksum_sha256=prepared.checksum_sha256,
+            size_bytes=prepared.size_bytes,
+        )
 
     async def reset_prepared_export_upload_intent(
         self,

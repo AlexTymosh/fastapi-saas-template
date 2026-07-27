@@ -242,6 +242,19 @@ class S3CompatibleStorageAdapter:
         size_bytes: int,
     ) -> StorageObjectState:
         response = self._head_object(self._object_key(key))
+        return self._state_from_head_object(
+            response,
+            checksum_sha256=checksum_sha256,
+            size_bytes=size_bytes,
+        )
+
+    @staticmethod
+    def _state_from_head_object(
+        response: dict[str, Any] | None,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState:
         if response is None:
             return StorageObjectState.MISSING
         metadata = response.get("Metadata") or {}
@@ -253,6 +266,58 @@ class S3CompatibleStorageAdapter:
         ):
             return StorageObjectState.MATCHING
         return StorageObjectState.CONFLICT
+
+    def delete_file_if_not_matching(
+        self,
+        key: str,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState:
+        object_key = self._object_key(key)
+        last_error: Exception | None = None
+        for _ in range(self.max_conditional_write_attempts):
+            existing = self._head_object(object_key)
+            state = self._state_from_head_object(
+                existing,
+                checksum_sha256=checksum_sha256,
+                size_bytes=size_bytes,
+            )
+            if state in {
+                StorageObjectState.MISSING,
+                StorageObjectState.MATCHING,
+            }:
+                return state
+
+            revision = existing.get("ETag") if existing is not None else None
+            if not isinstance(revision, str):
+                raise StorageObjectConflictError(
+                    "Stored object metadata omitted its revision"
+                )
+            try:
+                self.client.delete_object(
+                    Bucket=self.bucket_name,
+                    Key=object_key,
+                    IfMatch=revision,
+                )
+            except ClientError as exc:
+                if self._is_missing_object(exc):
+                    return StorageObjectState.MISSING
+                if self._is_precondition_failure(
+                    exc
+                ) or self._is_conditional_request_conflict(exc):
+                    last_error = None
+                    continue
+                last_error = exc
+                continue
+            except BotoCoreError as exc:
+                last_error = exc
+                continue
+            return StorageObjectState.MISSING
+
+        raise StorageObjectStateUnknownError(
+            "Conditional storage deletion outcome could not be verified"
+        ) from last_error
 
     def _published_object_matches(
         self,

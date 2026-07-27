@@ -54,7 +54,9 @@ reviewed, merged, and CI is green.
   state exists.
 - A failed cleanup keeps a durable retry key.
 - Do not promise exactly-once SMTP delivery. SMTP remains at-least-once.
-- Do not introduce a new framework or dependency.
+- Do not introduce a new framework. Add a dependency only when a small,
+  maintained implementation is safer than duplicating platform-specific
+  coordination code.
 - Prefer the existing `export_artifacts.storage_key` as the durable cleanup
   marker. Add a migration only if code-level validation proves it necessary.
 - Keep code lines at or below 88 characters.
@@ -190,6 +192,13 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
   an in-flight publisher cannot recreate an object after the key is cleared.
 - Missing, reserved or conflicting recovery objects are fenced before the
   active lease resets the old intent and generates a new key.
+- Recovery cleanup revalidates the exact active intent and deletes only while
+  storage does not match the committed checksum and size. If lease turnover
+  allows matching bytes to win, the stale cleaner preserves them.
+- Local publication and recovery cleanup use bounded cross-process file-lock
+  shards. S3 recovery cleanup rechecks `HeadObject` and deletes only the
+  inspected ETag with `If-Match`.
+- Temporary archives are discarded even when reservation cancellation raises.
 - Upload and ready/audit failures first commit a non-downloadable `failed` row.
 - Immediate cleanup runs outside a database transaction; failed cleanup keeps
   the key for retention.
@@ -199,7 +208,9 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
   blocking storage deletion without an active transaction, and clears matching
   metadata in a later short transaction. Storage failures therefore do not hold
   export row locks or unrelated retention mutations open.
-- No migration, table, or dependency was added.
+- No migration or table was added. `filelock>=3.29,<4.0` is now an explicit
+  runtime dependency for portable local cross-process storage fencing; the
+  package was already present transitively in the lockfile.
 - S3-compatible deployments must support conditional `PutObject` with
   `If-None-Match: *` and `If-Match`, conditional `DeleteObject` with `If-Match`,
   SHA-256 validation and read-after-write object metadata.
@@ -209,10 +220,10 @@ uv run pytest -q tests/privacy/test_export_artifact_s3_storage_integration.py
 Verification completed in the implementation environment:
 
 - Ruff format and lint: passed for the complete backend.
-- Focused retention/export/worker/storage/docs suite: 97 passed.
-- Privacy suite without container/external-DB tests: 450 passed.
+- Focused retention/export/worker/storage/docs suite: 104 passed.
+- Privacy suite without container/external-DB tests: 454 passed.
 - Contract suite: 111 passed.
-- Complete lightweight backend suite: 1338 passed.
+- Complete lightweight backend suite: 1345 passed.
 - Four MinIO container tests could not start because the environment has no
   Docker socket permission. Run them locally and in CI before merge.
 

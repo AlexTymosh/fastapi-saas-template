@@ -27,7 +27,10 @@ from app.privacy.models.export_artifact import (
     ExportArtifactStorageBackend,
 )
 from app.privacy.services.export_artifacts import ExportArtifactService
-from app.privacy.storage.base import StorageObjectStateUnknownError
+from app.privacy.storage.base import (
+    StorageObjectState,
+    StorageObjectStateUnknownError,
+)
 from app.privacy.storage.local import LocalStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -363,6 +366,149 @@ def test_worker_fences_storage_write_after_lease_turnover(
     assert len(list(storage_path.rglob("*.zip"))) == 1
 
 
+def test_recovery_cleanup_preserves_ready_object_after_lease_turnover(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    storage_path = tmp_path / "worker-exports"
+    _configure_worker(
+        monkeypatch,
+        database_url=migrated_database_url,
+        storage_path=storage_path,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "get_session_factory",
+        lambda: migrated_session_factory,
+    )
+    artifact_id = run_async(_provision_queued_artifact(migrated_session_factory))
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
+    original_cleanup = (
+        ExportArtifactService.delete_prepared_export_storage_object_if_not_matching
+    )
+
+    def _controlled_cleanup(self, prepared):
+        cleanup_started.set()
+        if not release_cleanup.wait(timeout=10):
+            raise TimeoutError("Timed out waiting to release recovery cleanup")
+        return original_cleanup(self, prepared)
+
+    monkeypatch.setattr(
+        ExportArtifactService,
+        "delete_prepared_export_storage_object_if_not_matching",
+        _controlled_cleanup,
+    )
+
+    async def _expire_lease() -> None:
+        async with migrated_session_factory() as session:
+            async with session.begin():
+                artifact = await session.get(ExportArtifact, artifact_id)
+                assert artifact is not None
+                artifact.processing_lease_expires_at = datetime.now(UTC) - timedelta(
+                    seconds=1
+                )
+
+    async def _reserve(prepared, lease):
+        async with migrated_session_factory() as session:
+            return await asyncio.to_thread(
+                ExportArtifactService(session).reserve_prepared_export_archive,
+                prepared,
+                processing_token=lease.processing_token,
+            )
+
+    async def _publish(prepared, reservation) -> None:
+        async with migrated_session_factory() as session:
+            await asyncio.to_thread(
+                ExportArtifactService(session).publish_prepared_export_archive,
+                prepared,
+                reservation,
+            )
+
+    async def _run() -> tuple[bool, str, str, int, str]:
+        first_lease = (await worker_module._claim_queued_artifact_leases(batch_size=1))[
+            0
+        ]
+        original_prepared = await worker_module._prepare_export_archive(
+            lease=first_lease
+        )
+        assert original_prepared.archive_path is not None
+        reservation = await _reserve(original_prepared, first_lease)
+
+        try:
+            await _expire_lease()
+            recovery_lease = (
+                await worker_module._claim_queued_artifact_leases(batch_size=1)
+            )[0]
+            recovery_prepared = await worker_module._prepare_export_archive(
+                lease=recovery_lease
+            )
+            assert recovery_prepared.archive_path is None
+            assert not await worker_module._recover_committed_export_archive(
+                prepared=recovery_prepared
+            )
+
+            stale_cleanup = asyncio.create_task(
+                worker_module._reset_committed_export_upload_intent(
+                    lease=recovery_lease,
+                    prepared=recovery_prepared,
+                )
+            )
+            started = await asyncio.to_thread(cleanup_started.wait, 10)
+            assert started
+
+            await _publish(original_prepared, reservation)
+            await _expire_lease()
+            current_lease = (
+                await worker_module._claim_queued_artifact_leases(batch_size=1)
+            )[0]
+            current_prepared = await worker_module._prepare_export_archive(
+                lease=current_lease
+            )
+            assert await worker_module._recover_committed_export_archive(
+                prepared=current_prepared
+            )
+            await worker_module._mark_export_ready(
+                lease=current_lease,
+                prepared=current_prepared,
+            )
+            release_cleanup.set()
+            reset = await stale_cleanup
+
+            async with migrated_session_factory() as session:
+                artifact = await session.get(ExportArtifact, artifact_id)
+                assert artifact is not None
+                assert artifact.storage_key is not None
+                assert artifact.checksum_sha256 is not None
+                assert artifact.size_bytes is not None
+                return (
+                    reset,
+                    artifact.status,
+                    artifact.checksum_sha256,
+                    artifact.size_bytes,
+                    artifact.storage_key,
+                )
+        finally:
+            release_cleanup.set()
+            ExportArtifactService.discard_prepared_export_archive(original_prepared)
+
+    reset, status, checksum, size_bytes, storage_key = run_async(_run())
+
+    storage = LocalStorageAdapter(str(storage_path), "test-secret")
+    assert reset is False
+    assert status == ExportArtifactStatus.READY.value
+    assert (
+        storage.inspect_file(
+            storage_key,
+            checksum_sha256=checksum,
+            size_bytes=size_bytes,
+        )
+        == StorageObjectState.MATCHING
+    )
+
+
 def test_worker_cannot_publish_after_erasure_cleanup_commits(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -608,6 +754,51 @@ def test_worker_skips_reservation_cancellation_after_successful_publication(
     assert LocalStorageAdapter(str(storage_path), "test-secret").exists(
         ready.storage_key
     )
+
+
+def test_worker_discards_staging_archive_when_reservation_cancellation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    migrated_database_url: str,
+    migrated_session_factory,
+) -> None:
+    storage_path = tmp_path / "worker-exports"
+    _configure_worker(
+        monkeypatch,
+        database_url=migrated_database_url,
+        storage_path=storage_path,
+    )
+    artifact_id = run_async(_provision_queued_artifact(migrated_session_factory))
+
+    def _fail_publication(self, reservation, path, content_type, **kwargs) -> None:
+        raise RuntimeError("publication failed")
+
+    def _fail_cancellation(self, reservation) -> None:
+        raise RuntimeError("reservation cancellation unavailable")
+
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "publish_reserved_file",
+        _fail_publication,
+    )
+    monkeypatch.setattr(
+        LocalStorageAdapter,
+        "cancel_file_publication",
+        _fail_cancellation,
+    )
+
+    exit_code = run_async(run_worker(batch_size=1, dry_run=False, once=True))
+
+    async def _load_failed_artifact():
+        async with migrated_session_factory() as session:
+            return await session.get(ExportArtifact, artifact_id)
+
+    failed = run_async(_load_failed_artifact())
+
+    assert exit_code == 0
+    assert failed is not None
+    assert failed.status == ExportArtifactStatus.FAILED.value
+    assert not list(storage_path.glob("privacy-export-*.tmp"))
 
 
 def test_worker_recovers_after_publication_state_cannot_be_verified(

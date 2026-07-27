@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
+from filelock import FileLock
 from pydantic import SecretStr
 
 from app.privacy.storage.base import (
@@ -24,6 +25,7 @@ _FILE_COPY_CHUNK_SIZE = 1024 * 1024
 _PUBLISH_RETRY_LIMIT = 3
 _PUBLISHED_OBJECT_NAME = "object"
 _RESERVATION_NAME = "reservation"
+_STORAGE_LOCK_DIRECTORY = ".locks"
 
 
 def _secret_value(secret: str | SecretStr) -> str:
@@ -80,19 +82,22 @@ class LocalStorageAdapter(StorageAdapter):
 
     def put_bytes(self, key: str, data: bytes, content_type: str) -> StoredObject:
         path = self._resolve(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        with self._lock_for_key(key):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
         return StoredObject(key=key, content_type=content_type, size_bytes=len(data))
 
     def put_file(self, key: str, path: Path, content_type: str) -> StoredObject:
         target = self._resolve(key)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("rb") as source, target.open("wb") as destination:
-            shutil.copyfileobj(source, destination, length=_FILE_COPY_CHUNK_SIZE)
+        with self._lock_for_key(key):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("rb") as source, target.open("wb") as destination:
+                shutil.copyfileobj(source, destination, length=_FILE_COPY_CHUNK_SIZE)
+            size_bytes = target.stat().st_size
         return StoredObject(
             key=key,
             content_type=content_type,
-            size_bytes=target.stat().st_size,
+            size_bytes=size_bytes,
         )
 
     def reserve_file_publication(
@@ -104,45 +109,46 @@ class LocalStorageAdapter(StorageAdapter):
         """Create a cross-process filesystem reservation for a logical key."""
 
         target = self._resolve(key)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock_for_key(key):
+            target.parent.mkdir(parents=True, exist_ok=True)
 
-        for _ in range(_PUBLISH_RETRY_LIMIT):
-            staged = target.parent / f".{target.name}.{uuid4().hex}.reservation"
-            staged.mkdir()
-            (staged / _RESERVATION_NAME).write_text(
-                owner_token,
-                encoding="utf-8",
-            )
-            try:
-                staged.rename(target)
-            except OSError:
-                shutil.rmtree(staged, ignore_errors=True)
-            else:
-                return StoragePublicationReservation(
-                    key=key,
-                    owner_token=owner_token,
-                    revision=owner_token,
+            for _ in range(_PUBLISH_RETRY_LIMIT):
+                staged = target.parent / f".{target.name}.{uuid4().hex}.reservation"
+                staged.mkdir()
+                (staged / _RESERVATION_NAME).write_text(
+                    owner_token,
+                    encoding="utf-8",
                 )
+                try:
+                    staged.rename(target)
+                except OSError:
+                    shutil.rmtree(staged, ignore_errors=True)
+                else:
+                    return StoragePublicationReservation(
+                        key=key,
+                        owner_token=owner_token,
+                        revision=owner_token,
+                    )
 
-            reservation_path = target / _RESERVATION_NAME
-            object_path = target / _PUBLISHED_OBJECT_NAME
-            if object_path.is_file() or target.is_file():
+                reservation_path = target / _RESERVATION_NAME
+                object_path = target / _PUBLISHED_OBJECT_NAME
+                if object_path.is_file() or target.is_file():
+                    raise StorageObjectConflictError(
+                        "Storage key already contains a published object"
+                    )
+                try:
+                    existing_owner = reservation_path.read_text(encoding="utf-8")
+                except FileNotFoundError:
+                    continue
+                if existing_owner == owner_token:
+                    return StoragePublicationReservation(
+                        key=key,
+                        owner_token=owner_token,
+                        revision=owner_token,
+                    )
                 raise StorageObjectConflictError(
-                    "Storage key already contains a published object"
+                    "Storage key is reserved by another publisher"
                 )
-            try:
-                existing_owner = reservation_path.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                continue
-            if existing_owner == owner_token:
-                return StoragePublicationReservation(
-                    key=key,
-                    owner_token=owner_token,
-                    revision=owner_token,
-                )
-            raise StorageObjectConflictError(
-                "Storage key is reserved by another publisher"
-            )
 
         raise StorageObjectConflictError(
             "Storage publication reservation did not settle"
@@ -165,45 +171,46 @@ class LocalStorageAdapter(StorageAdapter):
         if staged_checksum != checksum_sha256:
             raise ValueError("Prepared storage file checksum changed")
 
-        try:
-            existing_owner = reservation_path.read_text(encoding="utf-8")
-        except (FileNotFoundError, NotADirectoryError) as exc:
-            raise StorageObjectConflictError(
-                "Storage publication reservation is no longer active"
-            ) from exc
-        if (
-            existing_owner != reservation.owner_token
-            or reservation.revision != reservation.owner_token
-        ):
-            raise StorageObjectConflictError(
-                "Storage publication reservation is no longer owned"
-            )
-
-        try:
-            os.link(path, object_path)
-        except FileExistsError:
-            existing_checksum, existing_size = _checksum_and_size(object_path)
-            if existing_checksum != staged_checksum or existing_size != staged_size:
+        with self._lock_for_key(reservation.key):
+            try:
+                existing_owner = reservation_path.read_text(encoding="utf-8")
+            except (FileNotFoundError, NotADirectoryError) as exc:
                 raise StorageObjectConflictError(
-                    "Storage key already contains different bytes"
-                ) from None
-        except FileNotFoundError as exc:
-            raise StorageObjectConflictError(
-                "Storage publication reservation was removed"
-            ) from exc
-
-        try:
-            reservation_path.unlink()
-        except FileNotFoundError:
-            state = self.inspect_file(
-                reservation.key,
-                checksum_sha256=checksum_sha256,
-                size_bytes=staged_size,
-            )
-            if state != StorageObjectState.MATCHING:
+                    "Storage publication reservation is no longer active"
+                ) from exc
+            if (
+                existing_owner != reservation.owner_token
+                or reservation.revision != reservation.owner_token
+            ):
                 raise StorageObjectConflictError(
-                    "Storage publication lost its cleanup race"
-                ) from None
+                    "Storage publication reservation is no longer owned"
+                )
+
+            try:
+                os.link(path, object_path)
+            except FileExistsError:
+                existing_checksum, existing_size = _checksum_and_size(object_path)
+                if existing_checksum != staged_checksum or existing_size != staged_size:
+                    raise StorageObjectConflictError(
+                        "Storage key already contains different bytes"
+                    ) from None
+            except FileNotFoundError as exc:
+                raise StorageObjectConflictError(
+                    "Storage publication reservation was removed"
+                ) from exc
+
+            try:
+                reservation_path.unlink()
+            except FileNotFoundError:
+                state = self._inspect_file_unlocked(
+                    target,
+                    checksum_sha256=checksum_sha256,
+                    size_bytes=staged_size,
+                )
+                if state != StorageObjectState.MATCHING:
+                    raise StorageObjectConflictError(
+                        "Storage publication lost its cleanup race"
+                    ) from None
 
         return StoredObject(
             key=reservation.key,
@@ -216,15 +223,16 @@ class LocalStorageAdapter(StorageAdapter):
         reservation: StoragePublicationReservation,
     ) -> None:
         target = self._resolve(reservation.key)
-        reservation_path = target / _RESERVATION_NAME
-        object_path = target / _PUBLISHED_OBJECT_NAME
-        try:
-            owner_token = reservation_path.read_text(encoding="utf-8")
-        except (FileNotFoundError, NotADirectoryError):
-            return
-        if owner_token != reservation.owner_token or object_path.exists():
-            return
-        self._remove_target_atomically(target)
+        with self._lock_for_key(reservation.key):
+            reservation_path = target / _RESERVATION_NAME
+            object_path = target / _PUBLISHED_OBJECT_NAME
+            try:
+                owner_token = reservation_path.read_text(encoding="utf-8")
+            except (FileNotFoundError, NotADirectoryError):
+                return
+            if owner_token != reservation.owner_token or object_path.exists():
+                return
+            self._remove_target_atomically(target)
 
     def inspect_file(
         self,
@@ -234,6 +242,20 @@ class LocalStorageAdapter(StorageAdapter):
         size_bytes: int,
     ) -> StorageObjectState:
         target = self._resolve(key)
+        with self._lock_for_key(key):
+            return self._inspect_file_unlocked(
+                target,
+                checksum_sha256=checksum_sha256,
+                size_bytes=size_bytes,
+            )
+
+    @staticmethod
+    def _inspect_file_unlocked(
+        target: Path,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState:
         if not target.exists():
             return StorageObjectState.MISSING
         if target.is_dir():
@@ -250,20 +272,49 @@ class LocalStorageAdapter(StorageAdapter):
             return StorageObjectState.MATCHING
         return StorageObjectState.CONFLICT
 
+    def delete_file_if_not_matching(
+        self,
+        key: str,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState:
+        target = self._resolve(key)
+        with self._lock_for_key(key):
+            state = self._inspect_file_unlocked(
+                target,
+                checksum_sha256=checksum_sha256,
+                size_bytes=size_bytes,
+            )
+            if state == StorageObjectState.MATCHING:
+                return state
+            self._remove_target_atomically(target)
+            return StorageObjectState.MISSING
+
     def get_bytes(self, key: str) -> bytes:
         target = self._resolve(key)
-        object_path = target / _PUBLISHED_OBJECT_NAME if target.is_dir() else target
-        return object_path.read_bytes()
+        with self._lock_for_key(key):
+            object_path = target / _PUBLISHED_OBJECT_NAME if target.is_dir() else target
+            return object_path.read_bytes()
 
     def exists(self, key: str) -> bool:
         target = self._resolve(key)
-        if target.is_dir():
-            return (target / _PUBLISHED_OBJECT_NAME).is_file()
-        return target.is_file()
+        with self._lock_for_key(key):
+            if target.is_dir():
+                return (target / _PUBLISHED_OBJECT_NAME).is_file()
+            return target.is_file()
 
     def delete(self, key: str) -> None:
         target = self._resolve(key)
-        self._remove_target_atomically(target)
+        with self._lock_for_key(key):
+            self._remove_target_atomically(target)
+
+    def _lock_for_key(self, key: str) -> FileLock:
+        safe_key = self._validate_key(key)
+        lock_directory = self.base_path / _STORAGE_LOCK_DIRECTORY
+        lock_directory.mkdir(parents=True, exist_ok=True)
+        lock_shard = hashlib.sha256(safe_key.encode("utf-8")).hexdigest()[:2]
+        return FileLock(str(lock_directory / f"{lock_shard}.lock"))
 
     @staticmethod
     def _remove_target_atomically(target: Path) -> None:

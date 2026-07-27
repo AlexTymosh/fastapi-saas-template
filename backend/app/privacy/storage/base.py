@@ -69,6 +69,14 @@ class StorageAdapter(Protocol):
         size_bytes: int,
     ) -> StorageObjectState: ...
 
+    def delete_file_if_not_matching(
+        self,
+        key: str,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState: ...
+
     def get_bytes(self, key: str) -> bytes: ...
 
     def exists(self, key: str) -> bool: ...

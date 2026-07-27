@@ -108,20 +108,22 @@ async def _write_export_archive(
         else:
             publication_completed = True
     finally:
-        if (
-            reservation is not None
-            and not publication_completed
-            and not publication_outcome_unknown
-        ):
+        try:
+            if (
+                reservation is not None
+                and not publication_completed
+                and not publication_outcome_unknown
+            ):
+                await asyncio.to_thread(
+                    service.cancel_prepared_export_archive_reservation,
+                    prepared,
+                    reservation,
+                )
+        finally:
             await asyncio.to_thread(
-                service.cancel_prepared_export_archive_reservation,
+                ExportArtifactService.discard_prepared_export_archive,
                 prepared,
-                reservation,
             )
-        await asyncio.to_thread(
-            ExportArtifactService.discard_prepared_export_archive,
-            prepared,
-        )
 
 
 async def _recover_committed_export_archive(*, prepared: PreparedExportArchive) -> bool:
@@ -139,16 +141,23 @@ async def _reset_committed_export_upload_intent(
     *,
     lease: ProcessingExportLease,
     prepared: PreparedExportArchive,
-) -> None:
+) -> bool:
     """Fence the old key before allowing the active lease to choose a new one."""
 
     session_factory = get_session_factory()
     async with session_factory() as session:
         service = ExportArtifactService(session)
-        await asyncio.to_thread(
-            service.delete_prepared_export_storage_object,
+        async with session.begin():
+            await service.validate_prepared_export_upload(
+                prepared=prepared,
+                processing_token=lease.processing_token,
+            )
+        state = await asyncio.to_thread(
+            service.delete_prepared_export_storage_object_if_not_matching,
             prepared,
         )
+    if state == StorageObjectState.MATCHING:
+        return False
     async with session_factory() as session:
         async with session.begin():
             reset = await ExportArtifactService(
@@ -159,6 +168,7 @@ async def _reset_committed_export_upload_intent(
             )
             if not reset:
                 raise RuntimeError("export_upload_intent_reset_rejected")
+    return True
 
 
 async def _mark_export_ready(
@@ -262,11 +272,12 @@ async def _process_artifact(*, lease: ProcessingExportLease) -> None:
         if prepared.archive_path is None:
             recovered = await _recover_committed_export_archive(prepared=prepared)
             if not recovered:
-                await _reset_committed_export_upload_intent(
+                reset = await _reset_committed_export_upload_intent(
                     lease=lease,
                     prepared=prepared,
                 )
-                prepared = await _prepare_export_archive(lease=lease)
+                if reset:
+                    prepared = await _prepare_export_archive(lease=lease)
         if prepared.archive_path is not None:
             await _write_export_archive(lease=lease, prepared=prepared)
         await _mark_export_ready(lease=lease, prepared=prepared)

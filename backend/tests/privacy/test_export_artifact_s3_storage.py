@@ -253,6 +253,181 @@ def test_s3_storage_inspects_only_matching_committed_object(
     assert state == StorageObjectState.CONFLICT
 
 
+def test_s3_guarded_cleanup_preserves_matching_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    payload = b"privacy export archive"
+    checksum = hashlib.sha256(payload).hexdigest()
+    object_key = "privacy-exports/exports/artifact.zip"
+
+    with Stubber(client) as stubber:
+        stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": len(payload),
+                "Metadata": {"checksum-sha256": checksum},
+                "ETag": '"published-etag"',
+            },
+            {"Bucket": "privacy-exports", "Key": object_key},
+        )
+
+        state = storage.delete_file_if_not_matching(
+            "exports/artifact.zip",
+            checksum_sha256=checksum,
+            size_bytes=len(payload),
+        )
+
+    assert state == StorageObjectState.MATCHING
+
+
+def test_s3_guarded_cleanup_rechecks_after_revision_turnover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    payload = b"privacy export archive"
+    checksum = hashlib.sha256(payload).hexdigest()
+    object_key = "privacy-exports/exports/artifact.zip"
+
+    with Stubber(client) as stubber:
+        stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": 0,
+                "Metadata": {
+                    "publication-reservation-owner": "stale-publisher",
+                },
+                "ETag": '"reservation-etag"',
+            },
+            {"Bucket": "privacy-exports", "Key": object_key},
+        )
+        stubber.add_client_error(
+            "delete_object",
+            service_error_code="PreconditionFailed",
+            http_status_code=412,
+            expected_params={
+                "Bucket": "privacy-exports",
+                "Key": object_key,
+                "IfMatch": '"reservation-etag"',
+            },
+        )
+        stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": len(payload),
+                "Metadata": {"checksum-sha256": checksum},
+                "ETag": '"published-etag"',
+            },
+            {"Bucket": "privacy-exports", "Key": object_key},
+        )
+
+        state = storage.delete_file_if_not_matching(
+            "exports/artifact.zip",
+            checksum_sha256=checksum,
+            size_bytes=len(payload),
+        )
+
+    assert state == StorageObjectState.MATCHING
+
+
+def test_s3_guarded_cleanup_reconciles_delete_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    client = storage.client
+    payload = b"privacy export archive"
+    checksum = hashlib.sha256(payload).hexdigest()
+    object_key = "privacy-exports/exports/artifact.zip"
+    head_responses = iter(
+        [
+            {
+                "ContentLength": 0,
+                "Metadata": {
+                    "publication-reservation-owner": "stale-publisher",
+                },
+                "ETag": '"reservation-etag"',
+            },
+            {
+                "ContentLength": len(payload),
+                "Metadata": {"checksum-sha256": checksum},
+                "ETag": '"published-etag"',
+            },
+        ]
+    )
+
+    def _head_object(**kwargs):
+        assert kwargs == {
+            "Bucket": "privacy-exports",
+            "Key": object_key,
+        }
+        return next(head_responses)
+
+    def _raise_transport_error(**kwargs) -> None:
+        assert kwargs == {
+            "Bucket": "privacy-exports",
+            "Key": object_key,
+            "IfMatch": '"reservation-etag"',
+        }
+        raise ReadTimeoutError(endpoint_url="https://s3.example.test")
+
+    monkeypatch.setattr(client, "head_object", _head_object)
+    monkeypatch.setattr(client, "delete_object", _raise_transport_error)
+
+    state = storage.delete_file_if_not_matching(
+        "exports/artifact.zip",
+        checksum_sha256=checksum,
+        size_bytes=len(payload),
+    )
+
+    assert state == StorageObjectState.MATCHING
+
+
+def test_s3_guarded_cleanup_reports_unknown_delete_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _stubbed_storage(monkeypatch)
+    storage.max_conditional_write_attempts = 1
+    client = storage.client
+    object_key = "privacy-exports/exports/artifact.zip"
+
+    def _head_reservation(**kwargs):
+        assert kwargs == {
+            "Bucket": "privacy-exports",
+            "Key": object_key,
+        }
+        return {
+            "ContentLength": 0,
+            "Metadata": {
+                "publication-reservation-owner": "stale-publisher",
+            },
+            "ETag": '"reservation-etag"',
+        }
+
+    transport_error = ReadTimeoutError(endpoint_url="https://s3.example.test")
+
+    def _raise_transport_error(**kwargs) -> None:
+        assert kwargs == {
+            "Bucket": "privacy-exports",
+            "Key": object_key,
+            "IfMatch": '"reservation-etag"',
+        }
+        raise transport_error
+
+    monkeypatch.setattr(client, "head_object", _head_reservation)
+    monkeypatch.setattr(client, "delete_object", _raise_transport_error)
+
+    with pytest.raises(StorageObjectStateUnknownError) as caught:
+        storage.delete_file_if_not_matching(
+            "exports/artifact.zip",
+            checksum_sha256="0" * 64,
+            size_bytes=1,
+        )
+
+    assert caught.value.__cause__ is transport_error
+
+
 def test_s3_storage_does_not_retry_publish_after_cleanup_conflict(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

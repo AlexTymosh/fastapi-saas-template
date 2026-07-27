@@ -27,9 +27,10 @@ Export artifacts are generated asynchronously from approved export DSRs.
   still-active processing lease. Recovery can therefore identify the exact
   committed object without generating a different archive.
 - Storage publication uses a reservation and compare-and-swap fence. Local
-  storage publishes only while its atomic filesystem reservation still exists.
-  S3-compatible storage creates a marker with `If-None-Match: *`, then replaces
-  that exact marker with `If-Match` and a server-validated SHA-256 checksum.
+  storage serialises publication and cleanup for a key with a bounded,
+  cross-process file-lock shard. S3-compatible storage creates a marker with
+  `If-None-Match: *`, then replaces that exact marker with `If-Match` and a
+  server-validated SHA-256 checksum.
 - Audit metadata is intentionally minimised and does not include payload/storage
   paths/tokens.
 - `--dry-run` worker mode performs one non-mutating count pass and then exits
@@ -51,7 +52,8 @@ The generated archive metadata is derived from the completed temporary file:
 - `checksum_sha256` is calculated by reading the file in bounded chunks;
 - `max_artifact_size_bytes` is checked after the ZIP has been closed and before
   the file is uploaded to storage;
-- temporary files are removed after upload, and also after generation failures.
+- temporary files are removed after upload and generation failures, including
+  when reservation cancellation itself fails.
 
 Archive preparation, upload and the `ready` transition use separate transaction
 phases. The preparation phase records or reuses the key and complete archive
@@ -73,6 +75,14 @@ inspected, the worker leaves the committed intent in `processing` for stale
 recovery instead of marking it failed or cancelling its reservation.
 Storage I/O is never performed while a database transaction is held.
 
+Recovery cleanup revalidates the exact active upload intent before storage I/O.
+It then deletes only while the current storage state does not match the committed
+checksum and size. If a stale cleaner loses the race to a matching publication,
+the matching object is preserved and the ready transition is retried against the
+current lease. Local publication and guarded recovery deletion share the same
+cross-process lock; S3 deletion uses the inspected ETag as an `If-Match`
+precondition.
+
 If upload or final persistence fails, the worker first commits the artifact as
 non-downloadable `failed` while retaining `storage_key`. It then attempts object
 deletion outside a database transaction and clears storage metadata in a later
@@ -85,9 +95,11 @@ identity. Recovery requeues the artifact and the next lease first inspects that
 key. A stored object is accepted only when its SHA-256 checksum and size match
 the committed identity; recovery then marks those exact bytes `ready` without
 regenerating the archive. If the object is missing, still reserved or
-conflicting, the current lease conditionally fences and deletes the old key,
-resets that exact intent, and only then generates a new archive under a new key.
-An old lease cannot transition the row to `ready`.
+conflicting, the current lease revalidates the exact intent and conditionally
+deletes only that non-matching storage state. A matching publication that wins
+this race is preserved. Only a successful guarded cleanup permits the intent to
+reset and a new archive key to be generated. An old lease cannot transition the
+row to `ready` or delete the current lease's matching object.
 
 Deployment environments must provide writable temporary storage for export
 workers. For large exports, size the writable path for at least the configured
@@ -146,6 +158,11 @@ accepts the operation only when the committed SHA-256 and size match. Missing,
 reserved or different bytes remain a publication failure. If `HeadObject`
 cannot determine the state, the durable intent remains recoverable and no
 cleanup decision is made from the ambiguous response.
+
+Recovery cleanup also reads the current ETag and sends `DeleteObject` with
+`If-Match`. A concurrent `409` or `412` triggers a fresh `HeadObject`; matching
+bytes are preserved, while an unverifiable transport outcome leaves the durable
+intent recoverable.
 
 ## Worker operations
 
