@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -38,7 +37,11 @@ from app.privacy.models.export_artifact import (
 )
 from app.privacy.repositories.data_subject_requests import DataSubjectRequestRepository
 from app.privacy.repositories.export_artifacts import ExportArtifactRepository
-from app.privacy.storage.base import StorageAdapter
+from app.privacy.storage.base import (
+    StorageAdapter,
+    StorageObjectState,
+    StoragePublicationReservation,
+)
 from app.privacy.storage.local import LocalStorageAdapter
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 
@@ -61,7 +64,6 @@ _SUBJECT_ERASURE_CANCELLED_EXPORT_REASON = "subject_erasure_requested"
 _UNCOMMITTED_EXPIRED_ARTIFACT_IDS_KEY = (
     "privacy_uncommitted_expired_export_artifact_ids"
 )
-_logger = logging.getLogger(__name__)
 
 
 @event.listens_for(Session, "after_transaction_end")
@@ -115,9 +117,24 @@ class PreparedExportArchive:
     storage_key: str
     filename: str
     content_type: str
-    archive_path: Path
+    archive_path: Path | None
     size_bytes: int
     checksum_sha256: str
+
+
+@dataclass(frozen=True)
+class FailedExportStorageCleanup:
+    artifact_id: UUID
+    storage_backend: str
+    storage_key: str
+
+
+@dataclass(frozen=True)
+class ExportArtifactStoragePurge:
+    artifact_id: UUID
+    expected_status: str
+    storage_backend: str
+    storage_key: str
 
 
 @dataclass(frozen=True)
@@ -572,87 +589,16 @@ class ExportArtifactService:
             )
         return len(recovered)
 
-    async def claim_and_generate_next_batch(
-        self, *, batch_size: int, generated_by_user_id: UUID | None = None
-    ) -> int:
-        leases = await self.claim_queued_artifact_leases(batch_size=batch_size)
-        for lease in leases:
-            artifact = await self.repo.get_processing_by_token(
-                artifact_id=lease.artifact_id,
-                processing_token=lease.processing_token,
-            )
-            if artifact is not None:
-                await self.generate_export_artifact(
-                    artifact=artifact,
-                    generated_by_user_id=generated_by_user_id,
-                    processing_token=lease.processing_token,
-                )
-        return len(leases)
-
-    async def generate_export_artifact(
-        self,
-        *,
-        artifact: ExportArtifact,
-        generated_by_user_id: UUID | None = None,
-        processing_token: str | None = None,
-    ) -> ExportArtifact:
-        self._ensure_exports_enabled()
-        token = processing_token or artifact.processing_token
-        if token is None:
-            token = str(uuid4())
-            now = datetime.now(UTC)
-            artifact.processing_token = token
-            artifact.processing_lease_expires_at = now + timedelta(
-                seconds=DEFAULT_PROCESSING_LEASE_SECONDS
-            )
-            if artifact.started_at is None:
-                artifact.started_at = now
-            artifact.status = ExportArtifactStatus.PROCESSING.value
-            await self.repo.save(artifact)
-            await self._sync_export_dsr_execution_state(
-                artifact,
-                execution_status=DataSubjectRequestExecutionStatus.PROCESSING,
-                event_at=artifact.started_at,
-            )
-
-        try:
-            prepared = await self.prepare_export_archive(
-                artifact_id=artifact.id, processing_token=token
-            )
-            self.write_prepared_export_archive(prepared)
-            return await self.mark_generated_export_artifact_ready(
-                artifact_id=artifact.id,
-                prepared=prepared,
-                generated_by_user_id=generated_by_user_id,
-                processing_token=token,
-            )
-        except Exception as exc:
-            failed = await self.mark_export_artifact_failed(
-                artifact_id=artifact.id,
-                exc=exc,
-                generated_by_user_id=generated_by_user_id,
-                processing_token=token,
-            )
-            if failed is None:
-                raise
-            return failed
-
     async def prepare_export_archive(
-        self, *, artifact_id: UUID, processing_token: str | None = None
+        self, *, artifact_id: UUID, processing_token: str
     ) -> PreparedExportArchive:
         self._ensure_exports_enabled()
-        if processing_token is None:
-            artifact = await self.repo.get_by_id(artifact_id)
-        else:
-            artifact = await self.repo.get_processing_by_token(
-                artifact_id=artifact_id, processing_token=processing_token
-            )
+        artifact = await self.repo.get_processing_by_token(
+            artifact_id=artifact_id,
+            processing_token=processing_token,
+        )
         if artifact is None:
             raise NotFoundError(detail="Export artifact not found")
-        if artifact.status != ExportArtifactStatus.PROCESSING.value:
-            raise ConflictError(
-                detail="Export artifact must be processing before generation"
-            )
 
         dsr = await self.dsr_repo.get_by_id(artifact.data_subject_request_id)
         if dsr is None:
@@ -663,9 +609,14 @@ class ExportArtifactService:
             or not self._has_export_dsr_participant_links(dsr)
         ):
             raise ValueError("dsr_not_export_eligible")
+        if artifact.storage_key is not None:
+            return self._prepared_from_committed_upload_intent(artifact)
 
         now = datetime.now(UTC)
         archive_path = self._temporary_archive_path()
+        filename = f"privacy-export-{artifact.id}.zip"
+        content_type = "application/zip"
+        candidate_storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
         try:
             await self._write_export_archive_file(
                 archive_path,
@@ -684,13 +635,36 @@ class ExportArtifactService:
             if size_bytes > self.settings.privacy_exports.max_artifact_size_bytes:
                 raise ValueError("artifact_too_large")
 
-            storage_key = f"exports/{artifact.id}/{uuid4()}.zip"
+            intent = await self.repo.ensure_processing_upload_intent(
+                artifact_id=artifact.id,
+                processing_token=processing_token,
+                candidate_storage_key=candidate_storage_key,
+                filename=filename,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                checksum_sha256=checksum_sha256,
+                now=datetime.now(UTC),
+            )
+            if intent is None or intent.storage_key is None:
+                raise ConflictError(
+                    detail="Export artifact processing lease is no longer active"
+                )
+            committed = self._prepared_from_committed_upload_intent(intent)
+            if (
+                committed.storage_key != candidate_storage_key
+                or committed.filename != filename
+                or committed.content_type != content_type
+                or committed.size_bytes != size_bytes
+                or committed.checksum_sha256 != checksum_sha256
+            ):
+                _unlink_file(archive_path)
+                return committed
             return PreparedExportArchive(
                 artifact_id=artifact.id,
-                storage_backend=artifact.storage_backend,
-                storage_key=storage_key,
-                filename=f"privacy-export-{artifact.id}.zip",
-                content_type="application/zip",
+                storage_backend=intent.storage_backend,
+                storage_key=intent.storage_key,
+                filename=filename,
+                content_type=content_type,
                 archive_path=archive_path,
                 size_bytes=size_bytes,
                 checksum_sha256=checksum_sha256,
@@ -698,6 +672,31 @@ class ExportArtifactService:
         except Exception:
             _unlink_file(archive_path)
             raise
+
+    @staticmethod
+    def _prepared_from_committed_upload_intent(
+        artifact: ExportArtifact,
+    ) -> PreparedExportArchive:
+        if (
+            artifact.storage_key is None
+            or artifact.filename is None
+            or artifact.content_type is None
+            or artifact.size_bytes is None
+            or artifact.checksum_sha256 is None
+        ):
+            raise ConflictError(
+                detail="Export artifact upload intent metadata is incomplete"
+            )
+        return PreparedExportArchive(
+            artifact_id=artifact.id,
+            storage_backend=artifact.storage_backend,
+            storage_key=artifact.storage_key,
+            filename=artifact.filename,
+            content_type=artifact.content_type,
+            archive_path=None,
+            size_bytes=artifact.size_bytes,
+            checksum_sha256=artifact.checksum_sha256,
+        )
 
     def _temporary_archive_path(self) -> Path:
         temporary_dir = Path(self.settings.privacy_exports.local_storage_path).resolve()
@@ -733,16 +732,131 @@ class ExportArtifactService:
                     ):
                         json_stream.write(chunk.encode("utf-8"))
 
-    def write_prepared_export_archive(self, prepared: PreparedExportArchive) -> None:
-        storage = self._storage_for_backend(prepared.storage_backend)
-        try:
-            storage.put_file(
-                prepared.storage_key,
-                prepared.archive_path,
-                prepared.content_type,
+    async def validate_prepared_export_upload(
+        self,
+        *,
+        prepared: PreparedExportArchive,
+        processing_token: str,
+    ) -> None:
+        artifact = await self.repo.get_active_processing_upload_intent(
+            artifact_id=prepared.artifact_id,
+            processing_token=processing_token,
+            now=datetime.now(UTC),
+            storage_backend=prepared.storage_backend,
+            storage_key=prepared.storage_key,
+        )
+        if artifact is None:
+            raise ConflictError(
+                detail="Export artifact upload intent is no longer active"
             )
-        finally:
+        if not self._prepared_metadata_matches_artifact(
+            prepared=prepared,
+            artifact=artifact,
+        ):
+            raise ConflictError(
+                detail="Export artifact upload intent metadata no longer matches"
+            )
+
+    @staticmethod
+    def discard_prepared_export_archive(prepared: PreparedExportArchive) -> None:
+        if prepared.archive_path is not None:
             _unlink_file(prepared.archive_path)
+
+    def inspect_committed_export_archive(
+        self,
+        prepared: PreparedExportArchive,
+    ) -> StorageObjectState:
+        storage = self._storage_for_backend(prepared.storage_backend)
+        return storage.inspect_file(
+            prepared.storage_key,
+            checksum_sha256=prepared.checksum_sha256,
+            size_bytes=prepared.size_bytes,
+        )
+
+    def reserve_prepared_export_archive(
+        self,
+        prepared: PreparedExportArchive,
+        *,
+        processing_token: str,
+    ) -> StoragePublicationReservation:
+        if prepared.archive_path is None:
+            raise ConflictError(
+                detail="Recovered export archive does not require publication"
+            )
+        storage = self._storage_for_backend(prepared.storage_backend)
+        return storage.reserve_file_publication(
+            prepared.storage_key,
+            owner_token=processing_token,
+        )
+
+    def publish_prepared_export_archive(
+        self,
+        prepared: PreparedExportArchive,
+        reservation: StoragePublicationReservation,
+    ) -> None:
+        if prepared.archive_path is None:
+            raise ConflictError(
+                detail="Recovered export archive does not require publication"
+            )
+        if reservation.key != prepared.storage_key:
+            raise ConflictError(
+                detail="Export archive storage reservation no longer matches"
+            )
+        storage = self._storage_for_backend(prepared.storage_backend)
+        storage.publish_reserved_file(
+            reservation,
+            prepared.archive_path,
+            prepared.content_type,
+            checksum_sha256=prepared.checksum_sha256,
+        )
+
+    def cancel_prepared_export_archive_reservation(
+        self,
+        prepared: PreparedExportArchive,
+        reservation: StoragePublicationReservation,
+    ) -> None:
+        storage = self._storage_for_backend(prepared.storage_backend)
+        storage.cancel_file_publication(reservation)
+
+    def delete_prepared_export_storage_object_if_not_matching(
+        self,
+        prepared: PreparedExportArchive,
+    ) -> StorageObjectState:
+        storage = self._storage_for_backend(prepared.storage_backend)
+        return storage.delete_file_if_not_matching(
+            prepared.storage_key,
+            checksum_sha256=prepared.checksum_sha256,
+            size_bytes=prepared.size_bytes,
+        )
+
+    async def reset_prepared_export_upload_intent(
+        self,
+        *,
+        prepared: PreparedExportArchive,
+        processing_token: str,
+    ) -> bool:
+        return await self.repo.reset_processing_upload_intent(
+            artifact_id=prepared.artifact_id,
+            processing_token=processing_token,
+            storage_backend=prepared.storage_backend,
+            storage_key=prepared.storage_key,
+            now=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def _prepared_metadata_matches_artifact(
+        *,
+        prepared: PreparedExportArchive,
+        artifact: ExportArtifact,
+    ) -> bool:
+        return (
+            artifact.storage_backend == prepared.storage_backend
+            and artifact.storage_key == prepared.storage_key
+            and artifact.filename == prepared.filename
+            and artifact.content_type == prepared.content_type
+            and artifact.size_bytes == prepared.size_bytes
+            and artifact.checksum_sha256 == prepared.checksum_sha256
+        )
 
     async def mark_generated_export_artifact_ready(
         self,
@@ -758,12 +872,19 @@ class ExportArtifactService:
             artifact = await self.repo.get_processing_by_token(
                 artifact_id=artifact_id,
                 processing_token=processing_token,
+                for_update=True,
             )
         if artifact is None:
             raise ConflictError(
                 detail="Export artifact processing lease is no longer active"
             )
-        artifact.storage_key = prepared.storage_key
+        if not self._prepared_metadata_matches_artifact(
+            prepared=prepared,
+            artifact=artifact,
+        ):
+            raise ConflictError(
+                detail="Export artifact upload intent no longer matches"
+            )
         artifact.filename = prepared.filename
         artifact.content_type = prepared.content_type
         artifact.size_bytes = prepared.size_bytes
@@ -796,6 +917,7 @@ class ExportArtifactService:
             artifact = await self.repo.get_processing_by_token(
                 artifact_id=artifact_id,
                 processing_token=processing_token,
+                for_update=True,
             )
         if artifact is None:
             return None
@@ -821,6 +943,109 @@ class ExportArtifactService:
         )
         return failed
 
+    @staticmethod
+    def failed_storage_cleanup(
+        artifact: ExportArtifact,
+    ) -> FailedExportStorageCleanup | None:
+        if (
+            artifact.status != ExportArtifactStatus.FAILED.value
+            or artifact.storage_key is None
+        ):
+            return None
+        return FailedExportStorageCleanup(
+            artifact_id=artifact.id,
+            storage_backend=artifact.storage_backend,
+            storage_key=artifact.storage_key,
+        )
+
+    def delete_failed_export_storage_object(
+        self, cleanup: FailedExportStorageCleanup
+    ) -> None:
+        storage = self._storage_for_backend(cleanup.storage_backend)
+        storage.delete(cleanup.storage_key)
+
+    async def clear_failed_export_storage_metadata(
+        self, cleanup: FailedExportStorageCleanup
+    ) -> bool:
+        artifact = await self.repo.get_failed_storage_purge_target(
+            artifact_id=cleanup.artifact_id,
+            storage_key=cleanup.storage_key,
+        )
+        if artifact is None:
+            return False
+        clear_export_artifact_storage_metadata(artifact)
+        await self.repo.save(artifact)
+        return True
+
+    async def list_cancelled_erasure_storage_purges(
+        self, *, limit: int
+    ) -> tuple[ExportArtifactStoragePurge, ...]:
+        self._validate_positive_limit(limit)
+        artifacts = await self.repo.list_cancelled_erasure_purge_retry(limit=limit)
+        return self._storage_purges_for(artifacts)
+
+    async def list_failed_storage_purges(
+        self, *, limit: int
+    ) -> tuple[ExportArtifactStoragePurge, ...]:
+        self._validate_positive_limit(limit)
+        artifacts = await self.repo.list_failed_storage_purge_retry(limit=limit)
+        return self._storage_purges_for(artifacts)
+
+    async def list_expired_storage_purges(
+        self,
+        *,
+        limit: int,
+        exclude_ids: set[UUID] | None = None,
+    ) -> tuple[ExportArtifactStoragePurge, ...]:
+        self._validate_positive_limit(limit)
+        artifacts = await self.repo.list_expired_storage_purge_retry(
+            limit=limit,
+            exclude_ids=exclude_ids,
+        )
+        return self._storage_purges_for(artifacts)
+
+    @staticmethod
+    def _storage_purges_for(
+        artifacts: list[ExportArtifact],
+    ) -> tuple[ExportArtifactStoragePurge, ...]:
+        purges: list[ExportArtifactStoragePurge] = []
+        for artifact in artifacts:
+            if (
+                artifact.storage_key is None
+                or not _is_non_downloadable_storage_purge_retry(artifact)
+            ):
+                continue
+            purges.append(
+                ExportArtifactStoragePurge(
+                    artifact_id=artifact.id,
+                    expected_status=artifact.status,
+                    storage_backend=artifact.storage_backend,
+                    storage_key=artifact.storage_key,
+                )
+            )
+        return tuple(purges)
+
+    def delete_export_storage_purge_object(
+        self, purge: ExportArtifactStoragePurge
+    ) -> None:
+        storage = self._storage_for_backend(purge.storage_backend)
+        storage.delete(purge.storage_key)
+
+    async def clear_export_storage_purge_metadata(
+        self, purge: ExportArtifactStoragePurge
+    ) -> bool:
+        artifact = await self.repo.get_storage_purge_target(
+            artifact_id=purge.artifact_id,
+            expected_status=purge.expected_status,
+            storage_backend=purge.storage_backend,
+            storage_key=purge.storage_key,
+        )
+        if artifact is None or not _is_non_downloadable_storage_purge_retry(artifact):
+            return False
+        clear_export_artifact_storage_metadata(artifact)
+        await self.repo.save(artifact)
+        return True
+
     async def count_expired_ready_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
     ) -> int:
@@ -834,55 +1059,58 @@ class ExportArtifactService:
         if remaining_limit <= 0:
             return len(cancelled_erasure)
 
+        failed_storage_retry = await self.repo.list_failed_storage_purge_retry(
+            limit=remaining_limit,
+        )
+        remaining_limit -= len(failed_storage_retry)
+        if remaining_limit <= 0:
+            return len(cancelled_erasure) + len(failed_storage_retry)
+
         expired_ready = await self.repo.list_expired_ready(
             now=now_value,
             limit=remaining_limit,
         )
         remaining_limit -= len(expired_ready)
         if remaining_limit <= 0:
-            return len(cancelled_erasure) + len(expired_ready)
+            return (
+                len(cancelled_erasure) + len(failed_storage_retry) + len(expired_ready)
+            )
 
         expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
             limit=remaining_limit,
             exclude_ids=self._uncommitted_expired_artifact_ids(),
         )
-        return len(cancelled_erasure) + len(expired_ready) + len(expired_storage_retry)
+        return (
+            len(cancelled_erasure)
+            + len(failed_storage_retry)
+            + len(expired_ready)
+            + len(expired_storage_retry)
+        )
 
     async def mark_expired_artifacts(
         self, *, now: datetime | None = None, limit: int = 1000
     ) -> int:
+        expired_ids = await self.expire_ready_artifacts(
+            now=now,
+            limit=limit,
+        )
+        return len(expired_ids)
+
+    async def expire_ready_artifacts(
+        self, *, now: datetime | None = None, limit: int = 1000
+    ) -> tuple[UUID, ...]:
         self._validate_positive_limit(limit)
         now_value = _ensure_aware_utc(now or datetime.now(UTC))
 
-        cancelled_erasure = await self.repo.list_cancelled_erasure_purge_retry(
-            limit=limit,
-        )
-        expired_storage_retry = await self.repo.list_expired_storage_purge_retry(
-            limit=limit,
-            exclude_ids=self._uncommitted_expired_artifact_ids(),
-        )
-
-        processed = 0
-        purge_failures: list[Exception] = []
-        purge_count, failures = await self._purge_storage_retry_artifacts(
-            cancelled_erasure,
-            limit=limit,
-        )
-        processed += purge_count
-        purge_failures.extend(failures)
-
-        remaining_limit = limit - processed
-        if remaining_limit <= 0:
-            return processed
-
         expired_ready = await self.repo.list_expired_ready(
             now=now_value,
-            limit=remaining_limit,
+            limit=limit,
         )
+        expired_ids: list[UUID] = []
         for artifact in expired_ready:
             expired_artifact = await self.repo.mark_expired(artifact)
             self._remember_uncommitted_expiry_transition(expired_artifact)
-            processed += 1
+            expired_ids.append(expired_artifact.id)
             (
                 execution_status,
                 event_at,
@@ -901,20 +1129,7 @@ class ExportArtifactService:
                 AuditAction.EXPORT_ARTIFACT_EXPIRED,
                 expired_artifact,
             )
-
-        remaining_limit = limit - processed
-        if remaining_limit <= 0:
-            return processed
-
-        purge_count, failures = await self._purge_storage_retry_artifacts(
-            expired_storage_retry,
-            limit=remaining_limit,
-        )
-        processed += purge_count
-        purge_failures.extend(failures)
-        if processed == 0 and purge_failures:
-            raise purge_failures[0]
-        return processed
+        return tuple(expired_ids)
 
     def _remember_uncommitted_expiry_transition(self, artifact: ExportArtifact) -> None:
         marker_ids = self.session.info.setdefault(
@@ -929,60 +1144,10 @@ class ExportArtifactService:
             return marker_ids
         return set()
 
-    async def _purge_storage_retry_artifacts(
-        self, artifacts: list[ExportArtifact], *, limit: int
-    ) -> tuple[int, list[Exception]]:
-        processed = 0
-        failures: list[Exception] = []
-        for artifact in artifacts[:limit]:
-            failure = self._try_purge_export_artifact_storage_object(artifact)
-            if failure is not None:
-                failures.append(failure)
-                continue
-            await self.repo.save(artifact)
-            processed += 1
-        return processed, failures
-
-    def _try_purge_export_artifact_storage_object(
-        self, artifact: ExportArtifact
-    ) -> Exception | None:
-        if artifact.storage_key is None:
-            return None
-        if not _is_non_downloadable_storage_purge_retry(artifact):
-            raise ConflictError(
-                detail="Export artifact storage purge requires non-downloadable state"
-            )
-
-        try:
-            self._purge_export_artifact_storage_object(artifact)
-        except Exception as exc:
-            _logger.exception(
-                "Failed to purge export artifact storage object",
-                extra={
-                    "artifact_id": str(artifact.id),
-                    "storage_backend": artifact.storage_backend,
-                },
-            )
-            return exc
-        return None
-
     @staticmethod
     def _validate_positive_limit(limit: int) -> None:
         if limit < 1:
             raise ValueError("Export artifact retention limit must be positive")
-
-    def _purge_export_artifact_storage_object(self, artifact: ExportArtifact) -> None:
-        storage_key = artifact.storage_key
-        if storage_key is None:
-            return
-        if not _is_non_downloadable_storage_purge_retry(artifact):
-            raise ConflictError(
-                detail="Export artifact storage purge requires non-downloadable state"
-            )
-
-        storage = self._storage_for_backend(artifact.storage_backend)
-        storage.delete(storage_key)
-        clear_export_artifact_storage_metadata(artifact)
 
     async def _record_event(
         self, audit_context: AuditContext, action: AuditAction, artifact: ExportArtifact
@@ -998,7 +1163,10 @@ class ExportArtifactService:
 
 
 def _is_non_downloadable_storage_purge_retry(artifact: ExportArtifact) -> bool:
-    if artifact.status == ExportArtifactStatus.EXPIRED.value:
+    if artifact.status in {
+        ExportArtifactStatus.EXPIRED.value,
+        ExportArtifactStatus.FAILED.value,
+    }:
         return True
     return (
         artifact.status == ExportArtifactStatus.CANCELLED.value

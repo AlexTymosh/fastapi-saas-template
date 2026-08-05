@@ -5,7 +5,7 @@ import asyncio
 import logging
 
 from app.core.db.session import dispose_engine, get_session_factory
-from app.privacy.maintenance import run_privacy_retention_maintenance
+from app.privacy.maintenance import run_privacy_retention_pass
 
 logger = logging.getLogger(__name__)
 
@@ -44,16 +44,11 @@ async def run_once(*, dry_run: bool = False, batch_size: int = 1000) -> dict[str
         raise ValueError("Privacy retention batch size must be positive")
 
     session_factory = get_session_factory()
-    async with session_factory() as session:
-        summary = await run_privacy_retention_maintenance(
-            session,
-            dry_run=dry_run,
-            limit=batch_size,
-        )
-        if dry_run:
-            await session.rollback()
-        else:
-            await session.commit()
+    summary = await run_privacy_retention_pass(
+        session_factory,
+        dry_run=dry_run,
+        limit=batch_size,
+    )
     return summary.as_log_extra()
 
 

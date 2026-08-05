@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
@@ -12,10 +13,69 @@ class StoredObject:
     size_bytes: int
 
 
+class StorageObjectConflictError(RuntimeError):
+    """Raised when an immutable object key already contains different bytes."""
+
+
+class StorageObjectStateUnknownError(RuntimeError):
+    """Raised when storage cannot determine the current state of an object."""
+
+
+class StorageObjectState(StrEnum):
+    MISSING = "missing"
+    RESERVED = "reserved"
+    MATCHING = "matching"
+    CONFLICT = "conflict"
+
+
+@dataclass(frozen=True)
+class StoragePublicationReservation:
+    key: str
+    owner_token: str
+    revision: str
+
+
 class StorageAdapter(Protocol):
     def put_bytes(self, key: str, data: bytes, content_type: str) -> StoredObject: ...
 
     def put_file(self, key: str, path: Path, content_type: str) -> StoredObject: ...
+
+    def reserve_file_publication(
+        self,
+        key: str,
+        *,
+        owner_token: str,
+    ) -> StoragePublicationReservation: ...
+
+    def publish_reserved_file(
+        self,
+        reservation: StoragePublicationReservation,
+        path: Path,
+        content_type: str,
+        *,
+        checksum_sha256: str,
+    ) -> StoredObject: ...
+
+    def cancel_file_publication(
+        self,
+        reservation: StoragePublicationReservation,
+    ) -> None: ...
+
+    def inspect_file(
+        self,
+        key: str,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState: ...
+
+    def delete_file_if_not_matching(
+        self,
+        key: str,
+        *,
+        checksum_sha256: str,
+        size_bytes: int,
+    ) -> StorageObjectState: ...
 
     def get_bytes(self, key: str) -> bytes: ...
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import zipfile
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -12,6 +12,7 @@ import pytest
 
 from app.audit.context import AuditContext
 from app.core.config.settings import get_settings
+from app.core.errors import ConflictError
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
@@ -19,9 +20,13 @@ from app.privacy.models.data_subject_request import (
 from app.privacy.models.export_artifact import ExportArtifactStatus
 from app.privacy.services import export_artifacts as export_artifacts_module
 from app.privacy.services.export_artifacts import ExportArtifactService
+from app.privacy.storage.base import StorageObjectState
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
+from tests.helpers.privacy_exports import (
+    generate_export_artifact_in_committed_phases,
+)
 
 pytestmark = [pytest.mark.privacy]
 
@@ -97,9 +102,8 @@ def test_generate_export_artifact_uses_streaming_json_chunks(
                 requested_by_user_id=user.id,
                 audit_context=AuditContext(actor_user_id=user.id),
             )
-            artifact.status = ExportArtifactStatus.PROCESSING.value
-
-            ready = await service.generate_export_artifact(
+            ready = await generate_export_artifact_in_committed_phases(
+                session,
                 artifact=artifact,
                 generated_by_user_id=user.id,
             )
@@ -134,22 +138,146 @@ def test_prepared_export_archive_uses_temporary_file_then_cleans_up(
                 requested_by_user_id=user.id,
                 audit_context=AuditContext(actor_user_id=user.id),
             )
-            artifact.status = ExportArtifactStatus.PROCESSING.value
-            token = str(uuid4())
-            artifact.processing_token = token
-            await service.repo.save(artifact)
+            leases = await service.claim_queued_artifact_leases(batch_size=1)
+            assert len(leases) == 1
+            token = leases[0].processing_token
+            await session.commit()
 
             prepared = await service.prepare_export_archive(
                 artifact_id=artifact.id,
                 processing_token=token,
             )
+            await session.commit()
             assert prepared.archive_path.exists()
             assert prepared.size_bytes == prepared.archive_path.stat().st_size
+            persisted = await service.repo.get_by_id(artifact.id)
+            assert persisted is not None
+            assert persisted.storage_key == prepared.storage_key
+            assert persisted.filename == prepared.filename
+            assert persisted.content_type == prepared.content_type
+            assert persisted.size_bytes == prepared.size_bytes
+            assert persisted.checksum_sha256 == prepared.checksum_sha256
+            await session.commit()
 
-            service.write_prepared_export_archive(prepared)
+            reservation = service.reserve_prepared_export_archive(
+                prepared,
+                processing_token=token,
+            )
+            try:
+                await service.validate_prepared_export_upload(
+                    prepared=prepared,
+                    processing_token=token,
+                )
+                await session.commit()
+                service.publish_prepared_export_archive(prepared, reservation)
+            finally:
+                service.cancel_prepared_export_archive_reservation(
+                    prepared,
+                    reservation,
+                )
+                service.discard_prepared_export_archive(prepared)
 
             assert not prepared.archive_path.exists()
             assert service.storage.exists(prepared.storage_key)
+
+    run_async(_run())
+
+
+def test_stale_retry_reuses_committed_upload_intent(
+    migrated_session_factory,
+    isolated_export_storage: Path,
+) -> None:
+    async def _run() -> None:
+        async with migrated_session_factory() as session:
+            user, dsr = await _create_user_and_dsr(session)
+            service = ExportArtifactService(session)
+            artifact = await service.request_export_artifact(
+                request_id=dsr.id,
+                requested_by_user_id=user.id,
+                audit_context=AuditContext(actor_user_id=user.id),
+            )
+            artifact_id = artifact.id
+            user_id = user.id
+            first_lease = (await service.claim_queued_artifact_leases(batch_size=1))[0]
+            await session.commit()
+
+            first_prepared = await service.prepare_export_archive(
+                artifact_id=artifact_id,
+                processing_token=first_lease.processing_token,
+            )
+            assert first_prepared.archive_path is not None
+            first_storage_key = first_prepared.storage_key
+            first_checksum = first_prepared.checksum_sha256
+            await session.commit()
+            reservation = service.reserve_prepared_export_archive(
+                first_prepared,
+                processing_token=first_lease.processing_token,
+            )
+            try:
+                await service.validate_prepared_export_upload(
+                    prepared=first_prepared,
+                    processing_token=first_lease.processing_token,
+                )
+                await session.commit()
+                service.publish_prepared_export_archive(
+                    first_prepared,
+                    reservation,
+                )
+            finally:
+                service.cancel_prepared_export_archive_reservation(
+                    first_prepared,
+                    reservation,
+                )
+                service.discard_prepared_export_archive(first_prepared)
+            assert service.storage.exists(first_storage_key)
+
+            processing = await service.repo.get_by_id(artifact_id)
+            assert processing is not None
+            processing.processing_lease_expires_at = datetime.now(UTC) - timedelta(
+                seconds=1
+            )
+            await service.repo.save(processing)
+            await session.commit()
+
+            second_lease = (await service.claim_queued_artifact_leases(batch_size=1))[0]
+            assert second_lease.processing_token != first_lease.processing_token
+            await session.commit()
+
+            with pytest.raises(ConflictError, match="no longer active"):
+                await service.validate_prepared_export_upload(
+                    prepared=first_prepared,
+                    processing_token=first_lease.processing_token,
+                )
+            await session.rollback()
+
+            second_prepared = await service.prepare_export_archive(
+                artifact_id=artifact_id,
+                processing_token=second_lease.processing_token,
+            )
+            assert second_prepared.storage_key == first_storage_key
+            assert second_prepared.checksum_sha256 == first_checksum
+            assert second_prepared.archive_path is None
+            await session.commit()
+            await service.validate_prepared_export_upload(
+                prepared=second_prepared,
+                processing_token=second_lease.processing_token,
+            )
+            await session.commit()
+            assert (
+                service.inspect_committed_export_archive(second_prepared)
+                == StorageObjectState.MATCHING
+            )
+            ready = await service.mark_generated_export_artifact_ready(
+                artifact_id=artifact_id,
+                prepared=second_prepared,
+                generated_by_user_id=user_id,
+                processing_token=second_lease.processing_token,
+            )
+            await session.commit()
+
+            assert ready.status == ExportArtifactStatus.READY.value
+            assert ready.storage_key == first_storage_key
+            assert len(list(isolated_export_storage.rglob("*.zip"))) == 1
 
     run_async(_run())
 
@@ -176,9 +304,8 @@ def test_rejected_oversized_streaming_archive_removes_temporary_file(
                 requested_by_user_id=user.id,
                 audit_context=AuditContext(actor_user_id=user.id),
             )
-            artifact.status = ExportArtifactStatus.PROCESSING.value
-
-            failed = await service.generate_export_artifact(
+            failed = await generate_export_artifact_in_committed_phases(
+                session,
                 artifact=artifact,
                 generated_by_user_id=user.id,
             )

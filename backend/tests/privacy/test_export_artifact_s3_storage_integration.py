@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 import urllib.request
 from collections.abc import Iterator
@@ -19,6 +20,7 @@ from testcontainers.core.container import DockerContainer
 
 from app.audit.context import AuditContext
 from app.core.config.settings import get_settings
+from app.privacy.maintenance import run_privacy_retention_pass
 from app.privacy.models.data_subject_request import (
     DataSubjectRequest,
     DataSubjectRequestStatus,
@@ -28,6 +30,7 @@ from app.privacy.models.export_artifact import (
     ExportArtifactStorageBackend,
 )
 from app.privacy.services.export_artifacts import ExportArtifactService
+from app.privacy.storage.base import StorageObjectConflictError
 from app.privacy.storage.s3 import S3CompatibleStorageAdapter
 from app.users.models.user import User
 from tests.helpers.asyncio_runner import run_async
@@ -226,6 +229,65 @@ def test_s3_compatible_storage_adapter_round_trips_with_minio(
     adapter.delete(storage_key)
 
 
+def test_s3_compatible_storage_conditional_publish_does_not_overwrite(
+    minio_export_storage: MinioExportStorage,
+    tmp_path,
+) -> None:
+    adapter = minio_export_storage.adapter
+    storage_key = f"exports/{uuid4()}/archive.zip"
+    first_path = tmp_path / "first.zip"
+    first_payload = b"first minio privacy export"
+    first_path.write_bytes(first_payload)
+    first_checksum = hashlib.sha256(first_payload).hexdigest()
+
+    reservation = adapter.reserve_file_publication(
+        storage_key,
+        owner_token="first-worker",
+    )
+    adapter.publish_reserved_file(
+        reservation,
+        first_path,
+        "application/zip",
+        checksum_sha256=first_checksum,
+    )
+
+    with pytest.raises(StorageObjectConflictError):
+        adapter.reserve_file_publication(
+            storage_key,
+            owner_token="second-worker",
+        )
+
+    assert adapter.get_bytes(storage_key) == first_payload
+
+
+def test_s3_compatible_cleanup_fences_reserved_publication(
+    minio_export_storage: MinioExportStorage,
+    tmp_path,
+) -> None:
+    adapter = minio_export_storage.adapter
+    storage_key = f"exports/{uuid4()}/archive.zip"
+    archive_path = tmp_path / "archive.zip"
+    payload = b"late minio privacy export"
+    archive_path.write_bytes(payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    reservation = adapter.reserve_file_publication(
+        storage_key,
+        owner_token="stale-worker",
+    )
+
+    adapter.delete(storage_key)
+
+    with pytest.raises(StorageObjectConflictError):
+        adapter.publish_reserved_file(
+            reservation,
+            archive_path,
+            "application/zip",
+            checksum_sha256=checksum,
+        )
+
+    assert not adapter.exists(storage_key)
+
+
 def test_export_artifact_retention_expires_before_purging_minio_object(
     migrated_session_factory,
     minio_export_storage: MinioExportStorage,
@@ -260,11 +322,18 @@ def test_export_artifact_retention_expires_before_purging_minio_object(
             artifact.completed_at = expired_at - timedelta(minutes=1)
             artifact.expires_at = expired_at
             await service.repo.save(artifact)
+            artifact_id = artifact.id
+            await session.commit()
 
-            expired_count = await service.mark_expired_artifacts(now=datetime.now(UTC))
-            expired = await service.repo.get_by_id(artifact.id)
+        first_summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+        )
 
-            assert expired_count == 1
+        assert first_summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
+            service = ExportArtifactService(session)
+            expired = await service.repo.get_by_id(artifact_id)
             assert expired is not None
             assert expired.status == ExportArtifactStatus.EXPIRED.value
             assert expired.storage_key == storage_key
@@ -274,13 +343,15 @@ def test_export_artifact_retention_expires_before_purging_minio_object(
             assert expired.checksum_sha256 == "0" * 64
             assert minio_export_storage.adapter.exists(storage_key)
 
-            await session.commit()
+        second_summary = await run_privacy_retention_pass(
+            migrated_session_factory,
+            now=datetime.now(UTC),
+        )
+
+        assert second_summary.expired_export_artifacts == 1
+        async with migrated_session_factory() as session:
             service = ExportArtifactService(session)
-
-            purged_count = await service.mark_expired_artifacts(now=datetime.now(UTC))
-            purged = await service.repo.get_by_id(artifact.id)
-
-            assert purged_count == 1
+            purged = await service.repo.get_by_id(artifact_id)
             assert purged is not None
             assert purged.status == ExportArtifactStatus.EXPIRED.value
             assert purged.storage_key is None

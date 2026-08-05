@@ -27,7 +27,7 @@ and DSR idempotency rows.
 
 | Area | Retention action |
 |---|---|
-| Export artifacts | Prioritise erasure retries, then expire READY rows. |
+| Export artifacts | Prioritise erasure and failed-upload retries, then expire READY rows. |
 | Invites | Replace retained invite email/token values with deterministic tombstones. |
 | Outbox events | Scrub delivered/failed delivery payloads after the retention window. |
 | Audit events | Remove old actor, free-form, network and user-agent context. |
@@ -50,6 +50,33 @@ and DSR idempotency rows.
 - Erasure-cancelled purge retries keep first priority under small batches. If a
   retry purge succeeds and consumes the batch, unrelated READY rows wait for the
   next retention pass.
+- Failed export generation/upload rows retain their committed `storage_key`
+  until object deletion succeeds. They are non-downloadable and have second
+  cleanup priority, before new READY expiry work. Missing objects are accepted
+  as an idempotent cleanup success.
+- Export purge candidates are captured in a short committed database phase.
+  Object deletion runs without an active database transaction, and matching
+  metadata is cleared in a later transaction only while artifact ID, status,
+  backend and key still match the snapshot. Storage latency therefore cannot
+  extend export row locks or hold invite, outbox, audit and DSR retention
+  mutations open. Delete or final-commit failures keep the durable retry key.
+- Export publishers first create a storage reservation and publish only by
+  replacing that exact revision. Cleanup conditionally removes the current
+  reservation or object revision before clearing the database key. A publisher
+  that resumes after committed cleanup therefore cannot recreate an untracked
+  object. A successful publish consumes the reservation and does not run a
+  separate cancellation request. An ambiguous conditional response is accepted
+  only when storage metadata matches the committed checksum and size.
+  Transport-level acknowledgement failures use `HeadObject` reconciliation for
+  both reservation creation and publication. Reservation recovery additionally
+  requires owner metadata matching the current processing token. If object state
+  cannot be inspected, the committed intent remains `processing` for stale
+  recovery instead of entering failed cleanup.
+- Stale-upload recovery revalidates its active lease and committed identity
+  before cleanup. It deletes only a reserved or conflicting storage revision;
+  matching bytes that appear after lease turnover are preserved. Local
+  publication and recovery deletion share a cross-process lock, while S3 uses
+  `HeadObject` plus conditional `DeleteObject` with `If-Match`.
 - READY export artifacts transition to `expired` while keeping `storage_key` as
   a purge retry marker. This transition is independent of retry purge failures,
   so a temporary object-store outage must not keep unrelated expired READY
@@ -62,6 +89,13 @@ and DSR idempotency rows.
 - Storage purge failures remain retryable. When a failure prevents all useful
   retention work in the pass, the original storage exception is surfaced so
   operators and tests still observe the outage.
+- S3-compatible cleanup is key-level deletion. A versioning-enabled production
+  bucket must permanently expire noncurrent versions and expired delete markers
+  within the retention SLA, or use a dedicated unversioned bucket/prefix.
+- S3-compatible providers must support conditional `PutObject` with
+  `If-None-Match: *` and `If-Match`, conditional `DeleteObject` with `If-Match`,
+  and read-after-write `HeadObject` metadata. Cleanup and publication fail
+  closed when these preconditions are unavailable.
 - Erasure-cancelled artifacts use the same retry-marker model: object deletion
   is retried only after the row is already `cancelled` for subject erasure.
 - Export artifact object deletion remains delegated to `ExportArtifactService` so

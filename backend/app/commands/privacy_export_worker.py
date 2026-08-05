@@ -3,14 +3,23 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import logging
 
 from app.core.db.session import get_session_factory
 from app.privacy.services.export_artifacts import (
     DEFAULT_PROCESSING_LEASE_SECONDS,
     ExportArtifactService,
+    FailedExportStorageCleanup,
     PreparedExportArchive,
     ProcessingExportLease,
 )
+from app.privacy.storage.base import (
+    StorageObjectState,
+    StorageObjectStateUnknownError,
+    StoragePublicationReservation,
+)
+
+logger = logging.getLogger(__name__)
 
 
 async def _count_queued_artifacts(*, batch_size: int) -> int:
@@ -46,20 +55,120 @@ async def _prepare_export_archive(
     *, lease: ProcessingExportLease
 ) -> PreparedExportArchive:
     session_factory = get_session_factory()
-    async with session_factory() as session:
-        async with session.begin():
-            return await ExportArtifactService(session).prepare_export_archive(
-                artifact_id=lease.artifact_id,
+    prepared: PreparedExportArchive | None = None
+    try:
+        async with session_factory() as session:
+            async with session.begin():
+                prepared = await ExportArtifactService(session).prepare_export_archive(
+                    artifact_id=lease.artifact_id,
+                    processing_token=lease.processing_token,
+                )
+        return prepared
+    except Exception:
+        if prepared is not None:
+            await asyncio.to_thread(
+                ExportArtifactService.discard_prepared_export_archive,
+                prepared,
+            )
+        raise
+
+
+async def _write_export_archive(
+    *, lease: ProcessingExportLease, prepared: PreparedExportArchive
+) -> None:
+    """Reserve storage, revalidate the intent, then publish with compare-and-swap."""
+
+    session_factory = get_session_factory()
+    service: ExportArtifactService
+    reservation: StoragePublicationReservation | None = None
+    publication_completed = False
+    publication_outcome_unknown = False
+    try:
+        async with session_factory() as session:
+            service = ExportArtifactService(session)
+            reservation = await asyncio.to_thread(
+                service.reserve_prepared_export_archive,
+                prepared,
                 processing_token=lease.processing_token,
+            )
+            async with session.begin():
+                await service.validate_prepared_export_upload(
+                    prepared=prepared,
+                    processing_token=lease.processing_token,
+                )
+        try:
+            await asyncio.to_thread(
+                service.publish_prepared_export_archive,
+                prepared,
+                reservation,
+            )
+        except StorageObjectStateUnknownError:
+            publication_outcome_unknown = True
+            raise
+        else:
+            publication_completed = True
+    finally:
+        try:
+            if (
+                reservation is not None
+                and not publication_completed
+                and not publication_outcome_unknown
+            ):
+                await asyncio.to_thread(
+                    service.cancel_prepared_export_archive_reservation,
+                    prepared,
+                    reservation,
+                )
+        finally:
+            await asyncio.to_thread(
+                ExportArtifactService.discard_prepared_export_archive,
+                prepared,
             )
 
 
-async def _write_export_archive(prepared: PreparedExportArchive) -> None:
-    """Write the archive outside of any database transaction."""
+async def _recover_committed_export_archive(*, prepared: PreparedExportArchive) -> bool:
     session_factory = get_session_factory()
     async with session_factory() as session:
         service = ExportArtifactService(session)
-        await asyncio.to_thread(service.write_prepared_export_archive, prepared)
+        state = await asyncio.to_thread(
+            service.inspect_committed_export_archive,
+            prepared,
+        )
+    return state == StorageObjectState.MATCHING
+
+
+async def _reset_committed_export_upload_intent(
+    *,
+    lease: ProcessingExportLease,
+    prepared: PreparedExportArchive,
+) -> bool:
+    """Fence the old key before allowing the active lease to choose a new one."""
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        service = ExportArtifactService(session)
+        async with session.begin():
+            await service.validate_prepared_export_upload(
+                prepared=prepared,
+                processing_token=lease.processing_token,
+            )
+        state = await asyncio.to_thread(
+            service.delete_prepared_export_storage_object_if_not_matching,
+            prepared,
+        )
+    if state == StorageObjectState.MATCHING:
+        return False
+    async with session_factory() as session:
+        async with session.begin():
+            reset = await ExportArtifactService(
+                session
+            ).reset_prepared_export_upload_intent(
+                prepared=prepared,
+                processing_token=lease.processing_token,
+            )
+            if not reset:
+                raise RuntimeError("export_upload_intent_reset_rejected")
+    return True
 
 
 async def _mark_export_ready(
@@ -75,15 +184,73 @@ async def _mark_export_ready(
             )
 
 
-async def _mark_export_failed(*, lease: ProcessingExportLease, exc: Exception) -> None:
+async def _mark_export_failed(
+    *, lease: ProcessingExportLease, exc: Exception
+) -> FailedExportStorageCleanup | None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         async with session.begin():
-            await ExportArtifactService(session).mark_export_artifact_failed(
+            service = ExportArtifactService(session)
+            failed = await service.mark_export_artifact_failed(
                 artifact_id=lease.artifact_id,
                 exc=exc,
                 processing_token=lease.processing_token,
             )
+            if failed is None:
+                return None
+            return service.failed_storage_cleanup(failed)
+
+
+async def _delete_failed_export_storage(
+    cleanup: FailedExportStorageCleanup,
+) -> None:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        service = ExportArtifactService(session)
+        await asyncio.to_thread(
+            service.delete_failed_export_storage_object,
+            cleanup,
+        )
+
+
+async def _clear_failed_export_storage_metadata(
+    cleanup: FailedExportStorageCleanup,
+) -> None:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        async with session.begin():
+            await ExportArtifactService(session).clear_failed_export_storage_metadata(
+                cleanup
+            )
+
+
+async def _cleanup_failed_export_storage(
+    cleanup: FailedExportStorageCleanup,
+) -> None:
+    try:
+        await _delete_failed_export_storage(cleanup)
+    except Exception as exc:
+        logger.error(
+            "Failed to delete failed export artifact storage object",
+            extra={
+                "artifact_id": str(cleanup.artifact_id),
+                "storage_backend": cleanup.storage_backend,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return
+
+    try:
+        await _clear_failed_export_storage_metadata(cleanup)
+    except Exception as exc:
+        logger.error(
+            "Failed to clear failed export artifact storage metadata",
+            extra={
+                "artifact_id": str(cleanup.artifact_id),
+                "storage_backend": cleanup.storage_backend,
+                "error_type": type(exc).__name__,
+            },
+        )
 
 
 async def _heartbeat_processing_lease(*, lease: ProcessingExportLease) -> None:
@@ -102,10 +269,30 @@ async def _process_artifact(*, lease: ProcessingExportLease) -> None:
     heartbeat = asyncio.create_task(_heartbeat_processing_lease(lease=lease))
     try:
         prepared = await _prepare_export_archive(lease=lease)
-        await _write_export_archive(prepared)
+        if prepared.archive_path is None:
+            recovered = await _recover_committed_export_archive(prepared=prepared)
+            if not recovered:
+                reset = await _reset_committed_export_upload_intent(
+                    lease=lease,
+                    prepared=prepared,
+                )
+                if reset:
+                    prepared = await _prepare_export_archive(lease=lease)
+        if prepared.archive_path is not None:
+            await _write_export_archive(lease=lease, prepared=prepared)
         await _mark_export_ready(lease=lease, prepared=prepared)
+    except StorageObjectStateUnknownError as exc:
+        logger.warning(
+            "Export artifact storage state could not be verified",
+            extra={
+                "artifact_id": str(lease.artifact_id),
+                "error_type": type(exc).__name__,
+            },
+        )
     except Exception as exc:
-        await _mark_export_failed(lease=lease, exc=exc)
+        cleanup = await _mark_export_failed(lease=lease, exc=exc)
+        if cleanup is not None:
+            await _cleanup_failed_export_storage(cleanup)
     finally:
         heartbeat.cancel()
         with contextlib.suppress(asyncio.CancelledError):
